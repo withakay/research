@@ -1,4 +1,4 @@
-# agents.md — guidance for AI coding agents
+# AGENTS.md — guidance for AI coding agents
 
 This file is the primary reference for any AI agent (GitHub Copilot, CLI
 agents, autonomous coding bots, etc.) working inside the **research**
@@ -38,7 +38,7 @@ repository.
 ## Known limitations & rough edges
 
 This repository documents known issues and intentional shortcuts in
-[flawed.md](flawed.md).  Agents should read that file before suggesting "fix"
+[CLAUDE.md](CLAUDE.md).  Agents should read that file before suggesting "fix"
 changes to existing code, because some apparent flaws are deliberate.
 
 ## Copilot-specific notes

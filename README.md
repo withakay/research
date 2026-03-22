@@ -23,7 +23,7 @@ tests, and abandoned experiments.
 
 ## For AI agents & automated tooling
 
-See [agents.md](agents.md) for conventions and guidance specifically aimed at
+See [AGENTS.md](AGENTS.md) for conventions and guidance specifically aimed at
 AI coding agents (GitHub Copilot, etc.) working inside this repository.
 
 ## Contributing / working in this repo
