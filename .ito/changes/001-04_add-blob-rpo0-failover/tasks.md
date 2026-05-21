@@ -26,7 +26,7 @@ ______________________________________________________________________
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
 - **Done When**: Add dual-region acceptance path is implemented and covered by focused tests.
 - **Requirements**: durable-outbox-blob-rpo0
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21
 
 ### Task 1.2: Implement repair loop
@@ -37,7 +37,7 @@ ______________________________________________________________________
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
 - **Done When**: Implement repair loop is implemented and covered by focused tests.
 - **Requirements**: durable-outbox-blob-rpo0
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21
 
 ______________________________________________________________________
@@ -54,7 +54,7 @@ ______________________________________________________________________
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
 - **Done When**: Implement failover replay and cleanup freeze is implemented and the relevant provider contract or focused tests pass.
 - **Requirements**: durable-outbox-blob-rpo0
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21
 
 ### Task 2.2: Add RPO=0 contract tests
@@ -65,5 +65,5 @@ ______________________________________________________________________
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
 - **Done When**: Add RPO=0 contract tests is implemented and the relevant provider contract or focused tests pass.
 - **Requirements**: durable-outbox-blob-rpo0
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21

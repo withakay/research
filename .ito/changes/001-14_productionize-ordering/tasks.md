@@ -14,7 +14,7 @@
 - **Files**: durable-outbox-python/eva_durable_outbox/core/ordering.py
 - **Action**: Define ordering coordinator and lock protocols.
 - **Verify**: `uv run pytest`
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21
 
 ### Task 1.2: Add fake lock tests
@@ -22,7 +22,7 @@
 - **Files**: durable-outbox-python/tests/test_failover_ordering_cleanup.py
 - **Action**: Implement fake lock client and contract tests.
 - **Verify**: `uv run pytest`
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21
 
 ## Wave 2
@@ -34,7 +34,7 @@
 - **Files**: durable-outbox-python/eva_durable_outbox/stores/blob_geo.py
 - **Action**: Implement Blob lock blob or lease coordination.
 - **Verify**: `uv run pytest`
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21
 
 ### Task 2.2: Add stale lock recovery tests
@@ -42,5 +42,5 @@
 - **Files**: durable-outbox-python/tests/test_failover_ordering_cleanup.py
 - **Action**: Add stale lock recovery tests.
 - **Verify**: `uv run pytest`
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21

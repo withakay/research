@@ -26,7 +26,7 @@ ______________________________________________________________________
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
 - **Done When**: Add kafka optional dependency and config is implemented and covered by focused tests.
 - **Requirements**: durable-outbox-kafka-sink
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21
 
 ### Task 1.2: Implement publish acknowledgement path
@@ -37,7 +37,7 @@ ______________________________________________________________________
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
 - **Done When**: Implement publish acknowledgement path is implemented and covered by focused tests.
 - **Requirements**: durable-outbox-kafka-sink
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21
 
 ______________________________________________________________________
@@ -54,7 +54,7 @@ ______________________________________________________________________
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
 - **Done When**: Add headers and tracing propagation is implemented and the relevant provider contract or focused tests pass.
 - **Requirements**: durable-outbox-kafka-sink
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21
 
 ### Task 2.2: Test success and failure mapping
@@ -65,5 +65,5 @@ ______________________________________________________________________
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
 - **Done When**: Test success and failure mapping is implemented and the relevant provider contract or focused tests pass.
 - **Requirements**: durable-outbox-kafka-sink
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21

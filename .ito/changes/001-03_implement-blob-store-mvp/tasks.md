@@ -26,7 +26,7 @@ ______________________________________________________________________
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
 - **Done When**: Implement blob serialization and naming is implemented and covered by focused tests.
 - **Requirements**: durable-outbox-blob-store
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21
 
 ### Task 1.2: Implement put and claim transitions
@@ -37,7 +37,7 @@ ______________________________________________________________________
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
 - **Done When**: Implement put and claim transitions is implemented and covered by focused tests.
 - **Requirements**: durable-outbox-blob-store
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21
 
 ______________________________________________________________________
@@ -54,7 +54,7 @@ ______________________________________________________________________
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
 - **Done When**: Implement retry, stale reclaim, and cleanup is implemented and the relevant provider contract or focused tests pass.
 - **Requirements**: durable-outbox-blob-store
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21
 
 ### Task 2.2: Run provider contract subset
@@ -65,5 +65,5 @@ ______________________________________________________________________
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
 - **Done When**: Run provider contract subset is implemented and the relevant provider contract or focused tests pass.
 - **Requirements**: durable-outbox-blob-store
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21

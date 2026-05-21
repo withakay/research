@@ -26,7 +26,7 @@ ______________________________________________________________________
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
 - **Done When**: Add SQL schema and mapper is implemented and covered by focused tests.
 - **Requirements**: durable-outbox-sql-store
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21
 
 ### Task 1.2: Implement put claim and lifecycle transitions
@@ -37,7 +37,7 @@ ______________________________________________________________________
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
 - **Done When**: Implement put claim and lifecycle transitions is implemented and covered by focused tests.
 - **Requirements**: durable-outbox-sql-store
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21
 
 ______________________________________________________________________
@@ -54,7 +54,7 @@ ______________________________________________________________________
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
 - **Done When**: Implement RPO=0 SQL modes is implemented and the relevant provider contract or focused tests pass.
 - **Requirements**: durable-outbox-sql-store
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21
 
 ### Task 2.2: Run SQL provider contract
@@ -65,5 +65,5 @@ ______________________________________________________________________
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
 - **Done When**: Run SQL provider contract is implemented and the relevant provider contract or focused tests pass.
 - **Requirements**: durable-outbox-sql-store
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21

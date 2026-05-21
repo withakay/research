@@ -14,7 +14,7 @@
 - **Files**: durable-outbox-python/eva_durable_outbox/operations.py
 - **Action**: Define status, admin action, and audit protocols.
 - **Verify**: `uv run pytest`
-- **Status**: [>] in-progress
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21
 
 ### Task 1.2: Remove fake-store admin dependency
@@ -22,7 +22,7 @@
 - **Files**: durable-outbox-python/eva_durable_outbox/operations.py
 - **Action**: Refactor admin service away from fake-store dependency.
 - **Verify**: `uv run pytest`
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21
 
 ## Wave 2
@@ -34,7 +34,7 @@
 - **Files**: durable-outbox-python/eva_durable_outbox/**
 - **Action**: Emit standard metrics from dispatcher, replay, cleanup, and admin paths.
 - **Verify**: `uv run pytest`
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21
 
 ### Task 2.2: Add audit and payload-opacity tests
@@ -42,5 +42,5 @@
 - **Files**: durable-outbox-python/tests/test_kafka_operations.py
 - **Action**: Add audit and payload-opacity tests.
 - **Verify**: `uv run pytest`
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21

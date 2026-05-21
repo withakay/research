@@ -14,7 +14,7 @@
 - **Files**: durable-outbox-python/README.md
 - **Action**: Expand README with usage, extras, and verification commands.
 - **Verify**: `uv run pytest`
-- **Status**: [>] in-progress
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21
 
 ### Task 1.2: Add provider docs and license
@@ -22,7 +22,7 @@
 - **Files**: durable-outbox-python/docs/**, durable-outbox-python/LICENSE
 - **Action**: Add RPO=0 provider documentation and license file.
 - **Verify**: `uv run pytest`
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21
 
 ## Wave 2
@@ -34,7 +34,7 @@
 - **Files**: durable-outbox-python/pyproject.toml
 - **Action**: Add packaging/build verification.
 - **Verify**: `uv build`
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21
 
 ### Task 2.2: Keep docs consistent with project config
@@ -42,5 +42,5 @@
 - **Files**: durable-outbox-python/README.md, durable-outbox-python/pyproject.toml
 - **Action**: Ensure docs remain consistent with pyproject configuration.
 - **Verify**: `uv run pytest`
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21

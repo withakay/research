@@ -26,7 +26,7 @@ ______________________________________________________________________
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
 - **Done When**: Define ordering interfaces and validation is implemented and covered by focused tests.
 - **Requirements**: durable-outbox-ordering
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21
 
 ### Task 1.2: Implement ordered dispatcher flow
@@ -37,7 +37,7 @@ ______________________________________________________________________
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
 - **Done When**: Implement ordered dispatcher flow is implemented and covered by focused tests.
 - **Requirements**: durable-outbox-ordering
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21
 
 ______________________________________________________________________
@@ -54,7 +54,7 @@ ______________________________________________________________________
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
 - **Done When**: Implement Blob key leases is implemented and the relevant provider contract or focused tests pass.
 - **Requirements**: durable-outbox-ordering
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21
 
 ### Task 2.2: Add ordering contract tests
@@ -65,5 +65,5 @@ ______________________________________________________________________
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
 - **Done When**: Add ordering contract tests is implemented and the relevant provider contract or focused tests pass.
 - **Requirements**: durable-outbox-ordering
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21

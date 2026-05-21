@@ -22,7 +22,7 @@
 - **Files**: durable-outbox-python/eva_durable_outbox/testing/provider_contract.py
 - **Action**: Run shared contract through the DurableOutboxStore protocol only.
 - **Verify**: `uv run pytest`
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21
 
 ## Wave 2
@@ -34,7 +34,7 @@
 - **Files**: durable-outbox-python/eva_durable_outbox/testing/provider_contract.py
 - **Action**: Add optional hooks for cleanup, stale reclaim, failure injection, and status inspection.
 - **Verify**: `uv run pytest`
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21
 
 ### Task 2.2: Run contract against stores
@@ -42,5 +42,5 @@
 - **Files**: durable-outbox-python/tests/provider_contract/**
 - **Action**: Run contract against fake store and adapter fake provider clients.
 - **Verify**: `uv run pytest`
-- **Status**: [ ] pending
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21
