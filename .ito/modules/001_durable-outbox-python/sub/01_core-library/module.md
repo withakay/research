@@ -7,4 +7,4 @@ Core durable outbox models, protocols, dispatcher, retry, and provider contract 
 - *
 
 ## Changes
-<!-- Changes will be listed here as they are created -->
+- [ ] 001.01-01_build-core-library
