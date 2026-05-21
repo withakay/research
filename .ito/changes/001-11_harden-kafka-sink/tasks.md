@@ -42,5 +42,5 @@
 - **Files**: durable-outbox-python/tests/test_kafka_operations.py
 - **Action**: Add focused Kafka sink tests.
 - **Verify**: `uv run pytest`
-- **Status**: [>] in-progress
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21
