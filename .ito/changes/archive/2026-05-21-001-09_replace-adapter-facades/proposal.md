@@ -9,7 +9,7 @@ The current Blob, Cosmos, and SQL adapters are useful API sketches, but they inh
 - Implement Azure Blob deterministic object layout, metadata/tags, ETag/lease claim transitions, cleanup, and dual-region acceptance.
 - Implement Cosmos DB create/read idempotency, partition-key mapping, conditional patch claims, replay queries, cleanup queries, and RPO=0 configuration validation.
 - Implement SQL schema migration helpers, idempotent inserts, row-lock claims, rowversion-safe transitions, Azure SQL sync wait, and Always On capability validation.
-- Keep fake/in-memory stores under `eva_durable_outbox.testing` only.
+- Keep fake/in-memory stores under `durable_outbox.testing` only.
 
 ## Change Shape
 

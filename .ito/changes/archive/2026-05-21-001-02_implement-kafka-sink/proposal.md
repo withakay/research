@@ -1,7 +1,7 @@
 <!-- ITO:START -->
 ## Why
 
-The durable outbox needs a first real downstream sink for EVA Common Kafka Publisher integration. Kafka publication must preserve at-least-once semantics by acknowledging only after broker acknowledgement and by surfacing retryable failures correctly.
+The durable outbox needs a first real downstream sink for Durable Outbox Kafka Publisher integration. Kafka publication must preserve at-least-once semantics by acknowledging only after broker acknowledgement and by surfacing retryable failures correctly.
 
 ## What Changes
 

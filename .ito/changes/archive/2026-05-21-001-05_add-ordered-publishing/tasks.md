@@ -20,7 +20,7 @@ ______________________________________________________________________
 
 ### Task 1.1: Define ordering interfaces and validation
 
-- **Files**: eva_durable_outbox/core/ordering.py, model.py
+- **Files**: durable_outbox/core/ordering.py, model.py
 - **Dependencies**: None
 - **Action**: Add coordinator protocol and ordered event validation.
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
@@ -31,7 +31,7 @@ ______________________________________________________________________
 
 ### Task 1.2: Implement ordered dispatcher flow
 
-- **Files**: eva_durable_outbox/core/dispatcher.py
+- **Files**: durable_outbox/core/dispatcher.py
 - **Dependencies**: Task 1.1
 - **Action**: Ensure same-key sequencing and different-key concurrency.
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
@@ -48,7 +48,7 @@ ______________________________________________________________________
 
 ### Task 2.1: Implement Blob key leases
 
-- **Files**: eva_durable_outbox/stores/blob_geo.py
+- **Files**: durable_outbox/stores/blob_geo.py
 - **Dependencies**: None
 - **Action**: Use lock blobs or leases for per-key coordination.
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists

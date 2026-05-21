@@ -1,5 +1,8 @@
 <!-- ITO:START -->
-## ADDED Requirements
+## Purpose
+This specification documents the durable outbox capability after the archived implementation changes.
+
+## Requirements
 
 ### Requirement: Consumer Documentation
 The package SHALL document installation, quickstart usage, adapter extras, RPO=0 caveats, and verification commands.

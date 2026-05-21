@@ -1,5 +1,8 @@
 <!-- ITO:START -->
-## ADDED Requirements
+## Purpose
+This specification documents the durable outbox capability after the archived implementation changes.
+
+## Requirements
 
 ### Requirement: SQL Schema
 The SQL store SHALL persist all outbox lifecycle metadata needed for idempotent acceptance, claiming, retries, sent metadata, failover replay, cleanup, and diagnostics.

@@ -1,5 +1,8 @@
 <!-- ITO:START -->
-## ADDED Requirements
+## Purpose
+This specification documents the durable outbox capability after the archived implementation changes.
+
+## Requirements
 
 ### Requirement: Blob Provider Client
 Blob stores SHALL use a typed provider client abstraction for record reads, writes, conditional updates, and deletes.

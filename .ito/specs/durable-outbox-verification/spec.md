@@ -1,5 +1,8 @@
 <!-- ITO:START -->
-## ADDED Requirements
+## Purpose
+This specification documents the durable outbox capability after the archived implementation changes.
+
+## Requirements
 
 ### Requirement: Ack Before Mark Sent Failure Test
 The test suite SHALL prove that when sink acknowledgement succeeds but `mark_sent` fails, the event remains replayable and may be duplicated but is not lost.

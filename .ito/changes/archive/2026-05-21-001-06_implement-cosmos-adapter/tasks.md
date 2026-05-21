@@ -20,7 +20,7 @@ ______________________________________________________________________
 
 ### Task 1.1: Add Cosmos dependency and item mapper
 
-- **Files**: pyproject.toml, eva_durable_outbox/stores/cosmos.py
+- **Files**: pyproject.toml, durable_outbox/stores/cosmos.py
 - **Dependencies**: None
 - **Action**: Define optional extra, item schema, and partition key logic.
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
@@ -31,7 +31,7 @@ ______________________________________________________________________
 
 ### Task 1.2: Implement put and claim
 
-- **Files**: eva_durable_outbox/stores/cosmos.py
+- **Files**: durable_outbox/stores/cosmos.py
 - **Dependencies**: Task 1.1
 - **Action**: Use idempotent create and ETag conditional patch.
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
@@ -48,7 +48,7 @@ ______________________________________________________________________
 
 ### Task 2.1: Implement replay cleanup and capability validation
 
-- **Files**: eva_durable_outbox/stores/cosmos.py
+- **Files**: durable_outbox/stores/cosmos.py
 - **Dependencies**: None
 - **Action**: Add failover query, cleanup query, and RPO=0 config checks.
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists

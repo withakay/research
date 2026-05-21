@@ -1,5 +1,8 @@
 <!-- ITO:START -->
-## ADDED Requirements
+## Purpose
+This specification documents the durable outbox capability after the archived implementation changes.
+
+## Requirements
 
 ### Requirement: SQL Provider Client
 SQL stores SHALL use typed provider client operations for inserts, row-lock claims, transitions, replay, cleanup, and RPO=0 sync waits.

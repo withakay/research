@@ -1,5 +1,8 @@
 <!-- ITO:START -->
-## MODIFIED Requirements
+## Purpose
+This specification documents the durable outbox capability after the archived implementation changes.
+
+## Requirements
 
 ### Requirement: Backend Ordering Locks
 Ordered dispatch SHALL coordinate same-key publishing with backend-backed locks or leases, not process-local memory.

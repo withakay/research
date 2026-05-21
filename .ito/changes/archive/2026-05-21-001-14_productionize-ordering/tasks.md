@@ -11,7 +11,7 @@
 
 ### Task 1.1: Define ordering lock protocols
 
-- **Files**: durable-outbox-python/eva_durable_outbox/core/ordering.py
+- **Files**: durable-outbox-python/durable_outbox/core/ordering.py
 - **Action**: Define ordering coordinator and lock protocols.
 - **Verify**: `uv run pytest`
 - **Status**: [x] complete
@@ -31,7 +31,7 @@
 
 ### Task 2.1: Implement Blob lock coordination
 
-- **Files**: durable-outbox-python/eva_durable_outbox/stores/blob_geo.py
+- **Files**: durable-outbox-python/durable_outbox/stores/blob_geo.py
 - **Action**: Implement Blob lock blob or lease coordination.
 - **Verify**: `uv run pytest`
 - **Status**: [x] complete

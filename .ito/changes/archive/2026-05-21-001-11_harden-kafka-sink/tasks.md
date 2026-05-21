@@ -11,7 +11,7 @@
 
 ### Task 1.1: Add producer lifecycle
 
-- **Files**: durable-outbox-python/eva_durable_outbox/sinks/kafka.py
+- **Files**: durable-outbox-python/durable_outbox/sinks/kafka.py
 - **Action**: Add real producer construction and close/flush lifecycle.
 - **Verify**: `uv run pytest`
 - **Status**: [x] complete
@@ -19,7 +19,7 @@
 
 ### Task 1.2: Add timeout and poll loop
 
-- **Files**: durable-outbox-python/eva_durable_outbox/sinks/kafka.py
+- **Files**: durable-outbox-python/durable_outbox/sinks/kafka.py
 - **Action**: Add delivery timeout and poll loop behavior.
 - **Verify**: `uv run pytest`
 - **Status**: [x] complete
@@ -31,7 +31,7 @@
 
 ### Task 2.1: Classify Kafka errors
 
-- **Files**: durable-outbox-python/eva_durable_outbox/sinks/kafka.py
+- **Files**: durable-outbox-python/durable_outbox/sinks/kafka.py
 - **Action**: Implement Kafka error classification and trace header propagation.
 - **Verify**: `uv run pytest`
 - **Status**: [x] complete

@@ -1,5 +1,8 @@
 <!-- ITO:START -->
-## MODIFIED Requirements
+## Purpose
+This specification documents the durable outbox capability after the archived implementation changes.
+
+## Requirements
 
 ### Requirement: Hardened Kafka Publish Lifecycle
 The Kafka sink SHALL manage producer construction, polling, delivery timeout, flush, and close behavior for acknowledged publishing.

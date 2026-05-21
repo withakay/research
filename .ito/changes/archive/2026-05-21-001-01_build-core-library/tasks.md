@@ -20,7 +20,7 @@ ______________________________________________________________________
 
 ### Task 1.1: Create package skeleton and models
 
-- **Files**: durable-outbox-python/eva_durable_outbox/core/*.py
+- **Files**: durable-outbox-python/durable_outbox/core/*.py
 - **Dependencies**: None
 - **Action**: Add core dataclasses, enums, capability declarations, and common errors.
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
@@ -31,7 +31,7 @@ ______________________________________________________________________
 
 ### Task 1.2: Define protocols and dispatcher
 
-- **Files**: durable-outbox-python/eva_durable_outbox/core/store.py, sink.py, dispatcher.py, retry.py
+- **Files**: durable-outbox-python/durable_outbox/core/store.py, sink.py, dispatcher.py, retry.py
 - **Dependencies**: Task 1.1
 - **Action**: Implement async protocols, dispatch loop, retry policy, and error classification.
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
@@ -48,7 +48,7 @@ ______________________________________________________________________
 
 ### Task 2.1: Add certification harness
 
-- **Files**: durable-outbox-python/eva_durable_outbox/testing/*.py, tests/provider_contract/*
+- **Files**: durable-outbox-python/durable_outbox/testing/*.py, tests/provider_contract/*
 - **Dependencies**: None
 - **Action**: Build fake store/sink and shared behavioral tests.
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists

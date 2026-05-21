@@ -1,5 +1,8 @@
 <!-- ITO:START -->
-## ADDED Requirements
+## Purpose
+This specification documents the durable outbox capability after the archived implementation changes.
+
+## Requirements
 
 ### Requirement: Production Adapters Do Not Inherit Test Stores
 Production Blob, Cosmos, and SQL adapter classes SHALL implement durable store behavior directly rather than inheriting from the in-memory fake store.

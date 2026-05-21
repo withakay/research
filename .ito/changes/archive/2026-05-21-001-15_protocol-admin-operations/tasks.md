@@ -11,7 +11,7 @@
 
 ### Task 1.1: Define admin protocols
 
-- **Files**: durable-outbox-python/eva_durable_outbox/operations.py
+- **Files**: durable-outbox-python/durable_outbox/operations.py
 - **Action**: Define status, admin action, and audit protocols.
 - **Verify**: `uv run pytest`
 - **Status**: [x] complete
@@ -19,7 +19,7 @@
 
 ### Task 1.2: Remove fake-store admin dependency
 
-- **Files**: durable-outbox-python/eva_durable_outbox/operations.py
+- **Files**: durable-outbox-python/durable_outbox/operations.py
 - **Action**: Refactor admin service away from fake-store dependency.
 - **Verify**: `uv run pytest`
 - **Status**: [x] complete
@@ -31,7 +31,7 @@
 
 ### Task 2.1: Emit operational metrics
 
-- **Files**: durable-outbox-python/eva_durable_outbox/**
+- **Files**: durable-outbox-python/durable_outbox/**
 - **Action**: Emit standard metrics from dispatcher, replay, cleanup, and admin paths.
 - **Verify**: `uv run pytest`
 - **Status**: [x] complete

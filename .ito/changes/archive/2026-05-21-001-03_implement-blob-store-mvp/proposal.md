@@ -1,7 +1,7 @@
 <!-- ITO:START -->
 ## Why
 
-Blob is the recommended first provider for the EVA-aligned MVP, but the single-region adapter should land before dual-region RPO=0 behavior. This gives the package a concrete store implementation for normal dispatch, claiming, retry, stale reclaim, and cleanup semantics.
+Blob is the recommended first provider for the durable-outbox-aligned MVP, but the single-region adapter should land before dual-region RPO=0 behavior. This gives the package a concrete store implementation for normal dispatch, claiming, retry, stale reclaim, and cleanup semantics.
 
 ## What Changes
 

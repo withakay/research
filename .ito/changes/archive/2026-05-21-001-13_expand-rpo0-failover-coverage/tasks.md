@@ -19,7 +19,7 @@
 
 ### Task 1.2: Hide prepared records from claims
 
-- **Files**: durable-outbox-python/eva_durable_outbox/stores/blob_geo.py
+- **Files**: durable-outbox-python/durable_outbox/stores/blob_geo.py
 - **Action**: Enforce prepared records are hidden from normal claims.
 - **Verify**: `uv run pytest`
 - **Status**: [x] complete

@@ -1,5 +1,8 @@
 <!-- ITO:START -->
-## ADDED Requirements
+## Purpose
+This specification documents the durable outbox capability after the archived implementation changes.
+
+## Requirements
 
 ### Requirement: Blob Idempotent Acceptance
 The Blob store SHALL persist accepted events at deterministic blob names derived from event_id and SHALL treat duplicate put for the same event_id as idempotent success.

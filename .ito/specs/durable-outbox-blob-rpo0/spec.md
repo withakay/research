@@ -1,5 +1,8 @@
 <!-- ITO:START -->
-## MODIFIED Requirements
+## Purpose
+This specification documents the durable outbox capability after the archived implementation changes.
+
+## Requirements
 
 ### Requirement: Partial Write Repair Matrix
 The dual-region Blob store SHALL repair prepared/missing, accepted/prepared, accepted/missing, and both-prepared cases idempotently.

@@ -1,5 +1,8 @@
 <!-- ITO:START -->
-## MODIFIED Requirements
+## Purpose
+This specification documents the durable outbox capability after the archived implementation changes.
+
+## Requirements
 
 ### Requirement: Retry Attempt Metadata
 Claimed events SHALL expose the current attempt count so dispatchers can compute retry backoff from durable store state.

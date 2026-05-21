@@ -11,7 +11,7 @@
 
 ### Task 1.1: Add failure injection paths
 
-- **Files**: durable-outbox-python/eva_durable_outbox/testing/**
+- **Files**: durable-outbox-python/durable_outbox/testing/**
 - **Action**: Add failure injection for mark-sent, put, claim, and replay paths.
 - **Verify**: `uv run pytest`
 - **Status**: [x] complete

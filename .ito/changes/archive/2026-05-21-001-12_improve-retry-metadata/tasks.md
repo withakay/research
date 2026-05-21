@@ -11,7 +11,7 @@
 
 ### Task 1.1: Add attempt count to claims
 
-- **Files**: durable-outbox-python/eva_durable_outbox/core/model.py, durable-outbox-python/eva_durable_outbox/testing/fake_store.py
+- **Files**: durable-outbox-python/durable_outbox/core/model.py, durable-outbox-python/durable_outbox/testing/fake_store.py
 - **Action**: Add attempt count to claim metadata and fake store claims.
 - **Verify**: `uv run pytest`
 - **Status**: [x] complete
@@ -19,7 +19,7 @@
 
 ### Task 1.2: Use attempt count in dispatcher
 
-- **Files**: durable-outbox-python/eva_durable_outbox/core/dispatcher.py
+- **Files**: durable-outbox-python/durable_outbox/core/dispatcher.py
 - **Action**: Use attempt count in retry scheduling.
 - **Verify**: `uv run pytest`
 - **Status**: [x] complete
@@ -39,7 +39,7 @@
 
 ### Task 2.2: Update provider contract
 
-- **Files**: durable-outbox-python/eva_durable_outbox/testing/provider_contract.py
+- **Files**: durable-outbox-python/durable_outbox/testing/provider_contract.py
 - **Action**: Update provider contract expectations for attempt metadata.
 - **Verify**: `uv run pytest`
 - **Status**: [x] complete

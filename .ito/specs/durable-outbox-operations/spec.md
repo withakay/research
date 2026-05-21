@@ -1,5 +1,8 @@
 <!-- ITO:START -->
-## MODIFIED Requirements
+## Purpose
+This specification documents the durable outbox capability after the archived implementation changes.
+
+## Requirements
 
 ### Requirement: Protocol Backed Admin Hooks
 Admin operations SHALL depend on status and repair protocols rather than fake-store internals.

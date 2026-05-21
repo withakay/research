@@ -1,5 +1,8 @@
 <!-- ITO:START -->
-## ADDED Requirements
+## Purpose
+This specification documents the durable outbox capability after the archived implementation changes.
+
+## Requirements
 
 ### Requirement: Protocol Only Contract
 The shared provider contract SHALL exercise stores through the `DurableOutboxStore` protocol and SHALL NOT require fake-store internals.

@@ -20,7 +20,7 @@ ______________________________________________________________________
 
 ### Task 1.1: Add kafka optional dependency and config
 
-- **Files**: durable-outbox-python/pyproject.toml, eva_durable_outbox/sinks/kafka.py
+- **Files**: durable-outbox-python/pyproject.toml, durable_outbox/sinks/kafka.py
 - **Dependencies**: None
 - **Action**: Declare kafka extra and producer settings model.
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
@@ -31,7 +31,7 @@ ______________________________________________________________________
 
 ### Task 1.2: Implement publish acknowledgement path
 
-- **Files**: eva_durable_outbox/sinks/kafka.py
+- **Files**: durable_outbox/sinks/kafka.py
 - **Dependencies**: Task 1.1
 - **Action**: Produce records, await delivery callback, and return PublishResult.
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
@@ -48,7 +48,7 @@ ______________________________________________________________________
 
 ### Task 2.1: Add headers and tracing propagation
 
-- **Files**: eva_durable_outbox/sinks/kafka.py, telemetry modules
+- **Files**: durable_outbox/sinks/kafka.py, telemetry modules
 - **Dependencies**: None
 - **Action**: Inject event_id and optional trace headers.
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists

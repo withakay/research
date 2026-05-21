@@ -49,7 +49,7 @@ Run the targeted pytest suite for this change and run `ito validate 001-04_add-b
 
 ## Migration / Rollback
 
-This is initial package work. Rollback is removing the new package increment before adoption by the EVA publisher.
+This is initial package work. Rollback is removing the new package increment before adoption by the Durable Outbox publisher.
 
 ## Open Questions
 

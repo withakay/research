@@ -1,5 +1,8 @@
 <!-- ITO:START -->
-## ADDED Requirements
+## Purpose
+This specification documents the durable outbox capability after the archived implementation changes.
+
+## Requirements
 
 ### Requirement: Cosmos Provider Client
 Cosmos stores SHALL use typed provider client operations for create/read/query/conditional update.

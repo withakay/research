@@ -20,7 +20,7 @@ ______________________________________________________________________
 
 ### Task 1.1: Add metrics and tracing hooks
 
-- **Files**: eva_durable_outbox/telemetry/*.py
+- **Files**: durable_outbox/telemetry/*.py
 - **Dependencies**: None
 - **Action**: Implement metric names, labels, and tracing extension points.
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
@@ -31,7 +31,7 @@ ______________________________________________________________________
 
 ### Task 1.2: Add status and admin service hooks
 
-- **Files**: eva_durable_outbox/core/status.py, failover.py
+- **Files**: durable_outbox/core/status.py, failover.py
 - **Dependencies**: Task 1.1
 - **Action**: Expose state queries and controlled replay/repair operations.
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists

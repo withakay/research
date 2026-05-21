@@ -1,5 +1,8 @@
 <!-- ITO:START -->
-## ADDED Requirements
+## Purpose
+This specification documents the durable outbox capability after the archived implementation changes.
+
+## Requirements
 
 ### Requirement: Cosmos Idempotent Acceptance
 The Cosmos store SHALL create one item per event_id and SHALL treat duplicate creates as idempotent success for the same accepted event.

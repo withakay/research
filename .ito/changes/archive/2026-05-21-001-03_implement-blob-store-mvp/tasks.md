@@ -20,7 +20,7 @@ ______________________________________________________________________
 
 ### Task 1.1: Implement blob serialization and naming
 
-- **Files**: eva_durable_outbox/stores/blob_geo.py
+- **Files**: durable_outbox/stores/blob_geo.py
 - **Dependencies**: None
 - **Action**: Create deterministic paths and encode/decode event records.
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
@@ -31,7 +31,7 @@ ______________________________________________________________________
 
 ### Task 1.2: Implement put and claim transitions
 
-- **Files**: eva_durable_outbox/stores/blob_geo.py
+- **Files**: durable_outbox/stores/blob_geo.py
 - **Dependencies**: Task 1.1
 - **Action**: Use idempotent create and ETag conditional metadata updates.
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
@@ -48,7 +48,7 @@ ______________________________________________________________________
 
 ### Task 2.1: Implement retry, stale reclaim, and cleanup
 
-- **Files**: eva_durable_outbox/stores/blob_geo.py
+- **Files**: durable_outbox/stores/blob_geo.py
 - **Dependencies**: None
 - **Action**: Add lifecycle methods required by DurableOutboxStore.
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists

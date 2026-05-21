@@ -11,7 +11,7 @@
 
 ### Task 1.1: Define provider client protocols
 
-- **Files**: durable-outbox-python/eva_durable_outbox/stores/**
+- **Files**: durable-outbox-python/durable_outbox/stores/**
 - **Action**: Define internal provider client protocols for Blob, Cosmos, and SQL.
 - **Verify**: `uv run pytest`
 - **Status**: [x] complete
@@ -19,7 +19,7 @@
 
 ### Task 1.2: Remove fake-store inheritance
 
-- **Files**: durable-outbox-python/eva_durable_outbox/stores/**
+- **Files**: durable-outbox-python/durable_outbox/stores/**
 - **Action**: Make production adapters implement durable store behavior directly.
 - **Verify**: `uv run pytest`
 - **Status**: [x] complete
@@ -31,7 +31,7 @@
 
 ### Task 2.1: Implement provider lifecycle paths
 
-- **Files**: durable-outbox-python/eva_durable_outbox/stores/**
+- **Files**: durable-outbox-python/durable_outbox/stores/**
 - **Action**: Implement provider-specific put, claim, retry, sent, replay, and cleanup paths.
 - **Verify**: `uv run pytest`
 - **Status**: [x] complete

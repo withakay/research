@@ -20,7 +20,7 @@ ______________________________________________________________________
 
 ### Task 1.1: Add dual-region acceptance path
 
-- **Files**: eva_durable_outbox/stores/blob_geo.py
+- **Files**: durable_outbox/stores/blob_geo.py
 - **Dependencies**: None
 - **Action**: Write PREPARED records to both regions and mark both accepted before success.
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
@@ -31,7 +31,7 @@ ______________________________________________________________________
 
 ### Task 1.2: Implement repair loop
 
-- **Files**: eva_durable_outbox/stores/blob_geo.py
+- **Files**: durable_outbox/stores/blob_geo.py
 - **Dependencies**: Task 1.1
 - **Action**: Detect and converge missing or PREPARED regional records.
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
@@ -48,7 +48,7 @@ ______________________________________________________________________
 
 ### Task 2.1: Implement failover replay and cleanup freeze
 
-- **Files**: eva_durable_outbox/core/failover.py, stores/blob_geo.py
+- **Files**: durable_outbox/core/failover.py, stores/blob_geo.py
 - **Dependencies**: None
 - **Action**: Replay TTL-valid accepted records including SENT and freeze cleanup.
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists

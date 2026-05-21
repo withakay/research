@@ -20,7 +20,7 @@ ______________________________________________________________________
 
 ### Task 1.1: Add SQL schema and mapper
 
-- **Files**: eva_durable_outbox/stores/sql.py, migrations/*
+- **Files**: durable_outbox/stores/sql.py, migrations/*
 - **Dependencies**: None
 - **Action**: Create table/index definitions and row mapping.
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
@@ -31,7 +31,7 @@ ______________________________________________________________________
 
 ### Task 1.2: Implement put claim and lifecycle transitions
 
-- **Files**: eva_durable_outbox/stores/sql.py
+- **Files**: durable_outbox/stores/sql.py
 - **Dependencies**: Task 1.1
 - **Action**: Add idempotent insert, claim query, retry, sent, failed, and cleanup logic.
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
@@ -48,7 +48,7 @@ ______________________________________________________________________
 
 ### Task 2.1: Implement RPO=0 SQL modes
 
-- **Files**: eva_durable_outbox/stores/sql.py
+- **Files**: durable_outbox/stores/sql.py
 - **Dependencies**: None
 - **Action**: Add Azure SQL sync wait and Always On capability validation.
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
