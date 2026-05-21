@@ -37,7 +37,7 @@ ______________________________________________________________________
 - **Verify**: `python -m pytest` from `durable-outbox-python` once the package scaffold exists
 - **Done When**: Define protocols and dispatcher is implemented and covered by focused tests.
 - **Requirements**: durable-outbox-core
-- **Status**: [>] in-progress
+- **Status**: [x] complete
 - **Updated At**: 2026-05-21
 
 ______________________________________________________________________
