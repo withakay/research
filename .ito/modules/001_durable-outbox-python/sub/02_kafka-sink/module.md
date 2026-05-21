@@ -7,4 +7,4 @@ Kafka MessageSink implementation with idempotent producer configuration, acknowl
 - *
 
 ## Changes
-<!-- Changes will be listed here as they are created -->
+- [ ] 001.02-01_implement-kafka-sink
