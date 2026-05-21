@@ -1,0 +1,35 @@
+{
+  "hooks": {
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "command": "bash .claude/hooks/ito-context.sh",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "bash .claude/hooks/ito-audit.sh",
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash|Edit|Write"
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "bash .claude/session-start.sh",
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  }
+}
