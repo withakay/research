@@ -34,7 +34,7 @@
 - **Files**: durable-outbox-python/eva_durable_outbox/sinks/kafka.py
 - **Action**: Implement Kafka error classification and trace header propagation.
 - **Verify**: `uv run pytest`
-- **Status**: [ ] pending
+- **Status**: [>] in-progress
 - **Updated At**: 2026-05-21
 
 ### Task 2.2: Add Kafka sink tests
