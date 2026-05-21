@@ -7,4 +7,4 @@ Metrics, tracing, status API hooks, admin replay, alerts, dashboards, runbooks, 
 - *
 
 ## Changes
-<!-- Changes will be listed here as they are created -->
+- [ ] 001.08-01_add-operational-hardening
