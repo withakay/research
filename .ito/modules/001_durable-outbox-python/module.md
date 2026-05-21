@@ -7,7 +7,7 @@ Reusable Python durable outbox package for RPO=0 at-least-once publishing.
 - *
 
 ## Changes
-- [ ] 001-09_replace-adapter-facades
+- [x] 001-09_replace-adapter-facades
 - [ ] 001-10_generalize-provider-contract
 - [ ] 001-11_harden-kafka-sink
 - [ ] 001-12_improve-retry-metadata
