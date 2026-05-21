@@ -7,4 +7,4 @@ Cosmos DB strong-consistency adapter with partitioning, idempotent create, ETag 
 - *
 
 ## Changes
-<!-- Changes will be listed here as they are created -->
+- [ ] 001.06-01_implement-cosmos-adapter
