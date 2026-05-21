@@ -7,4 +7,4 @@ Dual-region Blob RPO=0 acceptance, PREPARED repair, failover replay, and cleanup
 - *
 
 ## Changes
-- [ ] 001.04-01_add-blob-rpo0-failover
+- [ ] 001-04_add-blob-rpo0-failover

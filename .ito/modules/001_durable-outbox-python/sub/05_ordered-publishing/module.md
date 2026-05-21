@@ -7,4 +7,4 @@ Ordering coordinator, per-key sequencing, lock abstractions, Blob lease implemen
 - *
 
 ## Changes
-- [ ] 001.05-01_add-ordered-publishing
+- [ ] 001-05_add-ordered-publishing

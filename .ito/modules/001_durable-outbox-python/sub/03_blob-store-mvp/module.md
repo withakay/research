@@ -7,4 +7,4 @@ Single-region Blob durable outbox adapter with deterministic naming, ETag claimi
 - *
 
 ## Changes
-- [ ] 001.03-01_implement-blob-store-mvp
+- [ ] 001-03_implement-blob-store-mvp
