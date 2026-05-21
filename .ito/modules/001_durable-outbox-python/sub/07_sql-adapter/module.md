@@ -7,4 +7,4 @@ Azure SQL sync-wait and SQL Server Always On durable outbox adapters with schema
 - *
 
 ## Changes
-<!-- Changes will be listed here as they are created -->
+- [ ] 001.07-01_implement-sql-adapter
