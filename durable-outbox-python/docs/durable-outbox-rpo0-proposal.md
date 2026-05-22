@@ -3,9 +3,9 @@
 **Status:** Draft for planning  
 **Date:** 2026-05-21  
 **Target implementation language:** Python  
-**Primary initial consumer:** EVA Common Kafka Publisher  
-**Working package name:** `eva-durable-outbox`  
-**Working service name:** `eva-common-kafka-publisher`
+**Primary initial consumer:** Durable Outbox Kafka Publisher  
+**Working package name:** `durable-outbox`  
+**Working service name:** `durable-outbox-kafka-publisher`
 
 ---
 
@@ -13,7 +13,7 @@
 
 This proposal recommends creating a reusable Python durable outbox package that abstracts the persistence, claiming, retry, replay, cleanup, and status-management concerns required for at-least-once event publishing.
 
-The first target use case is the EVA Common Kafka Publisher, but the package should be storage- and sink-agnostic. Kafka should be implemented as one sink. Blob, Cosmos DB, and SQL should be implemented as storage adapters.
+The first target use case is the Durable Outbox Kafka Publisher, but the package should be storage- and sink-agnostic. Kafka should be implemented as one sink. Blob, Cosmos DB, and SQL should be implemented as storage adapters.
 
 The package should support certified **RPO=0 implementations** for accepted events using:
 
@@ -31,11 +31,11 @@ An adapter is only RPO=0 if `put(event)` returns success after the event is dura
 
 ## 2. Context
 
-The EVA Common Kafka Publisher requires durable event persistence before Kafka publication, at-least-once delivery, event-level idempotency using a producer-generated `eventId`, status visibility, retry handling, stateless publisher instances, optional per-key ordering, and operational metrics.
+The Durable Outbox Kafka Publisher requires durable event persistence before Kafka publication, at-least-once delivery, event-level idempotency using a producer-generated `eventId`, status visibility, retry handling, stateless publisher instances, optional per-key ordering, and operational metrics.
 
 The reusable package generalizes those requirements so the same outbox machinery can be used with different durable stores and downstream sinks.
 
-### Current EVA-aligned requirements
+### Current durable-outbox-aligned requirements
 
 | Area | Requirement |
 |---|---|
@@ -176,7 +176,7 @@ expires_at >= failover_started_at
 
 ```mermaid
 flowchart LR
-    P[Producer / EVA Model] --> API[Outbox API or SDK]
+    P[Producer / Durable Outbox Model] --> API[Outbox API or SDK]
     API --> S[DurableOutboxStore]
     S --> B[Blob / Cosmos DB / SQL]
 
@@ -205,7 +205,7 @@ flowchart LR
 ## 8. Package layout
 
 ```text
-eva_durable_outbox/
+durable_outbox/
   core/
     model.py
     capabilities.py
@@ -239,7 +239,7 @@ eva_durable_outbox/
     failure_injection.py
 ```
 
-The EVA Kafka publisher service can then compose the library:
+The Durable Outbox Kafka publisher service can then compose the library:
 
 ```text
 eva_common_kafka_publisher/
@@ -249,7 +249,7 @@ eva_common_kafka_publisher/
   runtime/
     service.py
   config/
-    eva_settings.py
+    outbox_settings.py
 ```
 
 ---
@@ -519,7 +519,7 @@ Azure Storage geo-replication is asynchronous. Therefore, a Blob adapter that re
 ### Blob layout
 
 ```text
-container: eva-durable-outbox
+container: durable-outbox
 
 outbox/v1/events/<event_id>.json
 outbox/v1/key-locks/<environment>/<topic_hash>/<ordering_key_hash>.lock
@@ -606,7 +606,7 @@ Dispatchers only process accepted=true.
 |---|---|
 | Simple to inspect and debug. | Dual-write latency on acceptance path. |
 | Handles large payloads well. | Needs partial-write repair logic. |
-| Natural fit for existing EVA spec. | Blob tag indexes should not be the sole correctness mechanism. |
+| Natural fit for existing Durable Outbox spec. | Blob tag indexes should not be the sole correctness mechanism. |
 | Stateless publishers can claim via ETag/leases. | RA-GRS alone is not RPO=0. |
 
 ---
@@ -640,7 +640,7 @@ Do not use multi-write Cosmos DB for this RPO=0 adapter, because Cosmos DB accou
   "pk": "topic#ordering-key-hash-or-shard",
   "status": "PENDING",
   "accepted": true,
-  "topic": "eva.model.outputs",
+  "topic": "durable.outbox.outputs",
   "key": "model-run-123",
   "headers": {},
   "payload": "base64-or-claim-check-uri",
@@ -834,7 +834,7 @@ ORDER BY created_at_utc;
 
 | Adapter | RPO=0 mechanism | RPO=0 for accepted events? | Active-active writes? | Claim mechanism | Best fit |
 |---|---|---:|---:|---|---|
-| `DualRegionBlobOutboxStore` | Application-level dual write to two regional Blob accounts | Yes | No | Blob ETag / lease | Blob-first EVA outbox, large messages, inspectability |
+| `DualRegionBlobOutboxStore` | Application-level dual write to two regional Blob accounts | Yes | No | Blob ETag / lease | Blob-first Durable Outbox outbox, large messages, inspectability |
 | `CosmosStrongOutboxStore` | Cosmos DB strong consistency, more than one region, single write region | Yes | No | ETag conditional patch | Clean managed RPO=0 with small/medium event envelopes |
 | `AzureSqlSyncOutboxStore` | Commit + `sp_wait_for_database_copy_sync` | Yes | No | SQL locks / rowversion | Azure SQL estates |
 | `SqlAlwaysOnOutboxStore` | Synchronous-commit availability group / required synchronized secondaries | Yes | No | SQL locks / rowversion | SQL Server estates |
@@ -1024,10 +1024,11 @@ outbox_stale_in_flight_reclaims_total{store}
 outbox_put_latency_ms{store}
 outbox_put_failures_total{store,error_type}
 
-kafka_publish_attempts_total{topic}
-kafka_publish_success_total{topic}
-kafka_publish_failures_total{topic,error_type}
-kafka_publish_latency_ms{topic}
+outbox_publish_attempts_total{topic}
+outbox_publish_success_total{topic}
+outbox_publish_failures_total{topic,error_type}
+outbox_mark_sent_failures_total{topic,error_type}
+outbox_publish_latency_ms{topic}
 
 failover_replay_events_total{store,topic}
 failover_replay_duration_seconds{store}
@@ -1195,7 +1196,7 @@ Deliver:
 
 Acceptance criteria:
 
-- matches existing EVA Blob outbox semantics.
+- matches existing Durable Outbox Blob outbox semantics.
 - supports unordered mode.
 - passes provider contract excluding RPO=0 geo tests.
 
@@ -1355,7 +1356,7 @@ Acceptance criteria:
 
 | Decision | Options | Recommendation |
 |---|---|---|
-| First provider | Blob, Cosmos, SQL | Blob first to satisfy the current EVA direction. |
+| First provider | Blob, Cosmos, SQL | Blob first to satisfy the current Durable Outbox direction. |
 | RPO=0 Blob mechanism | GRS only vs dual-write | Dual-write only for RPO=0. |
 | Cosmos consistency | Strong vs session | Strong for certified RPO=0. |
 | SQL RPO=0 | Active geo-rep + sync wait vs Always On sync commit | Support both as separate adapter modes. |
@@ -1393,7 +1394,7 @@ Acceptance criteria:
 6. What is the expected maximum outbox depth during Kafka outage?
 7. What is the required replay rate during failover?
 8. Do we need tenant/environment isolation at the package level or only at service config level?
-9. Should the package expose a FastAPI status API, or only storage-level methods used by the EVA service?
+9. Should the package expose a FastAPI status API, or only storage-level methods used by the Durable Outbox service?
 10. What is the required retention for `FAILED` events?
 
 ---
@@ -1439,7 +1440,7 @@ The MVP is complete when:
 
 ## 33. References
 
-- EVA Common Kafka Publisher specification, uploaded Confluence export.
+- Durable Outbox Kafka Publisher specification, uploaded Confluence export.
 - Azure Storage redundancy: https://learn.microsoft.com/en-us/azure/storage/common/storage-redundancy
 - Azure Storage Last Sync Time: https://learn.microsoft.com/en-us/azure/storage/common/last-sync-time-get
 - Azure Cosmos DB consistency levels: https://learn.microsoft.com/en-us/azure/cosmos-db/consistency-levels

@@ -1,0 +1,266 @@
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from uuid import uuid4
+
+from durable_outbox.core.capabilities import OutboxCapabilities
+from durable_outbox.core.errors import (
+    ClaimConflictError,
+    DuplicateEventConflictError,
+    ValidationError,
+)
+from durable_outbox.core.model import (
+    AcceptedReceipt,
+    ClaimedEvent,
+    OutboxEvent,
+    OutboxStatus,
+    PublishingMode,
+    PublishResult,
+)
+from durable_outbox.core.time import Clock, SystemClock
+from durable_outbox.core.validation import enforce_payload_size, require_positive_limit
+
+
+@dataclass(slots=True)
+class StoredEvent:
+    event: OutboxEvent
+    status: OutboxStatus = OutboxStatus.PENDING
+    accepted: bool = True
+    accepted_at: datetime | None = None
+    attempt_count: int = 0
+    claim_token: str | None = None
+    claimed_at: datetime | None = None
+    next_attempt_at: datetime | None = None
+    sent_at: datetime | None = None
+    publish_result: PublishResult | None = None
+    failed_at: datetime | None = None
+    last_error_type: str | None = None
+    last_error: str | None = None
+
+
+class MemoryOutboxStore:
+    capabilities = OutboxCapabilities(
+        store_name="MemoryOutboxStore",
+        rpo_zero_for_accepted_events=False,
+        supports_ordering=True,
+        supports_failover_replay=True,
+        supports_ttl_freeze=True,
+    )
+
+    def __init__(
+        self,
+        *,
+        claim_timeout: timedelta = timedelta(minutes=5),
+        clock: Clock | None = None,
+    ) -> None:
+        self.records: dict[str, StoredEvent] = {}
+        self.claim_timeout = claim_timeout
+        self.clock = clock or SystemClock()
+        self.cleanup_frozen = False
+        self.cleanup_freeze_reason: str | None = None
+
+    async def put(self, event: OutboxEvent) -> AcceptedReceipt:
+        enforce_payload_size(event, self.capabilities)
+        if event.publishing_mode is PublishingMode.ORDERED and not event.ordering_key:
+            raise ValidationError("ordered events require ordering_key")
+        now = self.clock.utcnow()
+        record = self.records.get(event.event_id)
+        if record is None:
+            record = StoredEvent(event=event, accepted_at=now)
+            self.records[event.event_id] = record
+        elif not _compatible_event(record.event, event):
+            raise DuplicateEventConflictError(
+                f"event_id {event.event_id!r} already exists with incompatible envelope"
+            )
+        return AcceptedReceipt(
+            event_id=event.event_id,
+            accepted_at=record.accepted_at or now,
+            rpo_zero=self.capabilities.rpo_zero_for_accepted_events,
+            store=self.capabilities.store_name,
+        )
+
+    async def claim_batch(self, *, limit: int) -> list[ClaimedEvent]:
+        require_positive_limit(limit)
+        now = self.clock.utcnow()
+        claimed: list[ClaimedEvent] = []
+        locked_keys = self._in_flight_ordering_keys(now)
+        ordered_pending = sorted(
+            self.records.values(),
+            key=lambda record: (
+                record.event.topic,
+                record.event.ordering_key or "",
+                record.event.ordering_sequence or 0,
+                record.event.created_at,
+            ),
+        )
+        for record in ordered_pending:
+            if len(claimed) >= limit:
+                break
+            if not self._eligible_for_claim(record, now):
+                continue
+            ordering_key = record.event.effective_ordering_key
+            if ordering_key is not None and ordering_key in locked_keys:
+                continue
+            token = str(uuid4())
+            record.status = OutboxStatus.IN_FLIGHT
+            record.claim_token = token
+            record.claimed_at = now
+            record.attempt_count += 1
+            if ordering_key is not None:
+                locked_keys.add(ordering_key)
+            claimed.append(
+                ClaimedEvent(
+                    event=record.event,
+                    claim_token=token,
+                    attempt_count=record.attempt_count,
+                )
+            )
+        return claimed
+
+    async def mark_sent(self, claimed: ClaimedEvent, result: PublishResult) -> None:
+        record = self._claimed_record(claimed)
+        record.status = OutboxStatus.SENT
+        record.sent_at = result.published_at
+        record.publish_result = result
+        record.claim_token = None
+        record.claimed_at = None
+
+    async def mark_pending_after_retryable_failure(
+        self,
+        claimed: ClaimedEvent,
+        *,
+        error_type: str,
+        error_message: str,
+        next_attempt_at: datetime,
+    ) -> None:
+        record = self._claimed_record(claimed)
+        record.status = OutboxStatus.PENDING
+        record.next_attempt_at = next_attempt_at
+        record.last_error_type = error_type
+        record.last_error = error_message
+        record.claim_token = None
+        record.claimed_at = None
+
+    async def mark_failed(
+        self,
+        claimed: ClaimedEvent,
+        *,
+        error_type: str,
+        error_message: str,
+    ) -> None:
+        record = self._claimed_record(claimed)
+        record.status = OutboxStatus.FAILED
+        record.failed_at = self.clock.utcnow()
+        record.last_error_type = error_type
+        record.last_error = error_message
+        record.claim_token = None
+        record.claimed_at = None
+
+    async def failover_replay_candidates(
+        self,
+        *,
+        failover_started_at: datetime,
+        limit: int,
+    ) -> list[ClaimedEvent]:
+        require_positive_limit(limit)
+        candidates: list[ClaimedEvent] = []
+        for record in sorted(
+            self.records.values(), key=lambda item: item.event.created_at
+        ):
+            if len(candidates) >= limit:
+                break
+            if not record.accepted:
+                continue
+            if record.status not in {
+                OutboxStatus.PENDING,
+                OutboxStatus.IN_FLIGHT,
+                OutboxStatus.SENT,
+            }:
+                continue
+            if record.event.expires_at < failover_started_at:
+                continue
+            token = str(uuid4())
+            record.status = OutboxStatus.IN_FLIGHT
+            record.claim_token = token
+            record.claimed_at = self.clock.utcnow()
+            record.attempt_count += 1
+            candidates.append(
+                ClaimedEvent(
+                    event=record.event,
+                    claim_token=token,
+                    attempt_count=record.attempt_count,
+                )
+            )
+        return candidates
+
+    async def freeze_cleanup(self, *, reason: str) -> None:
+        self.cleanup_frozen = True
+        self.cleanup_freeze_reason = reason
+
+    async def resume_cleanup(self) -> None:
+        self.cleanup_frozen = False
+        self.cleanup_freeze_reason = None
+
+    async def cleanup_sent(self, *, now: datetime, safety_margin: timedelta) -> int:
+        if self.cleanup_frozen:
+            return 0
+        to_delete = [
+            event_id
+            for event_id, record in self.records.items()
+            if record.status is OutboxStatus.SENT
+            and now > record.event.expires_at + safety_margin
+        ]
+        for event_id in to_delete:
+            del self.records[event_id]
+        return len(to_delete)
+
+    async def repair_failed_to_pending(self, *, event_id: str) -> None:
+        record = self.records[event_id]
+        if record.status is not OutboxStatus.FAILED:
+            return
+        record.status = OutboxStatus.PENDING
+        record.failed_at = None
+
+    def _claimed_record(self, claimed: ClaimedEvent) -> StoredEvent:
+        record = self.records[claimed.event.event_id]
+        if record.claim_token != claimed.claim_token:
+            raise ClaimConflictError("claim token does not match current owner")
+        return record
+
+    def _eligible_for_claim(self, record: StoredEvent, now: datetime) -> bool:
+        if not record.accepted:
+            return False
+        if record.status is OutboxStatus.PENDING:
+            return record.next_attempt_at is None or record.next_attempt_at <= now
+        if record.status is OutboxStatus.IN_FLIGHT and record.claimed_at is not None:
+            return record.claimed_at + self.claim_timeout <= now
+        return False
+
+    def _in_flight_ordering_keys(self, now: datetime) -> set[str]:
+        locked: set[str] = set()
+        for record in self.records.values():
+            key = record.event.effective_ordering_key
+            if key is None:
+                continue
+            if record.status is not OutboxStatus.IN_FLIGHT:
+                continue
+            if (
+                record.claimed_at is None
+                or record.claimed_at + self.claim_timeout <= now
+            ):
+                continue
+            locked.add(key)
+        return locked
+
+
+def _compatible_event(existing: OutboxEvent, incoming: OutboxEvent) -> bool:
+    return (
+        existing.topic == incoming.topic
+        and existing.payload == incoming.payload
+        and existing.key == incoming.key
+        and dict(existing.headers) == dict(incoming.headers)
+        and existing.ordering_key == incoming.ordering_key
+        and existing.ordering_sequence == incoming.ordering_sequence
+        and existing.publishing_mode == incoming.publishing_mode
+        and existing.schema_id == incoming.schema_id
+        and existing.schema_version == incoming.schema_version
+    )
