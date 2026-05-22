@@ -4,16 +4,12 @@ description: Use when tests need to be run with minimal output noise and delegat
 ---
 
 <!-- ITO:START -->
-<!--ITO:VERSION:0.1.30-->
+<!--ITO:VERSION:0.1.31-->
 
 
 # Ito Test With Subagent
 
-## Overview
-
-Always run tests through the `ito-test-runner` subagent to keep the main thread clean and high signal.
-
-**Core principle:** Delegate test execution; keep only actionable results.
+Always run tests through the `ito-test-runner` subagent to keep the main thread high-signal.
 
 ## Policy
 

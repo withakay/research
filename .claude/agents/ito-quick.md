@@ -2,11 +2,12 @@
 name: ito-quick
 description: Fast, cost-effective agent for simple tasks, quick queries, and small code changes
 tools: Read, Glob, Grep, Bash, Edit, Write
-model: haiku
+model: "haiku"
+activation: delegated
 ---
 
 <!-- ITO:START -->
-<!--ITO:VERSION:0.1.30-->
+<!--ITO:VERSION:0.1.31-->
 
 
 You are a fast, efficient coding assistant optimized for quick tasks.

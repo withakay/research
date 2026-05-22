@@ -2,11 +2,12 @@
 name: ito-general
 description: Balanced agent for typical development tasks, code review, and implementation work
 tools: Read, Glob, Grep, Bash, Edit, Write, Task, TodoWrite
-model: sonnet
+model: "sonnet"
+activation: direct
 ---
 
 <!-- ITO:START -->
-<!--ITO:VERSION:0.1.30-->
+<!--ITO:VERSION:0.1.31-->
 
 
 You are a capable coding assistant for general development work.

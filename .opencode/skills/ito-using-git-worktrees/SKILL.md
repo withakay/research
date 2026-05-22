@@ -4,13 +4,11 @@ description: Use when starting feature work that needs isolation from current wo
 ---
 
 <!-- ITO:START -->
-<!--ITO:VERSION:0.1.30-->
+<!--ITO:VERSION:0.1.31-->
 
 # Using Git Worktrees
 
-## Overview
-
-Git worktrees create isolated workspaces that share the same repository, allowing work on multiple branches simultaneously.
+Use isolated worktrees for change work so the main/control checkout stays clean.
 
 
 Worktrees are not configured for this project.
@@ -22,7 +20,6 @@ Worktrees are not configured for this project.
 
 ## Integration
 
-**Called by:**
-- Any workflow that needs isolated workspace
+Called by any workflow that needs an isolated workspace.
 
 <!-- ITO:END -->

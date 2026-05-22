@@ -10,14 +10,11 @@ $ARGUMENTS
 </UserRequest>
 
 <!-- ITO:START -->
-<!--ITO:VERSION:0.1.30-->
+<!--ITO:VERSION:0.1.31-->
 
 Load and follow the `ito-apply` skill. Pass the <UserRequest> block as input.
 
-**Audit guardrail**
-
-- Before stateful Ito actions: run `ito audit validate`.
-- If validation fails or drift is reported, run `ito audit reconcile` and `ito audit reconcile --fix` to remediate.
+Audit guardrail: before stateful Ito actions, run `ito audit validate`; if it fails or reports drift, run `ito audit reconcile` then `ito audit reconcile --fix`.
 
 **Testing policy**: follow the policy printed by `ito agent instruction apply --change <id>`.
 
