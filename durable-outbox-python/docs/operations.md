@@ -133,4 +133,4 @@ developer environment.
    in the source distribution.
 3. Tag releases from a clean commit after the package version is updated.
 4. Publish with repository credentials from the release environment, never from
-   a developer shell with long-lived credentials.
+   a developer environment with long-lived credentials.

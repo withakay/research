@@ -26,7 +26,7 @@ SOCKET_DIR=${TMPDIR:-/tmp}/claude-tmux-sockets  # well-known dir for all agent s
 mkdir -p "$SOCKET_DIR"
 SOCKET="$SOCKET_DIR/claude.sock"                # keep agent sessions separate from your personal tmux
 SESSION=claude-python                           # slug-like names; avoid spaces
-tmux -S "$SOCKET" new -d -s "$SESSION" -n shell
+tmux -S "$SOCKET" new -d -s "$SESSION" -n main
 tmux -S "$SOCKET" send-keys -t "$SESSION":0.0 -- 'python3 -q' Enter
 tmux -S "$SOCKET" capture-pane -p -J -t "$SESSION":0.0 -S -200  # watch output
 tmux -S "$SOCKET" kill-session -t "$SESSION"                   # clean up
@@ -62,7 +62,7 @@ This must ALWAYS be printed right after a session was started and once again at 
 
 ## Sending input safely
 
-- Prefer literal sends to avoid shell splitting: `tmux -S "$SOCKET" send-keys -t target -l -- "$cmd"`
+- Prefer literal sends to avoid word splitting: `tmux -S "$SOCKET" send-keys -t target -l -- "$cmd"`
 - When composing inline commands, use single quotes or ANSI C quoting to avoid expansion: `tmux ... send-keys -t target -- $'python3 -m http.server 8000'`.
 - To send control keys: `tmux ... send-keys -t target C-c`, `C-d`, `C-z`, `Escape`, etc.
 
@@ -78,7 +78,7 @@ This must ALWAYS be printed right after a session was started and once again at 
 Some special rules for processes:
 
 - when asked to debug, use lldb by default
-- when starting a python interactive shell, always set the `PYTHON_BASIC_REPL=1` environment variable. This is very important as the non-basic console interferes with your send-keys.
+- when starting a python interactive REPL, always set the `PYTHON_BASIC_REPL=1` environment variable. This is very important as the non-basic console interferes with your send-keys.
 
 ## Synchronizing / waiting for prompts
 

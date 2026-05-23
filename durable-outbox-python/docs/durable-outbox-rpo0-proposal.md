@@ -242,7 +242,7 @@ durable_outbox/
 The Durable Outbox Kafka publisher service can then compose the library:
 
 ```text
-eva_common_kafka_publisher/
+durable_outbox_kafka_publisher/
   api/
     app.py
     schemas.py
