@@ -75,6 +75,37 @@ record per successful admin action, flushes the file handle, and calls `fsync`
 by default. Set `fsync=False` only when the host has a stronger durability
 boundary around log shipping.
 
+## Error And Outcome Semantics
+
+The package uses explicit domain outcomes for expected operator branches and
+exceptions for invalid input, ambiguous durability, or dependency failure. This
+keeps expected admin flows easy to branch on without making publish/store
+failures easy to ignore.
+
+Admin repair and replay return `AdminActionStatus`:
+
+- `success` means the requested state transition was applied.
+- `not_found` means no matching event exists.
+- `wrong_state` means the event exists but cannot perform the requested action
+  from its current state.
+
+Those statuses are intentionally narrow. A broad generic `Result[T, E]` would
+add Rust-style ceremony to Python protocols that already have clear exception
+boundaries. Store and sink operations therefore continue to raise typed
+exceptions when the caller must not proceed as though the operation completed:
+
+- `ValidationError` for invalid envelopes or unsafe metadata.
+- `ConfigurationError` for provider setup that cannot satisfy the requested
+  contract.
+- `RetryablePublishError` when a sink publish may succeed after retry.
+- `NonRetryablePublishError` when a deterministic sink failure should mark the
+  event `FAILED`.
+- `RetryableStoreError` when a store operation has an ambiguous or retryable
+  durability result.
+- `ClaimConflictError` when an optimistic claim or version check loses a race.
+- `DuplicateEventConflictError` when an existing `event_id` is reused for
+  incompatible event data.
+
 ## Integration Credentials and Markers
 
 Integration tests are opt-in and marked with `@pytest.mark.integration`.

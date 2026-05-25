@@ -85,3 +85,17 @@ def test_provider_docs_cover_rpo_zero_modes() -> None:
     assert "Cosmos" in docs
     assert "SQL" in docs
     assert "adapter acceptance contract" in docs
+
+
+def test_operations_docs_describe_error_and_outcome_policy() -> None:
+    operations = (PROJECT_ROOT / "docs" / "operations.md").read_text()
+
+    assert "Error And Outcome Semantics" in operations
+    assert "AdminActionStatus" in operations
+    assert "success" in operations
+    assert "not_found" in operations
+    assert "wrong_state" in operations
+    assert "RetryablePublishError" in operations
+    assert "NonRetryablePublishError" in operations
+    assert "RetryableStoreError" in operations
+    assert "ClaimConflictError" in operations

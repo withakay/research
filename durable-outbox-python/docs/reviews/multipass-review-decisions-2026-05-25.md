@@ -1193,3 +1193,36 @@ verification evidence.
   `uv run ruff format --check .` -> 51 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 43: Error And Outcome Semantics Documentation
+
+### Findings Accepted
+
+- **Result-pattern follow-up:** a broad generic Rust-style `Result[T, E]` would
+  reduce Python ergonomics across the store and sink protocols, but the repo
+  needed an explicit policy so future changes preserve the useful distinction
+  already introduced by `AdminActionStatus`.
+
+### Fixes Implemented
+
+- Documented the boundary in `docs/operations.md`: expected operator branches
+  use `AdminActionStatus`; invalid input, ambiguous durability, provider setup,
+  publish classification, claim conflicts, and duplicate conflicts remain
+  typed exceptions.
+- Added a packaging/docs regression test so the operation guide keeps naming
+  the status outcomes and public error taxonomy.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_packaging_docs.py::test_operations_docs_describe_error_and_outcome_policy -q`
+  -> failed because `docs/operations.md` did not yet describe the policy.
+- Focused green run:
+  `uv run pytest tests/test_packaging_docs.py::test_operations_docs_describe_error_and_outcome_policy -q`
+  -> 1 passed
+- Full package gates:
+  `uv run pytest -q` -> 203 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 51 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
