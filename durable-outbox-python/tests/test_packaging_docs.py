@@ -187,6 +187,17 @@ def test_operations_docs_describe_error_and_outcome_policy() -> None:
     assert "ClaimConflictError" in operations
 
 
+def test_operations_docs_describe_package_logging_contract() -> None:
+    operations = (PROJECT_ROOT / "docs" / "operations.md").read_text()
+
+    assert "## Logging" in operations
+    assert "durable_outbox" in operations
+    assert "event_id" in operations
+    assert "operation" in operations
+    assert "error_type" in operations
+    assert "payload bytes" in operations
+
+
 def test_data_model_docs_map_canonical_fields_to_adapter_renderings() -> None:
     data_model = (PROJECT_ROOT / "docs" / "data-model.md").read_text()
     proposal = (PROJECT_ROOT / "docs" / "durable-outbox-rpo0-proposal.md").read_text()

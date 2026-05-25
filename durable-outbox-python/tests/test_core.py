@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from collections.abc import MutableMapping
 from datetime import UTC, datetime, timedelta
 from random import Random
@@ -465,7 +466,9 @@ async def test_dispatcher_observes_retry_state_update_failure() -> None:
 
 
 @pytest.mark.asyncio
-async def test_dispatcher_observes_failed_state_update_failure() -> None:
+async def test_dispatcher_logs_store_update_failures(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     inner = FakeOutboxStore()
     event = make_event()
     await inner.put(event)
@@ -475,11 +478,12 @@ async def test_dispatcher_observes_failed_state_update_failure() -> None:
     )
     metrics = InMemoryMetrics()
 
-    summary = await OutboxDispatcher(
-        store,
-        FailingSink(errors=[NonRetryablePublishError("unknown topic")]),
-        metrics=metrics,
-    ).run_once(limit=10)
+    with caplog.at_level(logging.WARNING, logger="durable_outbox"):
+        summary = await OutboxDispatcher(
+            store,
+            FailingSink(errors=[NonRetryablePublishError("unknown topic")]),
+            metrics=metrics,
+        ).run_once(limit=10)
 
     record = inner.records[event.event_id]
     assert summary.failed == 0
@@ -498,6 +502,13 @@ async def test_dispatcher_observes_failed_state_update_failure() -> None:
         ]
         == 1
     )
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.__dict__["event_id"] == event.event_id
+    assert record.__dict__["topic"] == event.topic
+    assert record.__dict__["operation"] == "mark_failed"
+    assert record.__dict__["error_type"] == "RuntimeError"
+    assert "store update failed" in record.message
 
 
 @pytest.mark.asyncio

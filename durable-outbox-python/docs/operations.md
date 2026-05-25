@@ -47,6 +47,17 @@ runtime dependency on an observability SDK.
 - `cleanup_frozen{store}`
 - `outbox_admin_actions_total{action,result}`
 
+## Logging
+
+The package logs operational warnings through the `durable_outbox` logger
+hierarchy. Hosts should attach handlers and propagate those records into their
+normal log pipeline.
+
+Warnings never include payload bytes. Store-update failures emitted by the
+dispatcher include structured `event_id`, `topic`, `operation`, and
+`error_type` extras so operators can correlate counters with a specific event
+without reading opaque payloads.
+
 ## Admin Hooks
 
 Admin operations use structural protocols rather than test-store internals:

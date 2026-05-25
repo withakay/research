@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import re
 from dataclasses import dataclass
 
@@ -13,6 +14,7 @@ from durable_outbox.telemetry.metrics import MetricsAdapter, NoopMetrics
 MAX_STORED_ERROR_MESSAGE_BYTES = 512
 TRUNCATED_ERROR_SUFFIX = "...[truncated]"
 UUID_PATTERN = re.compile(r"\b[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\b")
+_LOGGER = logging.getLogger("durable_outbox")
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +94,7 @@ class OutboxDispatcher:
                 )
             except Exception as store_exc:
                 self._record_store_update_failure(
+                    event_id=event.event_id,
                     topic=event.topic,
                     operation="mark_failed",
                     exc=store_exc,
@@ -125,6 +128,7 @@ class OutboxDispatcher:
                 )
             except Exception as store_exc:
                 self._record_store_update_failure(
+                    event_id=event.event_id,
                     topic=event.topic,
                     operation="mark_pending_after_retryable_failure",
                     exc=store_exc,
@@ -151,6 +155,7 @@ class OutboxDispatcher:
                 error_type=type(exc).__name__,
             )
             self._record_store_update_failure(
+                event_id=event.event_id,
                 topic=event.topic,
                 operation="mark_sent",
                 exc=exc,
@@ -162,15 +167,26 @@ class OutboxDispatcher:
     def _record_store_update_failure(
         self,
         *,
+        event_id: str,
         topic: str,
         operation: str,
         exc: Exception,
     ) -> None:
+        error_type = type(exc).__name__
         self.metrics.increment(
             "outbox_store_update_failures_total",
             topic=topic,
             operation=operation,
-            error_type=type(exc).__name__,
+            error_type=error_type,
+        )
+        _LOGGER.warning(
+            "Outbox store update failed",
+            extra={
+                "event_id": event_id,
+                "topic": topic,
+                "operation": operation,
+                "error_type": error_type,
+            },
         )
 
 

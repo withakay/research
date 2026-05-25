@@ -1585,3 +1585,41 @@ verification evidence.
   `uv run ruff format --check .` -> 52 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 54: Dispatcher Store-Update Logging
+
+### Findings Accepted
+
+- **Q-P3-1:** the review's package-wide "no logging" wording is now stale
+  because failover and dual-region Blob reconciliation already emit warnings,
+  but dispatcher store-update failures still only incremented metrics and left
+  operators without event-level log context.
+
+### Fixes Implemented
+
+- Added a `durable_outbox` logger warning in the shared dispatcher
+  store-update failure path.
+- Included safe structured extras: `event_id`, `topic`, `operation`, and
+  `error_type`. Payload bytes remain excluded.
+- Documented the package logging contract in `docs/operations.md`.
+- Added caplog and documentation regressions for the warning record and docs.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_core.py::test_dispatcher_logs_store_update_failures -q`
+  -> failed because no warning record was emitted.
+- Focused green run:
+  `uv run pytest tests/test_core.py::test_dispatcher_logs_store_update_failures tests/test_packaging_docs.py::test_operations_docs_describe_package_logging_contract -q`
+  -> 2 passed
+- Focused lint/format:
+  `uv run ruff check durable_outbox/core/dispatcher.py tests/test_core.py tests/test_packaging_docs.py`
+  -> all checks passed;
+  `uv run ruff format --check durable_outbox/core/dispatcher.py tests/test_core.py tests/test_packaging_docs.py`
+  -> 3 files already formatted.
+- Full package gates:
+  `uv run pytest -q` -> 221 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 52 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
