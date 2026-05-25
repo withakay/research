@@ -1,7 +1,9 @@
 import json
+import threading
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -113,6 +115,37 @@ async def test_jsonl_audit_sink_appends_fsynced_records(tmp_path: Path) -> None:
             "reason": "downstream replay",
         },
     ]
+
+
+@pytest.mark.asyncio
+async def test_jsonl_audit_sink_runs_fsync_off_event_loop_thread(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    occurred_at = datetime(2026, 5, 21, 10, 30, tzinfo=UTC)
+    path = tmp_path / "audit" / "outbox-admin.jsonl"
+    sink = JsonlAuditSink(path)
+    loop_thread_id = threading.get_ident()
+    observed = SimpleNamespace(thread_id=None)
+
+    def fsync(fd: int) -> None:
+        _ = fd
+        observed.thread_id = threading.get_ident()
+
+    monkeypatch.setattr("durable_outbox.operations.os.fsync", fsync)
+
+    await sink.record(
+        AuditRecord(
+            action="repair_failed",
+            event_id="event-1",
+            operator="ops@example.test",
+            reason="route fixed",
+            occurred_at=occurred_at,
+        )
+    )
+
+    assert observed.thread_id is not None
+    assert observed.thread_id != loop_thread_id
 
 
 @pytest.mark.asyncio

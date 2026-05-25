@@ -351,3 +351,24 @@ verification evidence.
 - Focused green run:
   `uv run pytest tests/test_kafka_operations.py::test_kafka_config_rejects_plaintext_in_certified_mode tests/test_kafka_operations.py::test_kafka_config_allows_plaintext_when_not_certified tests/test_kafka_operations.py::test_outbox_event_rejects_sensitive_headers tests/test_kafka_operations.py::test_kafka_sink_from_config_uses_real_producer_factory_hook tests/test_kafka_operations.py::test_kafka_sink_preserves_trace_headers_and_adds_event_identity -q`
   -> 5 passed
+
+## Batch 12: Async-Safe JSONL Audit Writes
+
+### Findings Accepted
+
+- **S-P1-3:** `JsonlAuditSink.record()` performed file append, flush, and fsync
+  directly on the asyncio event-loop thread.
+
+### Fixes Implemented
+
+- Moved the blocking JSONL append/flush/fsync work into `asyncio.to_thread`.
+- Kept the existing async lock around the write call so audit records remain
+  ordered per sink instance.
+
+### Verification
+
+- Focused red test showed `os.fsync` ran on the event-loop thread before
+  implementation.
+- Focused green run:
+  `uv run pytest tests/test_operations.py::test_jsonl_audit_sink_runs_fsync_off_event_loop_thread tests/test_operations.py::test_jsonl_audit_sink_appends_fsynced_records -q`
+  -> 2 passed

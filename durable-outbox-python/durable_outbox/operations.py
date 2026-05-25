@@ -83,12 +83,9 @@ class JsonlAuditSink:
     async def record(self, record: AuditRecord) -> None:
         line = json.dumps(record.to_json_dict(), sort_keys=True, separators=(",", ":"))
         async with self._lock:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            with self.path.open("a", encoding="utf-8") as audit_file:
-                audit_file.write(f"{line}\n")
-                audit_file.flush()
-                if self.fsync:
-                    os.fsync(audit_file.fileno())
+            await asyncio.to_thread(
+                _append_jsonl_audit_line, self.path, line, self.fsync
+            )
 
 
 MetricKind = Literal["counter", "gauge"]
@@ -254,6 +251,15 @@ def status_summary(events: Sequence[AdminEventMetadata]) -> StatusSummary:
         sent=counts[OutboxStatus.SENT],
         failed=counts[OutboxStatus.FAILED],
     )
+
+
+def _append_jsonl_audit_line(path: Path, line: str, fsync: bool) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as audit_file:
+        audit_file.write(f"{line}\n")
+        audit_file.flush()
+        if fsync:
+            os.fsync(audit_file.fileno())
 
 
 def _metric_key(
