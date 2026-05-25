@@ -2,9 +2,14 @@ from collections.abc import Mapping
 from importlib import import_module
 from typing import Any, cast
 
+from durable_outbox.core.errors import ConfigurationError
 from durable_outbox.stores.blob_geo import (
     BlobObject,
     BlobPreconditionFailedError,
+)
+
+_AZURE_EXTRA_MESSAGE = (
+    "Azure Blob support requires the azure extra: install durable-outbox[azure]"
 )
 
 
@@ -21,13 +26,7 @@ class AzureBlobClient:
         *,
         container_name: str,
     ) -> AzureBlobClient:
-        try:
-            module: Any = import_module("azure.storage.blob.aio")
-        except ModuleNotFoundError as exc:
-            raise RuntimeError(
-                "Azure Blob support requires the azure extra: "
-                "install durable-outbox[azure]"
-            ) from exc
+        module = _import_azure_module("azure.storage.blob.aio")
         container_client = module.ContainerClient.from_connection_string(
             connection_string,
             container_name=container_name,
@@ -141,8 +140,16 @@ class AzureBlobClient:
 
 
 def _if_not_modified() -> Any:
-    module: Any = import_module("azure.core")
+    module = _import_azure_module("azure.core")
     return module.MatchConditions.IfNotModified
+
+
+def _import_azure_module(name: str) -> Any:
+    try:
+        module: Any = import_module(name)
+    except ModuleNotFoundError as exc:
+        raise ConfigurationError(_AZURE_EXTRA_MESSAGE) from exc
+    return module
 
 
 def _is_azure_error(exc: Exception, names: set[str]) -> bool:

@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from durable_outbox.core import ConfigurationError
 from durable_outbox.sinks.file import FileSink
 from durable_outbox.stores.azure_blob import AzureBlobClient
 from durable_outbox.stores.blob_geo import BlobObject
@@ -124,10 +125,35 @@ def test_azure_blob_client_reports_missing_optional_dependency(
         "durable_outbox.stores.azure_blob.import_module", fail_azure_import
     )
 
-    with pytest.raises(RuntimeError, match="durable-outbox\\[azure\\]"):
+    with pytest.raises(ConfigurationError, match="durable-outbox\\[azure\\]"):
         AzureBlobClient.from_connection_string(
             "UseDevelopmentStorage=true",
             container_name="outbox",
+        )
+
+
+@pytest.mark.asyncio
+async def test_azure_blob_client_reports_missing_core_optional_dependency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_import_module = import_module
+
+    def fail_azure_core_import(name: str) -> Any:
+        if name == "azure.core":
+            raise ModuleNotFoundError("No module named 'azure'")
+        return real_import_module(name)
+
+    monkeypatch.setattr(
+        "durable_outbox.stores.azure_blob.import_module", fail_azure_core_import
+    )
+
+    client = AzureBlobClient(Container())
+    with pytest.raises(ConfigurationError, match="durable-outbox\\[azure\\]"):
+        await client.put_blob(
+            "outbox/v1/events/one.json",
+            b"payload",
+            {"event_id": "one"},
+            if_match='"1"',
         )
 
 

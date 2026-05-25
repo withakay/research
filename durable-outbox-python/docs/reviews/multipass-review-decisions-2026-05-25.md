@@ -758,3 +758,34 @@ verification evidence.
 - Focused green run:
   `uv run pytest tests/test_packaging_docs.py -q`
   -> 5 passed
+
+## Batch 29: Azure Optional Dependency Errors
+
+### Findings Accepted
+
+- **Q-P0-1:** Azure optional SDK imports should fail as package configuration
+  errors with an actionable install hint, not as raw `ModuleNotFoundError` or a
+  generic runtime failure. The initial fix only covered
+  `azure.storage.blob.aio`; conditional Blob writes and deletes also import
+  `azure.core` for match conditions.
+
+### Fixes Implemented
+
+- Added a shared Azure module import helper that raises `ConfigurationError`
+  with the `durable-outbox[azure]` install hint.
+- Used the helper for both `AzureBlobClient.from_connection_string()` and Blob
+  ETag match-condition imports.
+- Extended Azure Blob tests to assert both optional dependency paths report
+  `ConfigurationError`.
+
+### Verification
+
+- Focused green run:
+  `uv run pytest tests/test_azure_blob_and_file_sink.py -q`
+  -> 4 passed
+- Full package gates:
+  `uv run pytest -q` -> 180 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 51 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
