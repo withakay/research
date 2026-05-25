@@ -6,7 +6,11 @@ from typing import Any
 import pytest
 
 from durable_outbox.core import ConfigurationError, ValidationError
-from durable_outbox.core.errors import DuplicateEventConflictError, RetryableStoreError
+from durable_outbox.core.errors import (
+    ClaimConflictError,
+    DuplicateEventConflictError,
+    RetryableStoreError,
+)
 from durable_outbox.core.model import OutboxStatus, PublishResult
 from durable_outbox.core.store import DurableOutboxStore
 from durable_outbox.stores.blob_geo import (
@@ -43,6 +47,40 @@ class FixedClock:
 
     def utcnow(self) -> datetime:
         return self.now
+
+
+class ConflictOnceCosmosClient(InMemoryCosmosOutboxClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.remaining_conflicts = 0
+
+    async def replace(
+        self,
+        record: Any,
+        *,
+        expected_version: int,
+    ) -> Any:
+        if self.remaining_conflicts > 0:
+            self.remaining_conflicts -= 1
+            raise ClaimConflictError("record version precondition failed")
+        return await super().replace(record, expected_version=expected_version)
+
+
+class ConflictOnceSqlClient(InMemorySqlOutboxClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.remaining_conflicts = 0
+
+    async def replace(
+        self,
+        record: Any,
+        *,
+        expected_version: int,
+    ) -> Any:
+        if self.remaining_conflicts > 0:
+            self.remaining_conflicts -= 1
+            raise ClaimConflictError("record version precondition failed")
+        return await super().replace(record, expected_version=expected_version)
 
 
 def test_store_package_exports_are_importable() -> None:
@@ -635,6 +673,81 @@ async def test_provider_replay_event_requeues_sent_event(
 
     assert [claim.event.event_id for claim in reclaimed] == [event.event_id]
     assert reclaimed[0].attempt_count == 2
+
+
+@pytest.mark.parametrize(
+    ("store", "client"),
+    [
+        (
+            CosmosStrongOutboxStore(
+                CosmosConfiguration(consistency="Strong", regions=("westus", "eastus")),
+                client=ConflictOnceCosmosClient(),
+            ),
+            lambda store: store.client,
+        ),
+        (
+            AzureSqlSyncOutboxStore(client=ConflictOnceSqlClient()),
+            lambda store: store.client,
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_sql_and_cosmos_repair_retry_cas_conflict(
+    store: Any,
+    client: Any,
+) -> None:
+    event = make_event("cas-repair")
+    await store.put(event)
+    claimed = (await store.claim_batch(limit=1))[0]
+    await store.mark_failed(
+        claimed,
+        error_type="Fatal",
+        error_message="stop",
+    )
+    client(store).remaining_conflicts = 1
+
+    repaired = await store.repair_failed_to_pending(event_id=event.event_id)
+
+    assert repaired is True
+    record = await client(store).get(event.event_id)
+    assert record.status is OutboxStatus.PENDING
+    assert client(store).remaining_conflicts == 0
+
+
+@pytest.mark.parametrize(
+    ("store", "client"),
+    [
+        (
+            CosmosStrongOutboxStore(
+                CosmosConfiguration(consistency="Strong", regions=("westus", "eastus")),
+                client=ConflictOnceCosmosClient(),
+            ),
+            lambda store: store.client,
+        ),
+        (
+            AzureSqlSyncOutboxStore(client=ConflictOnceSqlClient()),
+            lambda store: store.client,
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_sql_and_cosmos_mark_sent_retry_cas_conflict(
+    store: Any,
+    client: Any,
+) -> None:
+    event = make_event("cas-mark-sent")
+    await store.put(event)
+    claimed = (await store.claim_batch(limit=1))[0]
+    client(store).remaining_conflicts = 1
+
+    await store.mark_sent(
+        claimed,
+        PublishResult(partition=1, offset=2, published_at=datetime.now(UTC)),
+    )
+
+    record = await client(store).get(event.event_id)
+    assert record.status is OutboxStatus.SENT
+    assert client(store).remaining_conflicts == 0
 
 
 @pytest.mark.parametrize(

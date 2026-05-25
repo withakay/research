@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from hashlib import sha256
@@ -10,6 +10,7 @@ from durable_outbox.core.errors import (
     ClaimConflictError,
     ConfigurationError,
     DuplicateEventConflictError,
+    RetryableStoreError,
 )
 from durable_outbox.core.model import (
     AcceptedReceipt,
@@ -222,13 +223,12 @@ class CosmosStrongOutboxStore:
         return claimed
 
     async def mark_sent(self, claimed: ClaimedEvent, result: PublishResult) -> None:
-        record = await self._claimed_record(claimed)
-        record.status = OutboxStatus.SENT
-        record.sent_at = result.published_at
-        record.publish_result = result
-        record.claim_token = None
-        record.claimed_at = None
-        await self.client.replace(record, expected_version=record.version)
+        updated = await self._cas_update(
+            claimed.event.event_id,
+            lambda current: _mark_sent_if_claimed(current, claimed, result),
+        )
+        if not updated:
+            raise ClaimConflictError("claimed event no longer exists")
 
     async def mark_pending_after_retryable_failure(
         self,
@@ -238,14 +238,18 @@ class CosmosStrongOutboxStore:
         error_message: str,
         next_attempt_at: datetime,
     ) -> None:
-        record = await self._claimed_record(claimed)
-        record.status = OutboxStatus.PENDING
-        record.next_attempt_at = next_attempt_at
-        record.last_error_type = error_type
-        record.last_error = error_message
-        record.claim_token = None
-        record.claimed_at = None
-        await self.client.replace(record, expected_version=record.version)
+        updated = await self._cas_update(
+            claimed.event.event_id,
+            lambda current: _mark_pending_if_claimed(
+                current,
+                claimed,
+                error_type=error_type,
+                error_message=error_message,
+                next_attempt_at=next_attempt_at,
+            ),
+        )
+        if not updated:
+            raise ClaimConflictError("claimed event no longer exists")
 
     async def mark_failed(
         self,
@@ -254,14 +258,19 @@ class CosmosStrongOutboxStore:
         error_type: str,
         error_message: str,
     ) -> None:
-        record = await self._claimed_record(claimed)
-        record.status = OutboxStatus.FAILED
-        record.failed_at = self.clock.utcnow()
-        record.last_error_type = error_type
-        record.last_error = error_message
-        record.claim_token = None
-        record.claimed_at = None
-        await self.client.replace(record, expected_version=record.version)
+        failed_at = self.clock.utcnow()
+        updated = await self._cas_update(
+            claimed.event.event_id,
+            lambda current: _mark_failed_if_claimed(
+                current,
+                claimed,
+                failed_at=failed_at,
+                error_type=error_type,
+                error_message=error_message,
+            ),
+        )
+        if not updated:
+            raise ClaimConflictError("claimed event no longer exists")
 
     async def failover_replay_candidates(
         self,
@@ -328,35 +337,10 @@ class CosmosStrongOutboxStore:
         return len(event_ids)
 
     async def repair_failed_to_pending(self, *, event_id: str) -> bool:
-        record = await self.client.get(event_id)
-        if record is None or record.status is not OutboxStatus.FAILED:
-            return False
-        record.status = OutboxStatus.PENDING
-        record.failed_at = None
-        record.attempt_count = 0
-        record.last_error_type = None
-        record.last_error = None
-        record.next_attempt_at = None
-        record.claim_token = None
-        record.claimed_at = None
-        await self.client.replace(record, expected_version=record.version)
-        return True
+        return await self._cas_update(event_id, _repair_failed_record)
 
     async def replay_event(self, *, event_id: str) -> bool:
-        record = await self.client.get(event_id)
-        if record is None:
-            return False
-        record.status = OutboxStatus.PENDING
-        record.claim_token = None
-        record.claimed_at = None
-        record.next_attempt_at = None
-        record.sent_at = None
-        record.publish_result = None
-        record.failed_at = None
-        record.last_error_type = None
-        record.last_error = None
-        await self.client.replace(record, expected_version=record.version)
-        return True
+        return await self._cas_update(event_id, _replay_record)
 
     def partition_key_for(self, event: OutboxEvent) -> str:
         if event.publishing_mode is PublishingMode.ORDERED and event.ordering_key:
@@ -369,6 +353,26 @@ class CosmosStrongOutboxStore:
         if record is None or record.claim_token != claimed.claim_token:
             raise ClaimConflictError("claim token does not match current owner")
         return record
+
+    async def _cas_update(
+        self,
+        event_id: str,
+        mutate: Callable[[CosmosStoredEvent], bool],
+        *,
+        attempts: int = 3,
+    ) -> bool:
+        for _ in range(attempts):
+            record = await self.client.get(event_id)
+            if record is None:
+                return False
+            if not mutate(record):
+                return False
+            try:
+                await self.client.replace(record, expected_version=record.version)
+                return True
+            except ClaimConflictError:
+                continue
+        raise RetryableStoreError("record update lost too many version races")
 
     async def _claim_ordered_records(self) -> list[CosmosStoredEvent]:
         return sorted(
@@ -407,6 +411,88 @@ class CosmosStrongOutboxStore:
 
 def _hash(value: str) -> str:
     return sha256(value.encode("utf-8")).hexdigest()
+
+
+def _mark_sent_if_claimed(
+    record: CosmosStoredEvent,
+    claimed: ClaimedEvent,
+    result: PublishResult,
+) -> bool:
+    _require_claim(record, claimed)
+    record.status = OutboxStatus.SENT
+    record.sent_at = result.published_at
+    record.publish_result = result
+    record.claim_token = None
+    record.claimed_at = None
+    return True
+
+
+def _mark_pending_if_claimed(
+    record: CosmosStoredEvent,
+    claimed: ClaimedEvent,
+    *,
+    error_type: str,
+    error_message: str,
+    next_attempt_at: datetime,
+) -> bool:
+    _require_claim(record, claimed)
+    record.status = OutboxStatus.PENDING
+    record.next_attempt_at = next_attempt_at
+    record.last_error_type = error_type
+    record.last_error = error_message
+    record.claim_token = None
+    record.claimed_at = None
+    return True
+
+
+def _mark_failed_if_claimed(
+    record: CosmosStoredEvent,
+    claimed: ClaimedEvent,
+    *,
+    failed_at: datetime,
+    error_type: str,
+    error_message: str,
+) -> bool:
+    _require_claim(record, claimed)
+    record.status = OutboxStatus.FAILED
+    record.failed_at = failed_at
+    record.last_error_type = error_type
+    record.last_error = error_message
+    record.claim_token = None
+    record.claimed_at = None
+    return True
+
+
+def _repair_failed_record(record: CosmosStoredEvent) -> bool:
+    if record.status is not OutboxStatus.FAILED:
+        return False
+    record.status = OutboxStatus.PENDING
+    record.failed_at = None
+    record.attempt_count = 0
+    record.last_error_type = None
+    record.last_error = None
+    record.next_attempt_at = None
+    record.claim_token = None
+    record.claimed_at = None
+    return True
+
+
+def _replay_record(record: CosmosStoredEvent) -> bool:
+    record.status = OutboxStatus.PENDING
+    record.claim_token = None
+    record.claimed_at = None
+    record.next_attempt_at = None
+    record.sent_at = None
+    record.publish_result = None
+    record.failed_at = None
+    record.last_error_type = None
+    record.last_error = None
+    return True
+
+
+def _require_claim(record: CosmosStoredEvent, claimed: ClaimedEvent) -> None:
+    if record.claim_token != claimed.claim_token:
+        raise ClaimConflictError("claim token does not match current owner")
 
 
 def _clone_record(

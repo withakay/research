@@ -298,3 +298,27 @@ verification evidence.
 - Focused green run:
   `uv run pytest tests/test_adapters.py::test_dual_region_blob_reconciles_prepared_records_before_failover_replay tests/test_adapters.py::test_dual_region_blob_failover_replay_uses_active_secondary tests/test_adapters.py::test_dual_region_blob_repairs_partial_write_matrix -q`
   -> 6 passed
+
+## Batch 10: SQL And Cosmos CAS Retry Semantics
+
+### Findings Accepted
+
+- **A-NEW-P1-2:** SQL and Cosmos admin repair paths and state updates could
+  surface a single optimistic version conflict as an operator-facing exception
+  instead of retrying boundedly.
+
+### Fixes Implemented
+
+- Added bounded `_cas_update()` helpers to Cosmos and SQL stores.
+- Routed `mark_sent`, retryable failure updates, failed updates, repair, and
+  manual replay through the CAS helpers.
+- Preserved claim-token validation on claimed-event updates and changed repeated
+  CAS races into `RetryableStoreError` after three failed attempts.
+
+### Verification
+
+- Focused red tests showed a conflict-once client raised `ClaimConflictError`
+  from repair and mark-sent before implementation.
+- Focused green run:
+  `uv run pytest tests/test_adapters.py::test_sql_and_cosmos_repair_retry_cas_conflict tests/test_adapters.py::test_sql_and_cosmos_mark_sent_retry_cas_conflict -q`
+  -> 4 passed
