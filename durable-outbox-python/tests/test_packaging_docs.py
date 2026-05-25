@@ -99,3 +99,20 @@ def test_operations_docs_describe_error_and_outcome_policy() -> None:
     assert "NonRetryablePublishError" in operations
     assert "RetryableStoreError" in operations
     assert "ClaimConflictError" in operations
+
+
+def test_data_model_docs_map_canonical_fields_to_adapter_renderings() -> None:
+    data_model = (PROJECT_ROOT / "docs" / "data-model.md").read_text()
+    proposal = (PROJECT_ROOT / "docs" / "durable-outbox-rpo0-proposal.md").read_text()
+
+    assert "Canonical Field" in data_model
+    assert "created_at" in data_model
+    assert "created_at_epoch_ms" in data_model
+    assert "created_at_utc" in data_model
+    assert "publish_result" in data_model
+    assert "Blob" in data_model
+    assert "Cosmos" in data_model
+    assert "SQL" in data_model
+    assert "schema_id" in proposal
+    assert "created_at_epoch_ms" in proposal
+    assert "createdAtEpochMs" not in proposal

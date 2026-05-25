@@ -644,18 +644,18 @@ Do not use multi-write Cosmos DB for this RPO=0 adapter, because Cosmos DB accou
   "key": "model-run-123",
   "headers": {},
   "payload": "base64-or-claim-check-uri",
-  "schemaId": "model-output-v3",
-  "schemaVersion": "3",
-  "publishingMode": "ORDERED",
-  "orderingKeyHash": "abc123",
-  "orderingSequence": 42,
-  "createdAtEpochMs": 1779192000000,
-  "expiresAtEpochMs": 1779192900000,
-  "attemptCount": 0,
-  "claimedBy": null,
-  "claimId": null,
-  "claimedAtEpochMs": null,
-  "sentAtEpochMs": null
+  "schema_id": "model-output-v3",
+  "schema_version": "3",
+  "publishing_mode": "ORDERED",
+  "ordering_key_hash": "abc123",
+  "ordering_sequence": 42,
+  "created_at_epoch_ms": 1779192000000,
+  "expires_at_epoch_ms": 1779192900000,
+  "attempt_count": 0,
+  "claimed_by": null,
+  "claim_id": null,
+  "claimed_at_epoch_ms": null,
+  "sent_at_epoch_ms": null
 }
 ```
 

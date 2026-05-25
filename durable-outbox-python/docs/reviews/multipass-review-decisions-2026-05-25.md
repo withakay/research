@@ -1226,3 +1226,38 @@ verification evidence.
   `uv run ruff format --check .` -> 51 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 44: Canonical Data Model Documentation
+
+### Findings Accepted
+
+- **Q-P2-5:** SQL columns, Blob metadata/JSON, and the proposed Cosmos JSON
+  shape used inconsistent timestamp and field-name conventions, leaving future
+  provider serialization choices underspecified.
+
+### Fixes Implemented
+
+- Added `docs/data-model.md` mapping canonical Python field names to Blob,
+  Cosmos JSON, and SQL renderings.
+- Chose snake_case `*_at_epoch_ms` for future queryable JSON timestamp fields,
+  while documenting why SQL keeps typed `*_utc` columns and current Blob JSON
+  keeps ISO-8601 `*_at` keys.
+- Updated the proposal's Cosmos item shape from camelCase to snake_case names
+  such as `schema_id`, `publishing_mode`, and `created_at_epoch_ms`.
+- Added a packaging/docs regression test that asserts the mapping document
+  exists and the proposal no longer advertises the old camelCase timestamp key.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_packaging_docs.py::test_data_model_docs_map_canonical_fields_to_adapter_renderings -q`
+  -> failed because `docs/data-model.md` did not exist.
+- Focused green run:
+  `uv run pytest tests/test_packaging_docs.py::test_data_model_docs_map_canonical_fields_to_adapter_renderings -q`
+  -> 1 passed
+- Full package gates:
+  `uv run pytest -q` -> 204 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 51 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
