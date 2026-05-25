@@ -6,6 +6,7 @@ from typing import Protocol
 from uuid import uuid4
 
 from durable_outbox.core.capabilities import OutboxCapabilities
+from durable_outbox.core.duplicates import raise_if_incompatible_duplicate
 from durable_outbox.core.errors import (
     ClaimConflictError,
     ConfigurationError,
@@ -202,10 +203,13 @@ class CosmosStrongOutboxStore:
                 accepted_at=now,
             )
             record = await self.client.insert(record)
-        elif record.partition_key != partition_key or record.event != event:
-            raise DuplicateEventConflictError(
-                "event_id already exists with incompatible content"
-            )
+        else:
+            raise_if_incompatible_duplicate(record.event, event)
+            if record.partition_key != partition_key:
+                raise DuplicateEventConflictError(
+                    f"event_id {event.event_id!r} already exists with incompatible "
+                    "partition_key"
+                )
         return AcceptedReceipt(
             event_id=event.event_id,
             accepted_at=record.accepted_at or now,

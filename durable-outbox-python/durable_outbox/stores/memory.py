@@ -3,9 +3,9 @@ from datetime import datetime, timedelta
 from uuid import uuid4
 
 from durable_outbox.core.capabilities import OutboxCapabilities
+from durable_outbox.core.duplicates import raise_if_incompatible_duplicate
 from durable_outbox.core.errors import (
     ClaimConflictError,
-    DuplicateEventConflictError,
     ValidationError,
 )
 from durable_outbox.core.model import (
@@ -75,10 +75,8 @@ class MemoryOutboxStore:
         if record is None:
             record = StoredEvent(event=event, accepted_at=now)
             self.records[event.event_id] = record
-        elif not _compatible_event(record.event, event):
-            raise DuplicateEventConflictError(
-                f"event_id {event.event_id!r} already exists with incompatible envelope"
-            )
+        else:
+            raise_if_incompatible_duplicate(record.event, event)
         return AcceptedReceipt(
             event_id=event.event_id,
             accepted_at=record.accepted_at or now,
@@ -292,17 +290,3 @@ class MemoryOutboxStore:
                 continue
             locked.add(key)
         return locked
-
-
-def _compatible_event(existing: OutboxEvent, incoming: OutboxEvent) -> bool:
-    return (
-        existing.topic == incoming.topic
-        and existing.payload == incoming.payload
-        and existing.key == incoming.key
-        and dict(existing.headers) == dict(incoming.headers)
-        and existing.ordering_key == incoming.ordering_key
-        and existing.ordering_sequence == incoming.ordering_sequence
-        and existing.publishing_mode == incoming.publishing_mode
-        and existing.schema_id == incoming.schema_id
-        and existing.schema_version == incoming.schema_version
-    )

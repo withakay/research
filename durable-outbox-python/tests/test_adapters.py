@@ -255,7 +255,7 @@ async def test_blob_put_rejects_incompatible_duplicate() -> None:
     incompatible = replace(event, topic="other-topic")
     await store.put(event)
 
-    with pytest.raises(DuplicateEventConflictError, match="incompatible"):
+    with pytest.raises(DuplicateEventConflictError, match="topic"):
         await store.put(incompatible)
 
 
@@ -394,6 +394,26 @@ async def test_dual_region_blob_repair_copies_missing_region() -> None:
     await store.repair_prepared(event.event_id)
 
     assert store.secondary.records[event.event_id].accepted is True
+
+
+@pytest.mark.asyncio
+async def test_blob_accept_prepared_preserves_existing_accepted_at() -> None:
+    occurred_at = datetime(2026, 5, 22, 9, 30, tzinfo=UTC)
+    repaired_at = occurred_at + timedelta(hours=1)
+    clock = FixedClock(occurred_at)
+    store = BlobOutboxStore.for_testing(clock=clock)
+    event = make_event("accepted-at-repair")
+    await store._put_prepared(event)
+    await store._accept_prepared(event)
+    first_accepted_at = store.records[event.event_id].accepted_at
+
+    store.records[event.event_id].accepted = False
+    await store._save_record(store.records[event.event_id])
+    clock.now = repaired_at
+    await store._accept_prepared(event)
+
+    assert first_accepted_at == occurred_at
+    assert store.records[event.event_id].accepted_at == occurred_at
 
 
 @pytest.mark.parametrize(
@@ -616,7 +636,7 @@ async def test_provider_put_rejects_incompatible_duplicate(store: Any) -> None:
     incompatible = replace(event, topic="other-topic")
     await store.put(event)
 
-    with pytest.raises(DuplicateEventConflictError, match="incompatible"):
+    with pytest.raises(DuplicateEventConflictError, match="topic"):
         await store.put(incompatible)
 
 

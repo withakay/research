@@ -563,3 +563,28 @@ verification evidence.
 - Focused green run:
   `uv run pytest tests/test_core.py::test_dispatcher_publishes_claimed_events_concurrently tests/test_core.py::test_dispatcher_marks_sent_after_sink_ack tests/test_core.py::test_dispatcher_returns_retryable_failure_to_pending tests/test_core.py::test_dispatcher_does_not_mark_pending_after_post_ack_store_failure tests/test_kafka_operations.py::test_kafka_sink_poll_does_not_run_on_event_loop_thread tests/test_kafka_operations.py::test_kafka_sink_polls_until_delivery_ack tests/test_kafka_operations.py::test_kafka_sink_returns_result_after_ack_and_adds_event_id_header -q`
   -> 7 passed
+
+## Batch 21: Duplicate Diagnostics And Prepared Accept Timestamps
+
+### Findings Accepted
+
+- **A-NEW-P2-1:** prepared-record repair could overwrite an existing
+  `accepted_at` timestamp.
+- **A-NEW-P2-2:** duplicate event conflicts did not identify the divergent
+  envelope field.
+
+### Fixes Implemented
+
+- Preserved existing Blob prepared `accepted_at` values when re-accepting a
+  repaired prepared record.
+- Added a shared duplicate-diagnostics helper that reports the first divergent
+  envelope field while redacting payload/header values.
+- Applied the duplicate helper to memory, Blob, Cosmos, and SQL stores.
+
+### Verification
+
+- Focused red tests showed prepared accept overwrote timestamps and duplicate
+  conflict messages did not include `topic` before implementation.
+- Focused green run:
+  `uv run pytest tests/test_adapters.py::test_blob_accept_prepared_preserves_existing_accepted_at tests/test_adapters.py::test_blob_put_rejects_incompatible_duplicate tests/test_adapters.py::test_provider_put_rejects_incompatible_duplicate tests/test_core.py::test_duplicate_put_rejects_incompatible_event_envelope -q`
+  -> 6 passed

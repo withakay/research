@@ -8,10 +8,10 @@ from typing import Any, Literal, Protocol
 from uuid import uuid4
 
 from durable_outbox.core.capabilities import OutboxCapabilities
+from durable_outbox.core.duplicates import raise_if_incompatible_duplicate
 from durable_outbox.core.errors import (
     ClaimConflictError,
     ConfigurationError,
-    DuplicateEventConflictError,
     RetryableStoreError,
 )
 from durable_outbox.core.model import (
@@ -505,7 +505,7 @@ class BlobOutboxStore:
         if record.accepted:
             return
         record.accepted = True
-        record.accepted_at = self.clock.utcnow()
+        record.accepted_at = record.accepted_at or self.clock.utcnow()
         await self._save_record(record)
 
     async def _load_record(self, event_id: str) -> StoredEvent | None:
@@ -566,10 +566,7 @@ class BlobOutboxStore:
     def _ensure_compatible_duplicate(
         self, record: StoredEvent, event: OutboxEvent
     ) -> None:
-        if _event_fingerprint(record.event) != _event_fingerprint(event):
-            raise DuplicateEventConflictError(
-                "event_id already exists with incompatible content"
-            )
+        raise_if_incompatible_duplicate(record.event, event)
 
     def _ordered_records(self) -> Iterable[StoredEvent]:
         return sorted(

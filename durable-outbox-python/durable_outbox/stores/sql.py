@@ -5,6 +5,7 @@ from typing import Protocol
 from uuid import uuid4
 
 from durable_outbox.core.capabilities import OutboxCapabilities
+from durable_outbox.core.duplicates import raise_if_incompatible_duplicate
 from durable_outbox.core.errors import (
     ClaimConflictError,
     ConfigurationError,
@@ -205,10 +206,8 @@ class _SqlOutboxStoreBase:
         if record is None:
             record = SqlStoredEvent(event=event, accepted_at=now)
             record = await self.client.upsert_new(record)
-        elif record.event != event:
-            raise DuplicateEventConflictError(
-                "event_id already exists with incompatible content"
-            )
+        else:
+            raise_if_incompatible_duplicate(record.event, event)
         await self._after_put_acceptance_boundary()
         return AcceptedReceipt(
             event_id=event.event_id,
