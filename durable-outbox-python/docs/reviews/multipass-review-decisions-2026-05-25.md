@@ -88,3 +88,44 @@ verification evidence.
 - `uv run ruff format --check .`
 - `uv run ty check`
 - `uv build`
+
+## Batch 3: Admin Replay And Store Protocol Completeness
+
+### Findings Accepted
+
+- **A-P1-3:** `DurableOutboxStore` omitted the cleanup and admin-action methods
+  that production adapters already needed to support.
+- **A-NEW-P0-2:** `AdminService.manual_replay()` called `replay_event`, but no
+  production store implemented that method, so manual replay was dead code when
+  stores were wired directly as admin actions.
+- **A-NEW-P1-1 / A-NEW-P1-4:** repair actions needed consistent bool semantics
+  for success vs missing/non-repairable events, in addition to clearing retry
+  state.
+
+### Fixes Implemented
+
+- Added `cleanup_sent`, `repair_failed_to_pending`, and `replay_event` to the
+  public `DurableOutboxStore` protocol.
+- Updated memory, Blob, dual-region Blob, Cosmos, Azure SQL sync, and SQL Always
+  On stores so `repair_failed_to_pending()` returns `True` only when a failed
+  event was actually repaired and `False` for missing or non-failed events.
+- Implemented `replay_event()` on all production stores. Replay sets an existing
+  event back to `PENDING`, clears claim, retry, terminal publish, and error
+  state, and preserves `attempt_count` so retry history remains visible.
+- Mirrored dual-region Blob repair and replay updates into the secondary region
+  only after the primary action succeeds.
+- Extended the reusable provider contract and built-in adapter tests to cover
+  admin replay, repair return values, and missing-event behavior.
+- Updated `FailingStore` to continue satisfying `DurableOutboxStore` after the
+  protocol became complete.
+
+### Verification
+
+- Focused red test run showed 19 failures for the missing protocol and replay
+  methods before implementation.
+- Focused green run:
+  `uv run pytest tests/provider_contract/test_fake_store_contract.py tests/test_adapters.py::test_store_protocol_includes_admin_and_cleanup_contracts tests/test_adapters.py::test_provider_repair_failed_to_pending_clears_retry_state tests/test_adapters.py::test_provider_replay_event_requeues_sent_event tests/test_adapters.py::test_provider_admin_actions_return_false_for_missing_event -q`
+  -> 20 passed
+- `uv run pytest -q` -> 117 passed, 2 skipped
+- `uv run ruff check .`
+- `uv run ty check`

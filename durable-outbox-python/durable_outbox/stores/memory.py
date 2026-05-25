@@ -214,12 +214,12 @@ class MemoryOutboxStore:
             del self.records[event_id]
         return len(to_delete)
 
-    async def repair_failed_to_pending(self, *, event_id: str) -> None:
+    async def repair_failed_to_pending(self, *, event_id: str) -> bool:
         record = self.records.get(event_id)
         if record is None:
-            return
+            return False
         if record.status is not OutboxStatus.FAILED:
-            return
+            return False
         record.status = OutboxStatus.PENDING
         record.failed_at = None
         record.attempt_count = 0
@@ -228,6 +228,22 @@ class MemoryOutboxStore:
         record.next_attempt_at = None
         record.claim_token = None
         record.claimed_at = None
+        return True
+
+    async def replay_event(self, *, event_id: str) -> bool:
+        record = self.records.get(event_id)
+        if record is None:
+            return False
+        record.status = OutboxStatus.PENDING
+        record.claim_token = None
+        record.claimed_at = None
+        record.next_attempt_at = None
+        record.sent_at = None
+        record.publish_result = None
+        record.failed_at = None
+        record.last_error_type = None
+        record.last_error = None
+        return True
 
     def _claimed_record(self, claimed: ClaimedEvent) -> StoredEvent:
         record = self.records[claimed.event.event_id]

@@ -338,10 +338,10 @@ class BlobOutboxStore:
             self._record_etags.pop(event_id, None)
         return deleted
 
-    async def repair_failed_to_pending(self, *, event_id: str) -> None:
+    async def repair_failed_to_pending(self, *, event_id: str) -> bool:
         record = await self._load_record(event_id)
         if record is None or record.status is not OutboxStatus.FAILED:
-            return
+            return False
         record.status = OutboxStatus.PENDING
         record.failed_at = None
         record.attempt_count = 0
@@ -351,6 +351,24 @@ class BlobOutboxStore:
         record.claim_token = None
         record.claimed_at = None
         await self._save_record(record)
+        return True
+
+    async def replay_event(self, *, event_id: str) -> bool:
+        record = await self._load_record(event_id)
+        if record is None:
+            return False
+        record.status = OutboxStatus.PENDING
+        record.claim_token = None
+        record.claimed_at = None
+        record.next_attempt_at = None
+        record.sent_at = None
+        record.publish_result = None
+        record.failed_at = None
+        record.last_error_type = None
+        record.last_error = None
+        await self._save_record(record)
+        await self._release_ordering_lease(event_id)
+        return True
 
     async def _put_prepared(self, event: OutboxEvent) -> None:
         enforce_payload_size(event, self.capabilities)
@@ -619,9 +637,17 @@ class DualRegionBlobOutboxStore:
         await self.secondary.cleanup_sent(now=now, safety_margin=safety_margin)
         return deleted
 
-    async def repair_failed_to_pending(self, *, event_id: str) -> None:
-        await self.primary.repair_failed_to_pending(event_id=event_id)
-        await self._mirror_terminal_update(event_id)
+    async def repair_failed_to_pending(self, *, event_id: str) -> bool:
+        repaired = await self.primary.repair_failed_to_pending(event_id=event_id)
+        if repaired:
+            await self._mirror_terminal_update(event_id)
+        return repaired
+
+    async def replay_event(self, *, event_id: str) -> bool:
+        replayed = await self.primary.replay_event(event_id=event_id)
+        if replayed:
+            await self._mirror_terminal_update(event_id)
+        return replayed
 
     async def repair_prepared(self, event_id: str) -> None:
         primary_record = await self.primary._load_record(event_id)

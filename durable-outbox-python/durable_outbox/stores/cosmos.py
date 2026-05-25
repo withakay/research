@@ -327,10 +327,10 @@ class CosmosStrongOutboxStore:
             await self.client.delete(event_id)
         return len(event_ids)
 
-    async def repair_failed_to_pending(self, *, event_id: str) -> None:
+    async def repair_failed_to_pending(self, *, event_id: str) -> bool:
         record = await self.client.get(event_id)
         if record is None or record.status is not OutboxStatus.FAILED:
-            return
+            return False
         record.status = OutboxStatus.PENDING
         record.failed_at = None
         record.attempt_count = 0
@@ -340,6 +340,23 @@ class CosmosStrongOutboxStore:
         record.claim_token = None
         record.claimed_at = None
         await self.client.replace(record, expected_version=record.version)
+        return True
+
+    async def replay_event(self, *, event_id: str) -> bool:
+        record = await self.client.get(event_id)
+        if record is None:
+            return False
+        record.status = OutboxStatus.PENDING
+        record.claim_token = None
+        record.claimed_at = None
+        record.next_attempt_at = None
+        record.sent_at = None
+        record.publish_result = None
+        record.failed_at = None
+        record.last_error_type = None
+        record.last_error = None
+        await self.client.replace(record, expected_version=record.version)
+        return True
 
     def partition_key_for(self, event: OutboxEvent) -> str:
         if event.publishing_mode is PublishingMode.ORDERED and event.ordering_key:

@@ -1,5 +1,5 @@
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from durable_outbox.core.errors import DurableOutboxError, RetryablePublishError
 from durable_outbox.core.model import (
@@ -109,3 +109,12 @@ class FailingStore:
 
     async def resume_cleanup(self) -> None:
         await self._store.resume_cleanup()
+
+    async def cleanup_sent(self, *, now: datetime, safety_margin: timedelta) -> int:
+        return await self._store.cleanup_sent(now=now, safety_margin=safety_margin)
+
+    async def repair_failed_to_pending(self, *, event_id: str) -> bool:
+        return await self._store.repair_failed_to_pending(event_id=event_id)
+
+    async def replay_event(self, *, event_id: str) -> bool:
+        return await self._store.replay_event(event_id=event_id)

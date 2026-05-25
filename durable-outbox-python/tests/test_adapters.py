@@ -8,6 +8,7 @@ import pytest
 from durable_outbox.core import ConfigurationError, ValidationError
 from durable_outbox.core.errors import DuplicateEventConflictError, RetryableStoreError
 from durable_outbox.core.model import OutboxStatus, PublishResult
+from durable_outbox.core.store import DurableOutboxStore
 from durable_outbox.stores.blob_geo import (
     BlobOutboxStore,
     DualRegionBlobOutboxStore,
@@ -19,7 +20,6 @@ from durable_outbox.stores.blob_geo import (
 )
 from durable_outbox.stores.cosmos import (
     CosmosConfiguration,
-    CosmosStoredEvent,
     CosmosStrongOutboxStore,
     InMemoryCosmosOutboxClient,
 )
@@ -32,7 +32,6 @@ from durable_outbox.stores.sql import (
     AzureSqlSyncOutboxStore,
     InMemorySqlOutboxClient,
     SqlAlwaysOnOutboxStore,
-    SqlStoredEvent,
 )
 from durable_outbox.testing import FakeOutboxStore
 from durable_outbox.testing.provider_contract import make_event
@@ -51,6 +50,12 @@ def test_store_package_exports_are_importable() -> None:
 
     for name in stores.__all__:
         assert getattr(stores, name).__name__ == name
+
+
+def test_store_protocol_includes_admin_and_cleanup_contracts() -> None:
+    assert hasattr(DurableOutboxStore, "cleanup_sent")
+    assert hasattr(DurableOutboxStore, "repair_failed_to_pending")
+    assert hasattr(DurableOutboxStore, "replay_event")
 
 
 def test_blob_names_are_deterministic_and_do_not_embed_raw_event_id() -> None:
@@ -443,6 +448,18 @@ async def test_provider_claim_retry_sent_failed_replay_and_cleanup_freeze(
     ("store", "record_getter"),
     [
         (
+            FakeOutboxStore(),
+            lambda store, event_id: store.records.get(event_id),
+        ),
+        (
+            BlobOutboxStore(),
+            lambda store, event_id: store.records.get(event_id),
+        ),
+        (
+            DualRegionBlobOutboxStore(),
+            lambda store, event_id: store.primary.records.get(event_id),
+        ),
+        (
             CosmosStrongOutboxStore(
                 CosmosConfiguration(consistency="Strong", regions=("westus", "eastus"))
             ),
@@ -484,11 +501,10 @@ async def test_provider_repair_failed_to_pending_clears_retry_state(
         error_message="stop",
     )
 
-    await store.repair_failed_to_pending(event_id=event.event_id)
+    repaired = await store.repair_failed_to_pending(event_id=event.event_id)
 
-    record: CosmosStoredEvent | SqlStoredEvent | None = await record_getter(
-        store, event.event_id
-    )
+    record = await _maybe_await(record_getter(store, event.event_id))
+    assert repaired is True
     assert record is not None
     assert record.status is OutboxStatus.PENDING
     assert record.failed_at is None
@@ -500,11 +516,98 @@ async def test_provider_repair_failed_to_pending_clears_retry_state(
     assert record.claimed_at is None
 
 
+@pytest.mark.parametrize(
+    ("store", "record_getter"),
+    [
+        (
+            FakeOutboxStore(),
+            lambda store, event_id: store.records.get(event_id),
+        ),
+        (
+            BlobOutboxStore(),
+            lambda store, event_id: store.records.get(event_id),
+        ),
+        (
+            DualRegionBlobOutboxStore(),
+            lambda store, event_id: store.primary.records.get(event_id),
+        ),
+        (
+            CosmosStrongOutboxStore(
+                CosmosConfiguration(consistency="Strong", regions=("westus", "eastus"))
+            ),
+            lambda store, event_id: store.client.get(event_id),
+        ),
+        (
+            AzureSqlSyncOutboxStore(),
+            lambda store, event_id: store.client.get(event_id),
+        ),
+        (
+            SqlAlwaysOnOutboxStore(),
+            lambda store, event_id: store.client.get(event_id),
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_provider_replay_event_requeues_sent_event(
+    store: Any,
+    record_getter: Any,
+) -> None:
+    event = make_event("manual-replay")
+    await store.put(event)
+    claimed = (await store.claim_batch(limit=1))[0]
+    await store.mark_sent(
+        claimed,
+        PublishResult(partition=1, offset=2, published_at=datetime.now(UTC)),
+    )
+
+    replayed = await store.replay_event(event_id=event.event_id)
+
+    record = await _maybe_await(record_getter(store, event.event_id))
+    assert replayed is True
+    assert record is not None
+    assert record.status is OutboxStatus.PENDING
+    assert record.claim_token is None
+    assert record.claimed_at is None
+    assert record.next_attempt_at is None
+    assert record.sent_at is None
+    assert record.publish_result is None
+    assert record.failed_at is None
+    assert record.last_error_type is None
+    assert record.last_error is None
+    assert record.attempt_count == 1
+
+    reclaimed = await store.claim_batch(limit=1)
+
+    assert [claim.event.event_id for claim in reclaimed] == [event.event_id]
+    assert reclaimed[0].attempt_count == 2
+
+
+@pytest.mark.parametrize(
+    "store",
+    [
+        FakeOutboxStore(),
+        BlobOutboxStore(),
+        DualRegionBlobOutboxStore(),
+        CosmosStrongOutboxStore(
+            CosmosConfiguration(consistency="Strong", regions=("westus", "eastus"))
+        ),
+        AzureSqlSyncOutboxStore(),
+        SqlAlwaysOnOutboxStore(),
+    ],
+)
+@pytest.mark.asyncio
+async def test_provider_admin_actions_return_false_for_missing_event(
+    store: Any,
+) -> None:
+    assert await store.repair_failed_to_pending(event_id="missing") is False
+    assert await store.replay_event(event_id="missing") is False
+
+
 @pytest.mark.asyncio
 async def test_memory_repair_unknown_event_is_noop() -> None:
     store = FakeOutboxStore()
 
-    await store.repair_failed_to_pending(event_id="missing")
+    assert await store.repair_failed_to_pending(event_id="missing") is False
 
 
 def test_sql_schema_contains_required_indexes() -> None:
@@ -546,3 +649,9 @@ async def test_always_on_requires_configured_secondaries_on_put() -> None:
 
     with pytest.raises(RetryableStoreError, match="secondary"):
         await store.put(make_event())
+
+
+async def _maybe_await(value: Any) -> Any:
+    if hasattr(value, "__await__"):
+        return await value
+    return value

@@ -2,7 +2,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from durable_outbox.core.model import OutboxEvent, OutboxStatus
+from durable_outbox.core.model import OutboxEvent, OutboxStatus, PublishResult
 from durable_outbox.core.store import DurableOutboxStore
 from durable_outbox.testing.fake_sink import FakeSink
 
@@ -58,6 +58,28 @@ async def run_basic_provider_contract(
     summary = await dispatcher.run_once(limit=10)
     assert summary.sent == 1
     assert await store.claim_batch(limit=10) == []
+
+    assert await store.replay_event(event_id=event.event_id) is True
+    replay_claim = await store.claim_batch(limit=10)
+    assert [claim.event.event_id for claim in replay_claim] == [event.event_id]
+    await store.mark_sent(
+        replay_claim[0],
+        PublishResult(partition=0, offset=1, published_at=datetime.now(UTC)),
+    )
+    assert await store.replay_event(event_id="missing") is False
+
+    failed = make_event("failed-contract")
+    await store.put(failed)
+    failed_claim = (await store.claim_batch(limit=10))[0]
+    await store.mark_failed(
+        failed_claim,
+        error_type="Fatal",
+        error_message="stop",
+    )
+    assert await store.repair_failed_to_pending(event_id=failed.event_id) is True
+    assert await store.repair_failed_to_pending(event_id="missing") is False
+    repaired_claim = await store.claim_batch(limit=10)
+    assert [claim.event.event_id for claim in repaired_claim] == [failed.event_id]
 
 
 async def run_provider_contract(contract: ProviderContract) -> None:
