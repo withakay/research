@@ -74,6 +74,21 @@ uv run ty check
 uv build
 ```
 
+## Provider Contract
+
+Adapter authors can run the reusable provider matrix against a fresh in-memory
+or test-container-backed store factory:
+
+```python
+from durable_outbox.testing import ProviderContract, run_provider_contract
+
+await run_provider_contract(ProviderContract(store_factory=make_store))
+```
+
+The full contract checks compatible and incompatible duplicate puts, claim and
+retry transitions, failover replay eligibility, ordered-key blocking, cleanup
+freeze/resume, and admin repair/replay statuses.
+
 ## Integration Tests
 
 The optional Aspire suite starts Azurite, Kafka, and the Python integration

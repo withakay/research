@@ -49,7 +49,11 @@ from durable_outbox.stores.sql import (
 )
 from durable_outbox.telemetry import InMemoryMetrics
 from durable_outbox.testing import FakeOutboxStore, FixedClock
-from durable_outbox.testing.provider_contract import make_event
+from durable_outbox.testing.provider_contract import (
+    ProviderContract,
+    make_event,
+    run_provider_contract,
+)
 
 
 class InterruptingClock(FixedClock):
@@ -870,6 +874,27 @@ async def test_cosmos_records_partition_keys_in_client() -> None:
     partition_key = store.partition_key_for(event)
     assert client.partition_keys_by_event_id[event.event_id] == partition_key
     assert (partition_key, event.event_id) in client.records
+
+
+@pytest.mark.parametrize(
+    "contract",
+    [
+        ProviderContract(store_factory=BlobOutboxStore.for_testing),
+        ProviderContract(store_factory=DualRegionBlobOutboxStore.for_testing),
+        ProviderContract(
+            store_factory=lambda: CosmosStrongOutboxStore.for_testing(
+                CosmosConfiguration(consistency="Strong", regions=("westus", "eastus"))
+            )
+        ),
+        ProviderContract(store_factory=AzureSqlSyncOutboxStore.for_testing),
+        ProviderContract(store_factory=SqlAlwaysOnOutboxStore.for_testing),
+    ],
+)
+@pytest.mark.asyncio
+async def test_builtin_adapters_pass_reusable_provider_contract(
+    contract: ProviderContract,
+) -> None:
+    await run_provider_contract(contract)
 
 
 @pytest.mark.parametrize(

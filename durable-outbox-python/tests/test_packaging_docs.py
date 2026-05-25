@@ -142,6 +142,16 @@ def test_fixed_clock_testing_helper_is_centralized() -> None:
     assert (PROJECT_ROOT / "durable_outbox" / "testing" / "clock.py").is_file()
 
 
+def test_readme_documents_provider_contract_matrix() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text()
+
+    assert "Provider Contract" in readme
+    assert "run_provider_contract" in readme
+    assert "ProviderContract" in readme
+    assert "incompatible duplicate" in readme
+    assert "ordered-key blocking" in readme
+
+
 def test_dependabot_tracks_uv_lockfiles_for_durable_outbox_packages() -> None:
     dependabot = (REPO_ROOT / ".github" / "dependabot.yml").read_text()
 

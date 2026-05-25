@@ -8,6 +8,7 @@ from typing import cast
 import pytest
 
 from durable_outbox.core import (
+    AcceptedReceipt,
     ClaimConflictError,
     ConfigurationError,
     NonRetryablePublishError,
@@ -51,6 +52,21 @@ class ConcurrentSink(FakeSink):
             return await super().publish(event)
         finally:
             self.in_flight -= 1
+
+
+class IncompatibleDuplicateAcceptingStore(FakeOutboxStore):
+    async def put(self, event: OutboxEvent) -> AcceptedReceipt:
+        existing = self.records.get(event.event_id)
+        if existing is None:
+            return await super().put(event)
+        assert existing.accepted_at is not None
+        return AcceptedReceipt(
+            event_id=event.event_id,
+            accepted_at=existing.accepted_at,
+            rpo_zero=self.capabilities.rpo_zero_for_accepted_events,
+            store=self.capabilities.store_name,
+            durability_witness=("broken:test",),
+        )
 
 
 def test_event_preserves_opaque_payload_and_freezes_headers() -> None:
@@ -272,6 +288,14 @@ async def test_basic_provider_contract_passes_for_fake_store() -> None:
 @pytest.mark.asyncio
 async def test_provider_contract_accepts_protocol_contract() -> None:
     await run_provider_contract(ProviderContract(store_factory=FakeOutboxStore))
+
+
+@pytest.mark.asyncio
+async def test_provider_contract_rejects_incompatible_duplicate_acceptance() -> None:
+    with pytest.raises(AssertionError, match="incompatible duplicate"):
+        await run_provider_contract(
+            ProviderContract(store_factory=IncompatibleDuplicateAcceptingStore)
+        )
 
 
 @pytest.mark.asyncio

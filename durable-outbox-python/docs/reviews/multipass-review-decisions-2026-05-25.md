@@ -1539,3 +1539,49 @@ verification evidence.
   `uv run ruff format --check .` -> 52 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 53: Provider Contract Matrix Expansion
+
+### Findings Accepted
+
+- **Q-P2-2:** the reusable provider contract remained too close to a single
+  happy-path smoke test, so downstream adapter authors could pass it while
+  missing important store behaviors.
+
+### Fixes Implemented
+
+- Promoted the reusable contract into named async helpers for compatible
+  duplicate idempotency, incompatible duplicate rejection, claim/retry/sent/
+  failed transitions, failover replay eligibility, ordered-key blocking,
+  cleanup freeze/resume, admin status returns, repair reset, and manual replay.
+- Updated `run_provider_contract()` to execute the full matrix against fresh
+  store instances.
+- Added a red regression store that incorrectly accepts incompatible duplicate
+  envelopes, proving the old harness missed the bug and the new harness rejects
+  it.
+- Added a built-in adapter parametrized test that runs the full contract once
+  each for Blob, dual-region Blob, Cosmos, Azure SQL sync, and SQL Always On
+  test stores.
+- Switched the fake-store provider-contract test to the full matrix and
+  documented the one-line adapter-author usage in the README.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_core.py::test_provider_contract_rejects_incompatible_duplicate_acceptance -q`
+  -> failed because `run_provider_contract()` did not catch the incompatible
+  duplicate acceptance.
+- Focused green run:
+  `uv run pytest tests/test_core.py::test_provider_contract_rejects_incompatible_duplicate_acceptance tests/test_core.py::test_provider_contract_accepts_protocol_contract tests/provider_contract/test_fake_store_contract.py tests/test_adapters.py::test_builtin_adapters_pass_reusable_provider_contract tests/test_packaging_docs.py::test_readme_documents_provider_contract_matrix -q`
+  -> 9 passed
+- Focused lint/format:
+  `uv run ruff check durable_outbox/testing/provider_contract.py tests/test_core.py tests/test_adapters.py tests/provider_contract/test_fake_store_contract.py tests/test_packaging_docs.py`
+  -> all checks passed;
+  `uv run ruff format --check durable_outbox/testing/provider_contract.py tests/test_core.py tests/test_adapters.py tests/provider_contract/test_fake_store_contract.py tests/test_packaging_docs.py`
+  -> 5 files already formatted.
+- Full package gates:
+  `uv run pytest -q` -> 220 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 52 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
