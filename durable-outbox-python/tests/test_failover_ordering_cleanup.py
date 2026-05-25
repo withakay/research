@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 
+from durable_outbox.core import ConfigurationError
 from durable_outbox.core.failover import FailoverReplayer
 from durable_outbox.core.model import (
     OutboxEvent,
@@ -25,6 +26,17 @@ from durable_outbox.testing.provider_contract import make_event
 class FailingSink(FakeSink):
     async def publish(self, event: OutboxEvent) -> PublishResult:
         raise RuntimeError(f"publish failed for {event.event_id}")
+
+
+def test_failover_replayer_requires_rpo_zero_by_default() -> None:
+    with pytest.raises(ConfigurationError, match="RPO=0"):
+        FailoverReplayer(BlobOutboxStore(), FakeSink())
+
+
+def test_failover_replayer_can_opt_out_of_rpo_zero_validation() -> None:
+    replayer = FailoverReplayer(BlobOutboxStore(), FakeSink(), require_rpo_zero=False)
+
+    assert replayer.store.capabilities.rpo_zero_for_accepted_events is False
 
 
 @pytest.mark.asyncio

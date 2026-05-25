@@ -188,3 +188,27 @@ verification evidence.
 - Focused green run:
   `uv run pytest tests/test_core.py::test_event_rejects_invalid_topic_names tests/test_operations.py::test_collecting_metrics_adapter_exports_prometheus_text -q`
   -> 5 passed
+
+## Batch 6: RPO=0 Capability Startup Gates
+
+### Findings Accepted
+
+- **A-P1-4:** `OutboxCapabilities.require_rpo_zero()` existed but was never
+  called, so a pipeline that intended to require RPO=0 could silently run on a
+  non-RPO=0 store.
+
+### Fixes Implemented
+
+- Added `require_rpo_zero` to `OutboxDispatcher`, defaulting to `False` for
+  compatibility and calling `store.capabilities.require_rpo_zero()` when enabled.
+- Added `require_rpo_zero` to `FailoverReplayer`, defaulting to `True` because
+  failover replay against a non-RPO=0 store is incoherent. Tests can explicitly
+  opt out.
+
+### Verification
+
+- Focused red tests showed the dispatcher option and failover replayer option
+  were missing before implementation.
+- Focused green run:
+  `uv run pytest tests/test_core.py::test_dispatcher_can_require_rpo_zero_store tests/test_failover_ordering_cleanup.py::test_failover_replayer_requires_rpo_zero_by_default tests/test_failover_ordering_cleanup.py::test_failover_replayer_can_opt_out_of_rpo_zero_validation -q`
+  -> 3 passed

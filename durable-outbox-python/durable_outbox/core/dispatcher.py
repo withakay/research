@@ -29,7 +29,10 @@ class OutboxDispatcher:
         clock: Clock | None = None,
         retry_policy: RetryPolicy | None = None,
         metrics: MetricsAdapter | None = None,
+        require_rpo_zero: bool = False,
     ) -> None:
+        if require_rpo_zero:
+            store.capabilities.require_rpo_zero()
         self.store = store
         self.sink = sink
         self.clock = clock or SystemClock()

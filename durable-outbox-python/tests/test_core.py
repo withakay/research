@@ -6,6 +6,7 @@ import pytest
 
 from durable_outbox.core import (
     ClaimConflictError,
+    ConfigurationError,
     NonRetryablePublishError,
     OutboxDispatcher,
     OutboxEvent,
@@ -16,6 +17,7 @@ from durable_outbox.core import (
     ValidationError,
 )
 from durable_outbox.core.errors import DuplicateEventConflictError
+from durable_outbox.stores.blob_geo import BlobOutboxStore
 from durable_outbox.telemetry import InMemoryMetrics
 from durable_outbox.testing import FailingSink, FakeOutboxStore, FakeSink
 from durable_outbox.testing.failure_injection import FailingStore
@@ -198,6 +200,11 @@ async def test_dispatcher_marks_sent_after_sink_ack() -> None:
 
     assert summary.sent == 1
     assert store.records[event.event_id].status is OutboxStatus.SENT
+
+
+def test_dispatcher_can_require_rpo_zero_store() -> None:
+    with pytest.raises(ConfigurationError, match="RPO=0"):
+        OutboxDispatcher(BlobOutboxStore(), FakeSink(), require_rpo_zero=True)
 
 
 @pytest.mark.asyncio

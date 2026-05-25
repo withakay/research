@@ -11,7 +11,15 @@ class ReplaySummary:
 
 
 class FailoverReplayer:
-    def __init__(self, store: DurableOutboxStore, sink: MessageSink) -> None:
+    def __init__(
+        self,
+        store: DurableOutboxStore,
+        sink: MessageSink,
+        *,
+        require_rpo_zero: bool = True,
+    ) -> None:
+        if require_rpo_zero:
+            store.capabilities.require_rpo_zero()
         self.store = store
         self.sink = sink
 
