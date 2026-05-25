@@ -730,3 +730,31 @@ verification evidence.
   -> 20 passed
 - `uv run pytest tests/test_kafka_operations.py -q` -> 16 passed
 - `uv run pytest tests/test_app.py -q` in `durable-outbox-fastapi` -> 2 passed
+
+## Batch 28: Provider Dependency Floors
+
+### Findings Accepted
+
+- **S-NEW-P2-3:** optional provider dependency lower bounds lagged behind the
+  reviewed lockfile versions, leaving consumers free to install much older
+  Azure, Kafka, and SQL client packages.
+
+### Fixes Implemented
+
+- Raised optional dependency floors to the currently reviewed provider versions:
+  `aiohttp>=3.13.5`, `azure-storage-blob>=12.29.0`,
+  `azure-cosmos>=4.15.0`, `confluent-kafka>=2.14.0`, and `pyodbc>=5.3.0`.
+- Refreshed both uv lockfiles so editable `durable-outbox` metadata reflects
+  the new floors.
+- Added a uv-based Dependabot configuration scoped to `/durable-outbox-python`
+  and `/durable-outbox-fastapi`.
+- Added packaging tests that pin the reviewed floors and assert both package
+  directories are covered by Dependabot.
+
+### Verification
+
+- Current PyPI metadata and existing lockfiles agree on the raised floor
+  versions for the five optional provider packages.
+- Focused green run:
+  `uv run pytest tests/test_packaging_docs.py -q`
+  -> 5 passed
