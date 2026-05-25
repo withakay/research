@@ -112,6 +112,7 @@ class ClaimedEvent:
     event: OutboxEvent
     claim_token: str
     attempt_count: int = 1
+    source_status: OutboxStatus | None = None
 
 
 @dataclass(frozen=True, slots=True)

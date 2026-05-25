@@ -50,3 +50,9 @@ idempotence. For local integration tests that should not publish to Kafka,
 `FileSink` writes the same event envelope to a JSONL file and returns
 Kafka-like partition/offset metadata. This gives deterministic dispatch
 coverage while the Aspire suite can still exercise a real Kafka broker.
+
+Kafka producer idempotence is producer-session scoped. During failover replay,
+previously sent events can be published again by a new producer, so consumers
+must dedupe by the `event_id` Kafka header. `durable_outbox.consumer.EventDeduper`
+provides a small `(topic, event_id)` helper for consumers that need a reference
+implementation or test double.

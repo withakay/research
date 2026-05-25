@@ -492,3 +492,27 @@ verification evidence.
 - Focused green run:
   `uv run pytest tests/test_adapters.py::test_accept_receipts_include_durability_witness -q`
   -> 6 passed
+
+## Batch 18: Replay Idempotency Signals And Consumer Helper
+
+### Findings Accepted
+
+- **A-NEW-P1-7:** failover replay can republish previously sent events, but the
+  library did not make the consumer dedupe contract visible or testable.
+
+### Fixes Implemented
+
+- Added `ClaimedEvent.source_status` and populated it for failover replay
+  candidates so the replayer can identify previously sent events.
+- Added a warning and `outbox_failover_sent_replays_total{topic}` metric when
+  failover replay republishes a `SENT` event.
+- Added `durable_outbox.consumer.EventDeduper`, a small `(topic, event_id)`
+  dedupe helper for consumers and tests.
+- Documented that Kafka idempotence is producer-session scoped and consumers
+  must dedupe replayed events by `event_id`.
+
+### Verification
+
+- Focused green run:
+  `uv run pytest tests/test_failover_ordering_cleanup.py::test_failover_replay_warns_when_republishing_sent_event tests/test_consumer_dedupe.py -q`
+  -> 3 passed

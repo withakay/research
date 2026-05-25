@@ -188,6 +188,7 @@ class MemoryOutboxStore:
             if record.event.expires_at < failover_started_at:
                 continue
             token = str(uuid4())
+            source_status = record.status
             record.status = OutboxStatus.IN_FLIGHT
             record.claim_token = token
             record.claimed_at = self.clock.utcnow()
@@ -197,6 +198,7 @@ class MemoryOutboxStore:
                     event=record.event,
                     claim_token=token,
                     attempt_count=record.attempt_count,
+                    source_status=source_status,
                 )
             )
         return candidates

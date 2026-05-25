@@ -1,9 +1,13 @@
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 
+from durable_outbox.core.model import OutboxStatus
 from durable_outbox.core.sink import MessageSink
 from durable_outbox.core.store import DurableOutboxStore
 from durable_outbox.telemetry.metrics import MetricsAdapter, NoopMetrics
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +42,19 @@ class FailoverReplayer:
         replayed = 0
         errored = 0
         for claimed in candidates:
+            if claimed.source_status is OutboxStatus.SENT:
+                _LOGGER.warning(
+                    "Replaying previously sent outbox event; consumers must dedupe "
+                    "by event_id",
+                    extra={
+                        "event_id": claimed.event.event_id,
+                        "topic": claimed.event.topic,
+                    },
+                )
+                self.metrics.increment(
+                    "outbox_failover_sent_replays_total",
+                    topic=claimed.event.topic,
+                )
             try:
                 result = await self.sink.publish(claimed.event)
                 await self.store.mark_sent(claimed, result)

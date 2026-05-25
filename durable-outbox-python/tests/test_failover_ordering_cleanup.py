@@ -1,3 +1,4 @@
+import logging
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -71,6 +72,37 @@ async def test_failover_replay_uses_failover_started_at_not_now() -> None:
     assert summary.replayed == 1
     assert len(sink.published) == 2
     assert store.cleanup_frozen is True
+
+
+@pytest.mark.asyncio
+async def test_failover_replay_warns_when_republishing_sent_event(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = FakeOutboxStore()
+    sink = FakeSink()
+    metrics = InMemoryMetrics()
+    event = make_event("sent-replay-warning")
+    await store.put(event)
+    claim = (await store.claim_batch(limit=1))[0]
+    await store.mark_sent(claim, await sink.publish(event))
+
+    with caplog.at_level(logging.WARNING, logger="durable_outbox.core.failover"):
+        summary = await FailoverReplayer(store, sink, metrics=metrics).replay_once(
+            failover_started_at=datetime.now(UTC),
+            limit=10,
+        )
+
+    assert summary.replayed == 1
+    assert "consumers must dedupe by event_id" in caplog.text
+    assert (
+        metrics.counts[
+            (
+                "outbox_failover_sent_replays_total",
+                (("topic", event.topic),),
+            )
+        ]
+        == 1
+    )
 
 
 @pytest.mark.parametrize(
