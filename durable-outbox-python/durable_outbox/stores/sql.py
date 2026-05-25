@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from typing import Protocol
 from uuid import uuid4
 
+from durable_outbox.core.admin import AdminActionStatus
 from durable_outbox.core.capabilities import OutboxCapabilities
 from durable_outbox.core.claim_token import claim_token_matches
 from durable_outbox.core.duplicates import raise_if_incompatible_duplicate
@@ -394,11 +395,11 @@ class _SqlOutboxStoreBase:
             await self.client.delete(event_id)
         return len(event_ids)
 
-    async def repair_failed_to_pending(self, *, event_id: str) -> bool:
-        return await self._cas_update(event_id, _repair_failed_record)
+    async def repair_failed_to_pending(self, *, event_id: str) -> AdminActionStatus:
+        return await self._cas_admin_update(event_id, _repair_failed_record)
 
-    async def replay_event(self, *, event_id: str) -> bool:
-        return await self._cas_update(event_id, _replay_record)
+    async def replay_event(self, *, event_id: str) -> AdminActionStatus:
+        return await self._cas_admin_update(event_id, _replay_record)
 
     async def _cleanup_is_frozen(self) -> bool:
         self.cleanup_freeze_reason = await self.client.get_cleanup_freeze_reason()
@@ -433,6 +434,27 @@ class _SqlOutboxStoreBase:
             try:
                 await self.client.replace(record, expected_version=record.version)
                 return True
+            except ClaimConflictError:
+                continue
+        raise RetryableStoreError("record update lost too many version races")
+
+    async def _cas_admin_update(
+        self,
+        event_id: str,
+        mutate: Callable[[SqlStoredEvent], AdminActionStatus],
+        *,
+        attempts: int = 3,
+    ) -> AdminActionStatus:
+        for _ in range(attempts):
+            record = await self.client.get(event_id)
+            if record is None:
+                return AdminActionStatus.NOT_FOUND
+            status = mutate(record)
+            if status is not AdminActionStatus.SUCCESS:
+                return status
+            try:
+                await self.client.replace(record, expected_version=record.version)
+                return AdminActionStatus.SUCCESS
             except ClaimConflictError:
                 continue
         raise RetryableStoreError("record update lost too many version races")
@@ -511,9 +533,9 @@ def _mark_failed_if_claimed(
     return True
 
 
-def _repair_failed_record(record: SqlStoredEvent) -> bool:
+def _repair_failed_record(record: SqlStoredEvent) -> AdminActionStatus:
     if record.status is not OutboxStatus.FAILED:
-        return False
+        return AdminActionStatus.WRONG_STATE
     record.status = OutboxStatus.PENDING
     record.failed_at = None
     record.attempt_count = 0
@@ -522,10 +544,10 @@ def _repair_failed_record(record: SqlStoredEvent) -> bool:
     record.next_attempt_at = None
     record.claim_token = None
     record.claimed_at = None
-    return True
+    return AdminActionStatus.SUCCESS
 
 
-def _replay_record(record: SqlStoredEvent) -> bool:
+def _replay_record(record: SqlStoredEvent) -> AdminActionStatus:
     record.status = OutboxStatus.PENDING
     record.claim_token = None
     record.claimed_at = None
@@ -535,7 +557,7 @@ def _replay_record(record: SqlStoredEvent) -> bool:
     record.failed_at = None
     record.last_error_type = None
     record.last_error = None
-    return True
+    return AdminActionStatus.SUCCESS
 
 
 def _require_claim(record: SqlStoredEvent, claimed: ClaimedEvent) -> None:

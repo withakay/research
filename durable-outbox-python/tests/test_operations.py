@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from durable_outbox.core import AdminActionStatus
 from durable_outbox.core.model import OutboxStatus
 from durable_outbox.operations import (
     AdminEventMetadata,
@@ -22,13 +23,13 @@ from durable_outbox.operations import (
 @dataclass(slots=True)
 class OperationsAdapter:
     events: list[AdminEventMetadata]
-    action_result: bool = True
+    action_result: AdminActionStatus = AdminActionStatus.SUCCESS
 
     async def list_event_metadata(self) -> list[AdminEventMetadata]:
         return self.events
 
-    async def repair_failed_to_pending(self, *, event_id: str) -> bool:
-        if self.action_result:
+    async def repair_failed_to_pending(self, *, event_id: str) -> AdminActionStatus:
+        if self.action_result is AdminActionStatus.SUCCESS:
             self.events = [
                 replace(event, status=OutboxStatus.PENDING, last_error_type=None)
                 if event.event_id == event_id
@@ -37,7 +38,7 @@ class OperationsAdapter:
             ]
         return self.action_result
 
-    async def replay_event(self, *, event_id: str) -> bool:
+    async def replay_event(self, *, event_id: str) -> AdminActionStatus:
         _ = event_id
         return self.action_result
 
@@ -157,7 +158,7 @@ async def test_admin_service_does_not_audit_unsuccessful_action(
     occurred_at = datetime(2026, 5, 21, tzinfo=UTC)
     adapter = OperationsAdapter(
         events=[make_metadata("event-1", OutboxStatus.FAILED)],
-        action_result=False,
+        action_result=AdminActionStatus.NOT_FOUND,
     )
     metrics = CollectingMetricsAdapter()
     audit_path = tmp_path / "audit.jsonl"
@@ -175,7 +176,7 @@ async def test_admin_service_does_not_audit_unsuccessful_action(
         reason="not found",
     )
 
-    assert repaired is False
+    assert repaired is AdminActionStatus.NOT_FOUND
     assert not audit_path.exists()
     assert (
         MetricSample(
@@ -183,6 +184,42 @@ async def test_admin_service_does_not_audit_unsuccessful_action(
             kind="counter",
             value=1.0,
             labels=(("action", "repair_failed"), ("result", "not_found")),
+        )
+        in metrics.collect()
+    )
+
+
+@pytest.mark.asyncio
+async def test_admin_service_reports_wrong_state_actions_without_audit(
+    tmp_path: Path,
+) -> None:
+    adapter = OperationsAdapter(
+        events=[make_metadata("event-1", OutboxStatus.SENT)],
+        action_result=AdminActionStatus.WRONG_STATE,
+    )
+    metrics = CollectingMetricsAdapter()
+    audit_path = tmp_path / "audit.jsonl"
+    service = AdminService(
+        status_reader=adapter,
+        admin_actions=adapter,
+        audit_sink=JsonlAuditSink(audit_path),
+        metrics=metrics,
+    )
+
+    repaired = await service.repair_failed(
+        event_id="event-1",
+        operator="ops@example.test",
+        reason="not failed",
+    )
+
+    assert repaired is AdminActionStatus.WRONG_STATE
+    assert not audit_path.exists()
+    assert (
+        MetricSample(
+            name="outbox_admin_actions_total",
+            kind="counter",
+            value=1.0,
+            labels=(("action", "repair_failed"), ("result", "wrong_state")),
         )
         in metrics.collect()
     )
@@ -267,7 +304,7 @@ async def test_admin_service_records_success_metric_only_after_audit_success() -
     occurred_at = datetime(2026, 5, 21, tzinfo=UTC)
     adapter = OperationsAdapter(
         events=[make_metadata("event-1", OutboxStatus.FAILED)],
-        action_result=True,
+        action_result=AdminActionStatus.SUCCESS,
     )
     metrics = CollectingMetricsAdapter()
     service = AdminService(

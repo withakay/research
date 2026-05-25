@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal, Protocol
 
+from durable_outbox.core.admin import AdminActionStatus
 from durable_outbox.core.model import OutboxStatus
 from durable_outbox.core.time import Clock, SystemClock
 from durable_outbox.telemetry.metrics import MetricsAdapter, NoopMetrics
@@ -57,9 +58,9 @@ class OutboxStatusReader(Protocol):
 
 
 class OutboxAdminActions(Protocol):
-    async def repair_failed_to_pending(self, *, event_id: str) -> bool: ...
+    async def repair_failed_to_pending(self, *, event_id: str) -> AdminActionStatus: ...
 
-    async def replay_event(self, *, event_id: str) -> bool: ...
+    async def replay_event(self, *, event_id: str) -> AdminActionStatus: ...
 
 
 class AuditSink(Protocol):
@@ -162,14 +163,14 @@ class AdminService:
         event_id: str,
         operator: str,
         reason: str,
-    ) -> bool:
+    ) -> AdminActionStatus:
         repaired = await self.admin_actions.repair_failed_to_pending(event_id=event_id)
         await self._record_action(
             action="repair_failed",
             event_id=event_id,
             operator=operator,
             reason=reason,
-            succeeded=repaired,
+            status=repaired,
         )
         return repaired
 
@@ -179,14 +180,14 @@ class AdminService:
         event_id: str,
         operator: str,
         reason: str,
-    ) -> bool:
+    ) -> AdminActionStatus:
         replayed = await self.admin_actions.replay_event(event_id=event_id)
         await self._record_action(
             action="manual_replay",
             event_id=event_id,
             operator=operator,
             reason=reason,
-            succeeded=replayed,
+            status=replayed,
         )
         return replayed
 
@@ -204,14 +205,13 @@ class AdminService:
         event_id: str,
         operator: str,
         reason: str,
-        succeeded: bool,
+        status: AdminActionStatus,
     ) -> None:
-        result = "success" if succeeded else "not_found"
-        if not succeeded:
+        if not status.succeeded:
             self.metrics.increment(
                 "outbox_admin_actions_total",
                 action=action,
-                result=result,
+                result=status.value,
             )
             return
         try:
@@ -234,7 +234,7 @@ class AdminService:
         self.metrics.increment(
             "outbox_admin_actions_total",
             action=action,
-            result=result,
+            result=status.value,
         )
 
 

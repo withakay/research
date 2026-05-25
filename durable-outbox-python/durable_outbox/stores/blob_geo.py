@@ -8,6 +8,7 @@ from types import MappingProxyType
 from typing import Any, Literal, Protocol
 from uuid import uuid4
 
+from durable_outbox.core.admin import AdminActionStatus
 from durable_outbox.core.capabilities import OutboxCapabilities
 from durable_outbox.core.claim_token import claim_token_matches
 from durable_outbox.core.duplicates import raise_if_incompatible_duplicate
@@ -474,10 +475,12 @@ class BlobOutboxStore:
             self._record_etags.pop(event_id, None)
         return deleted
 
-    async def repair_failed_to_pending(self, *, event_id: str) -> bool:
+    async def repair_failed_to_pending(self, *, event_id: str) -> AdminActionStatus:
         record = await self._load_record(event_id)
-        if record is None or record.status is not OutboxStatus.FAILED:
-            return False
+        if record is None:
+            return AdminActionStatus.NOT_FOUND
+        if record.status is not OutboxStatus.FAILED:
+            return AdminActionStatus.WRONG_STATE
         record.status = OutboxStatus.PENDING
         record.failed_at = None
         record.attempt_count = 0
@@ -487,7 +490,7 @@ class BlobOutboxStore:
         record.claim_token = None
         record.claimed_at = None
         await self._save_record(record)
-        return True
+        return AdminActionStatus.SUCCESS
 
     async def _cleanup_is_frozen(self) -> bool:
         marker = await self.client.get_blob(cleanup_freeze_blob_name(self.environment))
@@ -499,10 +502,10 @@ class BlobOutboxStore:
         self.cleanup_freeze_reason = _cleanup_freeze_reason(marker)
         return True
 
-    async def replay_event(self, *, event_id: str) -> bool:
+    async def replay_event(self, *, event_id: str) -> AdminActionStatus:
         record = await self._load_record(event_id)
         if record is None:
-            return False
+            return AdminActionStatus.NOT_FOUND
         record.status = OutboxStatus.PENDING
         record.claim_token = None
         record.claimed_at = None
@@ -514,7 +517,7 @@ class BlobOutboxStore:
         record.last_error = None
         await self._save_record(record)
         await self._release_ordering_lease(event_id)
-        return True
+        return AdminActionStatus.SUCCESS
 
     async def _put_prepared(self, event: OutboxEvent) -> None:
         enforce_payload_size(event, self.capabilities)
@@ -864,15 +867,15 @@ class DualRegionBlobOutboxStore:
         deleted = await self._active.cleanup_sent(now=now, safety_margin=safety_margin)
         return deleted
 
-    async def repair_failed_to_pending(self, *, event_id: str) -> bool:
+    async def repair_failed_to_pending(self, *, event_id: str) -> AdminActionStatus:
         repaired = await self._active.repair_failed_to_pending(event_id=event_id)
-        if repaired:
+        if repaired is AdminActionStatus.SUCCESS:
             await self._mirror_active_update(event_id)
         return repaired
 
-    async def replay_event(self, *, event_id: str) -> bool:
+    async def replay_event(self, *, event_id: str) -> AdminActionStatus:
         replayed = await self._active.replay_event(event_id=event_id)
-        if replayed:
+        if replayed is AdminActionStatus.SUCCESS:
             await self._mirror_active_update(event_id)
         return replayed
 

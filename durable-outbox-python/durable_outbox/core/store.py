@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from typing import Protocol
 
+from durable_outbox.core.admin import AdminActionStatus
 from durable_outbox.core.capabilities import OutboxCapabilities
 from durable_outbox.core.model import (
     AcceptedReceipt,
@@ -49,6 +50,6 @@ class DurableOutboxStore(Protocol):
 
     async def cleanup_sent(self, *, now: datetime, safety_margin: timedelta) -> int: ...
 
-    async def repair_failed_to_pending(self, *, event_id: str) -> bool: ...
+    async def repair_failed_to_pending(self, *, event_id: str) -> AdminActionStatus: ...
 
-    async def replay_event(self, *, event_id: str) -> bool: ...
+    async def replay_event(self, *, event_id: str) -> AdminActionStatus: ...

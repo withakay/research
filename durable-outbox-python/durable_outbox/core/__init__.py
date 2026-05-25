@@ -1,3 +1,4 @@
+from durable_outbox.core.admin import AdminActionStatus
 from durable_outbox.core.capabilities import OutboxCapabilities
 from durable_outbox.core.dispatcher import DispatchSummary, OutboxDispatcher
 from durable_outbox.core.errors import (
@@ -24,6 +25,7 @@ from durable_outbox.core.store import DurableOutboxStore
 
 __all__ = [
     "AcceptedReceipt",
+    "AdminActionStatus",
     "ClaimConflictError",
     "ClaimedEvent",
     "ConfigurationError",

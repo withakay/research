@@ -6,6 +6,7 @@ from threading import get_ident
 import pytest
 
 from durable_outbox.core import (
+    AdminActionStatus,
     ConfigurationError,
     NonRetryablePublishError,
     RetryablePublishError,
@@ -120,7 +121,7 @@ class ProtocolAdminAdapter:
     async def list_event_metadata(self) -> list[AdminEventMetadata]:
         return self.events
 
-    async def repair_failed_to_pending(self, *, event_id: str) -> bool:
+    async def repair_failed_to_pending(self, *, event_id: str) -> AdminActionStatus:
         self.repaired_event_ids.append(event_id)
         self.events = [
             replace(event, status=OutboxStatus.PENDING, last_error_type=None)
@@ -128,11 +129,11 @@ class ProtocolAdminAdapter:
             else event
             for event in self.events
         ]
-        return True
+        return AdminActionStatus.SUCCESS
 
-    async def replay_event(self, *, event_id: str) -> bool:
+    async def replay_event(self, *, event_id: str) -> AdminActionStatus:
         self.replayed_event_ids.append(event_id)
-        return True
+        return AdminActionStatus.SUCCESS
 
 
 class CollectingAuditSink:

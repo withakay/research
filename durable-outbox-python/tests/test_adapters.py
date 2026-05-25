@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from durable_outbox.core import ConfigurationError, ValidationError
+from durable_outbox.core import AdminActionStatus, ConfigurationError, ValidationError
 from durable_outbox.core.errors import (
     ClaimConflictError,
     DuplicateEventConflictError,
@@ -893,7 +893,7 @@ async def test_provider_repair_failed_to_pending_clears_retry_state(
     repaired = await store.repair_failed_to_pending(event_id=event.event_id)
 
     record = await _maybe_await(record_getter(store, event.event_id))
-    assert repaired is True
+    assert repaired is AdminActionStatus.SUCCESS
     assert record is not None
     assert record.status is OutboxStatus.PENDING
     assert record.failed_at is None
@@ -952,7 +952,7 @@ async def test_provider_replay_event_requeues_sent_event(
     replayed = await store.replay_event(event_id=event.event_id)
 
     record = await _maybe_await(record_getter(store, event.event_id))
-    assert replayed is True
+    assert replayed is AdminActionStatus.SUCCESS
     assert record is not None
     assert record.status is OutboxStatus.PENDING
     assert record.claim_token is None
@@ -1004,7 +1004,7 @@ async def test_sql_and_cosmos_repair_retry_cas_conflict(
 
     repaired = await store.repair_failed_to_pending(event_id=event.event_id)
 
-    assert repaired is True
+    assert repaired is AdminActionStatus.SUCCESS
     record = await client(store).get(event.event_id)
     assert record.status is OutboxStatus.PENDING
     assert client(store).remaining_conflicts == 0
@@ -1060,18 +1060,49 @@ async def test_sql_and_cosmos_mark_sent_retry_cas_conflict(
     ],
 )
 @pytest.mark.asyncio
-async def test_provider_admin_actions_return_false_for_missing_event(
+async def test_provider_admin_actions_return_not_found_for_missing_event(
     store: Any,
 ) -> None:
-    assert await store.repair_failed_to_pending(event_id="missing") is False
-    assert await store.replay_event(event_id="missing") is False
+    assert (
+        await store.repair_failed_to_pending(event_id="missing")
+        is AdminActionStatus.NOT_FOUND
+    )
+    assert await store.replay_event(event_id="missing") is AdminActionStatus.NOT_FOUND
+
+
+@pytest.mark.parametrize(
+    "store",
+    [
+        FakeOutboxStore(),
+        BlobOutboxStore.for_testing(),
+        DualRegionBlobOutboxStore.for_testing(),
+        CosmosStrongOutboxStore.for_testing(
+            CosmosConfiguration(consistency="Strong", regions=("westus", "eastus"))
+        ),
+        AzureSqlSyncOutboxStore.for_testing(),
+        SqlAlwaysOnOutboxStore.for_testing(),
+    ],
+)
+@pytest.mark.asyncio
+async def test_provider_repair_failed_reports_wrong_state_for_non_failed_event(
+    store: Any,
+) -> None:
+    event = make_event("wrong-state-repair")
+    await store.put(event)
+
+    repaired = await store.repair_failed_to_pending(event_id=event.event_id)
+
+    assert repaired is AdminActionStatus.WRONG_STATE
 
 
 @pytest.mark.asyncio
 async def test_memory_repair_unknown_event_is_noop() -> None:
     store = FakeOutboxStore()
 
-    assert await store.repair_failed_to_pending(event_id="missing") is False
+    assert (
+        await store.repair_failed_to_pending(event_id="missing")
+        is AdminActionStatus.NOT_FOUND
+    )
 
 
 def test_sql_schema_contains_required_indexes() -> None:

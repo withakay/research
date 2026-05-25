@@ -2,6 +2,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from durable_outbox.core.admin import AdminActionStatus
 from durable_outbox.core.model import OutboxEvent, OutboxStatus, PublishResult
 from durable_outbox.core.store import DurableOutboxStore
 from durable_outbox.testing.fake_sink import FakeSink
@@ -59,14 +60,16 @@ async def run_basic_provider_contract(
     assert summary.sent == 1
     assert await store.claim_batch(limit=10) == []
 
-    assert await store.replay_event(event_id=event.event_id) is True
+    assert (
+        await store.replay_event(event_id=event.event_id) is AdminActionStatus.SUCCESS
+    )
     replay_claim = await store.claim_batch(limit=10)
     assert [claim.event.event_id for claim in replay_claim] == [event.event_id]
     await store.mark_sent(
         replay_claim[0],
         PublishResult(partition=0, offset=1, published_at=datetime.now(UTC)),
     )
-    assert await store.replay_event(event_id="missing") is False
+    assert await store.replay_event(event_id="missing") is AdminActionStatus.NOT_FOUND
 
     failed = make_event("failed-contract")
     await store.put(failed)
@@ -76,8 +79,18 @@ async def run_basic_provider_contract(
         error_type="Fatal",
         error_message="stop",
     )
-    assert await store.repair_failed_to_pending(event_id=failed.event_id) is True
-    assert await store.repair_failed_to_pending(event_id="missing") is False
+    assert (
+        await store.repair_failed_to_pending(event_id=failed.event_id)
+        is AdminActionStatus.SUCCESS
+    )
+    assert (
+        await store.repair_failed_to_pending(event_id="missing")
+        is AdminActionStatus.NOT_FOUND
+    )
+    assert (
+        await store.repair_failed_to_pending(event_id=event.event_id)
+        is AdminActionStatus.WRONG_STATE
+    )
     repaired_claim = await store.claim_batch(limit=10)
     assert [claim.event.event_id for claim in repaired_claim] == [failed.event_id]
 

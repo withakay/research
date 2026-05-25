@@ -702,3 +702,31 @@ verification evidence.
 - Focused green run:
   `uv run pytest tests/test_failover_ordering_cleanup.py::test_blob_ordering_recovers_stale_lock_after_lease_expiry tests/test_failover_ordering_cleanup.py::test_blob_ordering_lock_lease_duration_must_match_claim_timeout tests/test_failover_ordering_cleanup.py::test_blob_ordering_lock_blocks_stale_second_publisher -q`
   -> 4 passed
+
+## Batch 27: Admin Action Outcome Statuses
+
+### Findings Accepted
+
+- **Result-pattern exploration:** a generic Rust-style `Result[T, E]` would add
+  too much ceremony to the Python store and sink protocols, but the admin action
+  `bool` return path erased useful domain information.
+
+### Fixes Implemented
+
+- Added `AdminActionStatus` with `success`, `not_found`, and `wrong_state`
+  outcomes.
+- Changed store/admin repair and replay contracts to return
+  `AdminActionStatus` instead of a bare `bool`.
+- Updated memory, Blob, dual-region Blob, Cosmos, SQL, test adapters, and
+  provider contracts so missing events and wrong-state repairs are observable
+  without using exceptions.
+- Kept validation, publish, and ambiguous store-update failures exception-based
+  because those paths must remain loud and hard to ignore.
+
+### Verification
+
+- Focused green runs:
+  `uv run pytest tests/test_operations.py tests/test_adapters.py::test_provider_repair_failed_reports_wrong_state_for_non_failed_event tests/test_adapters.py::test_provider_admin_actions_return_not_found_for_missing_event tests/provider_contract/test_fake_store_contract.py -q`
+  -> 20 passed
+- `uv run pytest tests/test_kafka_operations.py -q` -> 16 passed
+- `uv run pytest tests/test_app.py -q` in `durable-outbox-fastapi` -> 2 passed

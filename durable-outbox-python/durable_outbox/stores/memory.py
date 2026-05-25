@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import uuid4
 
+from durable_outbox.core.admin import AdminActionStatus
 from durable_outbox.core.capabilities import OutboxCapabilities
 from durable_outbox.core.claim_token import claim_token_matches
 from durable_outbox.core.duplicates import raise_if_incompatible_duplicate
@@ -225,12 +226,12 @@ class MemoryOutboxStore:
             del self.records[event_id]
         return len(to_delete)
 
-    async def repair_failed_to_pending(self, *, event_id: str) -> bool:
+    async def repair_failed_to_pending(self, *, event_id: str) -> AdminActionStatus:
         record = self.records.get(event_id)
         if record is None:
-            return False
+            return AdminActionStatus.NOT_FOUND
         if record.status is not OutboxStatus.FAILED:
-            return False
+            return AdminActionStatus.WRONG_STATE
         record.status = OutboxStatus.PENDING
         record.failed_at = None
         record.attempt_count = 0
@@ -239,17 +240,17 @@ class MemoryOutboxStore:
         record.next_attempt_at = None
         record.claim_token = None
         record.claimed_at = None
-        return True
+        return AdminActionStatus.SUCCESS
 
     def _cleanup_is_frozen(self) -> bool:
         self.cleanup_freeze_reason = self._cleanup_state.reason
         self.cleanup_frozen = self.cleanup_freeze_reason is not None
         return self.cleanup_frozen
 
-    async def replay_event(self, *, event_id: str) -> bool:
+    async def replay_event(self, *, event_id: str) -> AdminActionStatus:
         record = self.records.get(event_id)
         if record is None:
-            return False
+            return AdminActionStatus.NOT_FOUND
         record.status = OutboxStatus.PENDING
         record.claim_token = None
         record.claimed_at = None
@@ -259,7 +260,7 @@ class MemoryOutboxStore:
         record.failed_at = None
         record.last_error_type = None
         record.last_error = None
-        return True
+        return AdminActionStatus.SUCCESS
 
     def _claimed_record(self, claimed: ClaimedEvent) -> StoredEvent:
         record = self.records[claimed.event.event_id]

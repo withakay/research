@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
-from durable_outbox.core import OutboxDispatcher
+from durable_outbox.core import AdminActionStatus, OutboxDispatcher
 from durable_outbox.core.capabilities import OutboxCapabilities
 from durable_outbox.core.model import (
     AcceptedReceipt,
@@ -86,13 +86,13 @@ class Store:
         _ = now, safety_margin
         return 0
 
-    async def repair_failed_to_pending(self, *, event_id: str) -> bool:
+    async def repair_failed_to_pending(self, *, event_id: str) -> AdminActionStatus:
         _ = event_id
-        return False
+        return AdminActionStatus.NOT_FOUND
 
-    async def replay_event(self, *, event_id: str) -> bool:
+    async def replay_event(self, *, event_id: str) -> AdminActionStatus:
         _ = event_id
-        return False
+        return AdminActionStatus.NOT_FOUND
 
 
 class Sink:
