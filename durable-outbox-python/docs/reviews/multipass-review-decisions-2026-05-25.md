@@ -973,3 +973,31 @@ verification evidence.
   `uv run ruff format --check .` -> 51 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 36: Frozen Dataclass Normalization Comments
+
+### Findings Accepted
+
+- **Q-P3-4:** `OutboxEvent` and `PublishResult` use `object.__setattr__` in
+  `__post_init__`, which is intentional but looked like accidental mutation of
+  frozen dataclasses.
+
+### Fixes Implemented
+
+- Added comments explaining that the assignments normalize caller-owned mutable
+  mappings while preserving the frozen public dataclass contract.
+- Deferred a factory-based redesign because the current normalization keeps the
+  public constructor ergonomic and the finding only requested a lower-effort
+  clarification.
+
+### Verification
+
+- Focused green run:
+  `uv run pytest tests/test_core.py -q`
+  -> 30 passed
+- Full package gates:
+  `uv run pytest -q` -> 189 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 51 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.

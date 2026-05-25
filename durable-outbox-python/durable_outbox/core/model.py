@@ -64,6 +64,8 @@ class OutboxEvent:
             raise ValidationError("ordered events require ordering_key")
         if self.ordering_sequence is not None and self.ordering_sequence < 0:
             raise ValidationError("ordering_sequence must be non-negative")
+        # Normalize caller-owned mutable header mappings while preserving the
+        # frozen public dataclass contract.
         object.__setattr__(self, "headers", _freeze_headers(self.headers))
 
     @property
@@ -125,4 +127,6 @@ class PublishResult:
     metadata: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        # Normalize caller-owned mutable metadata while preserving the frozen
+        # public dataclass contract.
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
