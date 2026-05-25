@@ -1722,3 +1722,49 @@ verification evidence.
   `uv run ruff format --check .` -> 53 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 58: Blob Region Coordination Facade
+
+### Findings Accepted
+
+- **Q-P2-4:** `DualRegionBlobOutboxStore` reached directly into
+  `BlobOutboxStore` private record methods, making the two-region coordination
+  contract depend on single-region implementation details.
+
+### Fixes Implemented
+
+- Added documented region-facing methods on `BlobOutboxStore` for the shared
+  dual-region operations:
+  `prepare_event()`, `accept_prepared_event()`, `load_region_record()`,
+  `refresh_region_records()`, `write_region_record()`, and
+  `save_region_record()`.
+- Updated `DualRegionBlobOutboxStore` prepared repair, prepared listing, and
+  mirror reconciliation to use those documented methods instead of calling
+  underscore-prefixed record internals on child stores.
+- Kept the original private methods in place for the single-region store's own
+  internal implementation and existing focused tests.
+- Added a source-level regression that rejects private child-store record
+  access from `DualRegionBlobOutboxStore` and requires docstrings on the
+  region-facing methods.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_packaging_docs.py::test_dual_region_blob_store_uses_documented_region_methods -q`
+  -> failed because `DualRegionBlobOutboxStore` called `._accept_prepared` and
+  other private child-store methods.
+- Focused green run:
+  `uv run pytest tests/test_packaging_docs.py::test_dual_region_blob_store_uses_documented_region_methods tests/test_adapters.py::test_dual_region_blob_reconciles_prepared_records_before_failover_replay tests/test_adapters.py::test_dual_region_blob_repair_copies_missing_region tests/test_adapters.py::test_dual_region_mirror_queues_reconciliation_after_repeated_failure -q`
+  -> 4 passed
+- Focused lint/type/format:
+  `uv run ruff check durable_outbox/stores/blob_geo.py tests/test_packaging_docs.py`
+  -> all checks passed;
+  `uv run ruff format --check durable_outbox/stores/blob_geo.py tests/test_packaging_docs.py`
+  -> 2 files already formatted;
+  `uv run ty check` -> all checks passed.
+- Full package gates:
+  `uv run pytest -q` -> 223 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 53 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.

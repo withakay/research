@@ -136,6 +136,34 @@ def test_public_contracts_have_docstrings() -> None:
     assert inspect.getdoc(MessageSink.publish)
 
 
+def test_dual_region_blob_store_uses_documented_region_methods() -> None:
+    from durable_outbox.stores.blob_geo import (
+        BlobOutboxStore,
+        DualRegionBlobOutboxStore,
+    )
+
+    source = inspect.getsource(DualRegionBlobOutboxStore)
+
+    for private_method in (
+        "._accept_prepared",
+        "._load_record",
+        "._put_prepared",
+        "._refresh_records",
+        "._save_record",
+        "._write_new_record",
+    ):
+        assert private_method not in source
+    for method_name in (
+        "accept_prepared_event",
+        "load_region_record",
+        "prepare_event",
+        "refresh_region_records",
+        "save_region_record",
+        "write_region_record",
+    ):
+        assert inspect.getdoc(getattr(BlobOutboxStore, method_name))
+
+
 def test_fixed_clock_testing_helper_is_centralized() -> None:
     for path in (PROJECT_ROOT / "tests").glob("test_*.py"):
         assert "\nclass FixedClock" not in path.read_text()

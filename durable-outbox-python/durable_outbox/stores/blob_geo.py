@@ -549,6 +549,30 @@ class BlobOutboxStore:
         await self._release_ordering_lease(event_id)
         return AdminActionStatus.SUCCESS
 
+    async def prepare_event(self, event: OutboxEvent) -> None:
+        """Write or validate a PREPARED-only record for dual-region acceptance."""
+        await self._put_prepared(event)
+
+    async def accept_prepared_event(self, event: OutboxEvent) -> None:
+        """Promote a prepared record to the regional accepted durability boundary."""
+        await self._accept_prepared(event)
+
+    async def load_region_record(self, event_id: str) -> StoredEvent | None:
+        """Load one event record and refresh this region's local cache."""
+        return await self._load_record(event_id)
+
+    async def refresh_region_records(self) -> None:
+        """Refresh this region's event cache from backing blob storage."""
+        await self._refresh_records()
+
+    async def write_region_record(self, record: StoredEvent) -> None:
+        """Write a new cached record into this region with create-only semantics."""
+        await self._write_new_record(record)
+
+    async def save_region_record(self, record: StoredEvent) -> None:
+        """Persist an existing cached record into this region with etag checking."""
+        await self._save_record(record)
+
     async def _put_prepared(self, event: OutboxEvent) -> None:
         enforce_payload_size(event, self.capabilities)
         record = await self._load_record(event.event_id)
@@ -925,8 +949,8 @@ class DualRegionBlobOutboxStore:
         return replayed
 
     async def list_prepared_event_ids(self) -> tuple[str, ...]:
-        await self.primary._refresh_records()
-        await self.secondary._refresh_records()
+        await self.primary.refresh_region_records()
+        await self.secondary.refresh_region_records()
         event_ids = set(self.primary.records) | set(self.secondary.records)
         return tuple(
             sorted(
@@ -954,8 +978,8 @@ class DualRegionBlobOutboxStore:
         return repaired
 
     async def repair_prepared(self, event_id: str) -> None:
-        primary_record = await self.primary._load_record(event_id)
-        secondary_record = await self.secondary._load_record(event_id)
+        primary_record = await self.primary.load_region_record(event_id)
+        secondary_record = await self.secondary.load_region_record(event_id)
         source = primary_record or secondary_record
         if source is None:
             return
@@ -965,10 +989,10 @@ class DualRegionBlobOutboxStore:
         await self._accept(self.secondary, source.event)
 
     async def _prepare(self, region: BlobOutboxStore, event: OutboxEvent) -> None:
-        await region._put_prepared(event)
+        await region.prepare_event(event)
 
     async def _accept(self, region: BlobOutboxStore, event: OutboxEvent) -> None:
-        await region._accept_prepared(event)
+        await region.accept_prepared_event(event)
 
     async def _mirror_active_update(self, event_id: str) -> None:
         last_error: Exception | None = None
@@ -1006,12 +1030,12 @@ class DualRegionBlobOutboxStore:
         return "secondary" if self.active_region == "primary" else "primary"
 
     async def _mirror_active_update_once(self, event_id: str) -> None:
-        active_record = await self._active._load_record(event_id)
+        active_record = await self._active.load_region_record(event_id)
         if active_record is None:
             return
-        standby_record = await self._standby._load_record(event_id)
+        standby_record = await self._standby.load_region_record(event_id)
         if standby_record is None:
-            await self._standby._write_new_record(_clone_record(active_record))
+            await self._standby.write_region_record(_clone_record(active_record))
             return
         standby_record.status = active_record.status
         standby_record.attempt_count = active_record.attempt_count
@@ -1023,7 +1047,7 @@ class DualRegionBlobOutboxStore:
         standby_record.failed_at = active_record.failed_at
         standby_record.last_error_type = active_record.last_error_type
         standby_record.last_error = active_record.last_error
-        await self._standby._save_record(standby_record)
+        await self._standby.save_region_record(standby_record)
 
 
 def blob_metadata(event: OutboxEvent, *, environment: str) -> Mapping[str, str]:
