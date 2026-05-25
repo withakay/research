@@ -1,0 +1,6 @@
+interface:
+  display_name: "Showboat"
+  short_description: "Create executable proof demos"
+  default_prompt: "Use $showboat to create a reproducible demo that proves this workflow."
+policy:
+  allow_implicit_invocation: true
