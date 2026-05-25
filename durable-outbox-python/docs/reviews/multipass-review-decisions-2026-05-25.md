@@ -212,3 +212,34 @@ verification evidence.
 - Focused green run:
   `uv run pytest tests/test_core.py::test_dispatcher_can_require_rpo_zero_store tests/test_failover_ordering_cleanup.py::test_failover_replayer_requires_rpo_zero_by_default tests/test_failover_ordering_cleanup.py::test_failover_replayer_can_opt_out_of_rpo_zero_validation -q`
   -> 3 passed
+
+## Batch 7: Failover Replay Error Accounting
+
+### Findings Accepted
+
+- **A-P0-3:** a single publish or store error during failover replay raised out
+  of `replay_once()`, preventing the replayer from reporting partial progress
+  or the failed-event count.
+
+### Fixes Implemented
+
+- Added `ReplaySummary.errored`.
+- Updated `FailoverReplayer` to catch per-event publish and `mark_sent` errors,
+  increment `outbox_failover_replay_failures_total{topic,error_type}`, continue
+  replaying remaining candidates, and return both replayed and errored counts.
+- Kept cleanup frozen after partial replay. This preserves the explicit
+  operator workflow: call `complete_replay()` only after the recovery watermark
+  has been met.
+
+### Verification
+
+- Focused red test showed `FailoverReplayer` lacked metrics support and errored
+  accounting before implementation.
+- Focused green run:
+  `uv run pytest tests/test_failover_ordering_cleanup.py::test_replay_continues_after_publish_failure_and_keeps_cleanup_frozen tests/test_failover_ordering_cleanup.py::test_failover_replay_uses_failover_started_at_not_now tests/test_failover_ordering_cleanup.py::test_failover_replay_selects_live_pending_in_flight_and_sent_records -q`
+  -> 5 passed
+
+### Deferred
+
+- Persistent cleanup-freeze state across process restarts remains open and
+  should be implemented with the store-level freeze marker work.

@@ -19,13 +19,21 @@ from durable_outbox.stores.blob_geo import (
 )
 from durable_outbox.stores.cosmos import CosmosConfiguration, CosmosStrongOutboxStore
 from durable_outbox.stores.sql import AzureSqlSyncOutboxStore, SqlAlwaysOnOutboxStore
+from durable_outbox.telemetry import InMemoryMetrics
 from durable_outbox.testing import FakeOutboxStore, FakeSink
 from durable_outbox.testing.provider_contract import make_event
 
 
-class FailingSink(FakeSink):
+class AlwaysFailingSink(FakeSink):
     async def publish(self, event: OutboxEvent) -> PublishResult:
         raise RuntimeError(f"publish failed for {event.event_id}")
+
+
+class SelectivelyFailingSink(FakeSink):
+    async def publish(self, event: OutboxEvent) -> PublishResult:
+        if event.event_id == "failing-replay":
+            raise RuntimeError(f"publish failed for {event.event_id}")
+        return await super().publish(event)
 
 
 def test_failover_replayer_requires_rpo_zero_by_default() -> None:
@@ -132,18 +140,39 @@ async def test_cleanup_skips_deletion_while_frozen() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cleanup_freeze_survives_replay_failure_until_completion() -> None:
+async def test_replay_continues_after_publish_failure_and_keeps_cleanup_frozen() -> (
+    None
+):
     store = FakeOutboxStore()
-    event = make_event("failing-replay")
-    await store.put(event)
+    sink = SelectivelyFailingSink()
+    metrics = InMemoryMetrics()
+    failing = make_event("failing-replay")
+    succeeding = make_event("succeeding-replay")
+    await store.put(failing)
+    await store.put(succeeding)
 
-    with pytest.raises(RuntimeError, match="publish failed"):
-        await FailoverReplayer(store, FailingSink()).replay_once(
-            failover_started_at=datetime.now(UTC),
-            limit=10,
-        )
+    summary = await FailoverReplayer(store, sink, metrics=metrics).replay_once(
+        failover_started_at=datetime.now(UTC),
+        limit=10,
+    )
 
+    assert summary.replayed == 1
+    assert summary.errored == 1
+    assert store.records["failing-replay"].status is OutboxStatus.IN_FLIGHT
+    assert store.records["succeeding-replay"].status is OutboxStatus.SENT
     assert store.cleanup_frozen is True
+    assert (
+        metrics.counts[
+            (
+                "outbox_failover_replay_failures_total",
+                (
+                    ("error_type", "RuntimeError"),
+                    ("topic", failing.topic),
+                ),
+            )
+        ]
+        == 1
+    )
     await FailoverReplayer(store, FakeSink()).complete_replay()
     assert store.cleanup_frozen is False
 
