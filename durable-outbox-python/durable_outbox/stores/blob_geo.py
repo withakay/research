@@ -1,5 +1,6 @@
 import base64
 import json
+import logging
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -37,8 +38,10 @@ from durable_outbox.core.validation import (
     require_positive_limit,
 )
 from durable_outbox.stores.memory import StoredEvent
+from durable_outbox.telemetry.metrics import MetricsAdapter, NoopMetrics
 
 type BlobRegionName = Literal["primary", "secondary"]
+_LOGGER = logging.getLogger(__name__)
 
 
 def event_blob_name(event_id: str) -> str:
@@ -690,6 +693,7 @@ class DualRegionBlobOutboxStore:
         store_name: str = "DualRegionBlobOutboxStore",
         active_region: BlobRegionName = "primary",
         claim_timeout: timedelta = timedelta(minutes=5),
+        metrics: MetricsAdapter | None = None,
         clock: Clock | None = None,
     ) -> None:
         if active_region not in ("primary", "secondary"):
@@ -714,6 +718,7 @@ class DualRegionBlobOutboxStore:
             claim_timeout=claim_timeout,
             clock=self.clock,
         )
+        self.metrics = metrics or NoopMetrics()
         self.active_region: BlobRegionName = active_region
         self._pending_mirror_event_ids: set[str] = set()
         self.cleanup_frozen = False
@@ -737,6 +742,7 @@ class DualRegionBlobOutboxStore:
         environment: str = "test",
         active_region: BlobRegionName = "primary",
         claim_timeout: timedelta = timedelta(minutes=5),
+        metrics: MetricsAdapter | None = None,
         clock: Clock | None = None,
     ) -> DualRegionBlobOutboxStore:
         return cls(
@@ -746,6 +752,7 @@ class DualRegionBlobOutboxStore:
             store_name="InMemoryDualRegionBlobOutboxStore",
             active_region=active_region,
             claim_timeout=claim_timeout,
+            metrics=metrics,
             clock=clock,
         )
 
@@ -939,8 +946,31 @@ class DualRegionBlobOutboxStore:
                 return
             except Exception as exc:
                 last_error = exc
+                self.metrics.increment(
+                    "outbox_blob_mirror_update_failures_total",
+                    active_region=self.active_region,
+                    standby_region=self._standby_region_name(),
+                    error_type=type(exc).__name__,
+                )
         self._pending_mirror_event_ids.add(event_id)
+        self.metrics.increment(
+            "outbox_blob_mirror_updates_queued_total",
+            active_region=self.active_region,
+            standby_region=self._standby_region_name(),
+        )
+        _LOGGER.warning(
+            "Queued dual-region blob mirror update for reconciliation",
+            extra={
+                "event_id": event_id,
+                "active_region": self.active_region,
+                "standby_region": self._standby_region_name(),
+                "error_type": type(last_error).__name__ if last_error else "unknown",
+            },
+        )
         raise RetryableStoreError("standby mirror update failed") from last_error
+
+    def _standby_region_name(self) -> BlobRegionName:
+        return "secondary" if self.active_region == "primary" else "primary"
 
     async def _mirror_active_update_once(self, event_id: str) -> None:
         active_record = await self._active._load_record(event_id)

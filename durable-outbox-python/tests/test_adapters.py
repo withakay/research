@@ -39,6 +39,7 @@ from durable_outbox.stores.sql import (
     InMemorySqlOutboxClient,
     SqlAlwaysOnOutboxStore,
 )
+from durable_outbox.telemetry import InMemoryMetrics
 from durable_outbox.testing import FakeOutboxStore
 from durable_outbox.testing.provider_contract import make_event
 
@@ -542,9 +543,11 @@ async def test_dual_region_mirror_queues_reconciliation_after_repeated_failure()
     None
 ):
     secondary_client = FailingPutBlobClient()
+    metrics = InMemoryMetrics()
     store = DualRegionBlobOutboxStore(
         primary_client=InMemoryBlobClient(),
         secondary_client=secondary_client,
+        metrics=metrics,
     )
     event = make_event("mirror-queue")
     await store.put(event)
@@ -564,6 +567,31 @@ async def test_dual_region_mirror_queues_reconciliation_after_repeated_failure()
     assert repaired == 1
     assert await store.pending_mirror_event_ids() == ()
     assert store.secondary.records[event.event_id].status is OutboxStatus.SENT
+    assert (
+        metrics.counts[
+            (
+                "outbox_blob_mirror_update_failures_total",
+                (
+                    ("active_region", "primary"),
+                    ("error_type", "RuntimeError"),
+                    ("standby_region", "secondary"),
+                ),
+            )
+        ]
+        == 3
+    )
+    assert (
+        metrics.counts[
+            (
+                "outbox_blob_mirror_updates_queued_total",
+                (
+                    ("active_region", "primary"),
+                    ("standby_region", "secondary"),
+                ),
+            )
+        ]
+        == 1
+    )
 
 
 @pytest.mark.asyncio

@@ -1062,3 +1062,34 @@ verification evidence.
   `uv run ruff format --check .` -> 51 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 39: Dual-Region Mirror Observability
+
+### Findings Accepted
+
+- **A-P2-2:** dual-region Blob standby mirror updates had retry and queued
+  reconciliation behavior, but repeated mirror drift did not emit metrics or
+  logs that operators could alert on.
+
+### Fixes Implemented
+
+- Added an optional `MetricsAdapter` to `DualRegionBlobOutboxStore`.
+- Incremented `outbox_blob_mirror_update_failures_total` for each failed
+  standby mirror update attempt, labelled by active region, standby region, and
+  error type.
+- Incremented `outbox_blob_mirror_updates_queued_total` when an event is queued
+  for later mirror reconciliation.
+- Logged a warning with event and region context when reconciliation is queued.
+- Extended the repeated-failure mirror test to assert both counters.
+
+### Verification
+
+- Focused green run:
+  `uv run pytest tests/test_adapters.py::test_dual_region_mirror_queues_reconciliation_after_repeated_failure -q`
+  -> 1 passed
+- Full package gates:
+  `uv run pytest -q` -> 192 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 51 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
