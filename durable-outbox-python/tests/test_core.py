@@ -68,6 +68,30 @@ def test_ordered_event_requires_key() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "topic",
+    [
+        "",
+        "orders\rspoofed_metric 1",
+        "orders/created",
+        "x" * 250,
+    ],
+)
+def test_event_rejects_invalid_topic_names(topic: str) -> None:
+    now = datetime.now(UTC)
+
+    with pytest.raises(ValidationError, match="topic"):
+        OutboxEvent(
+            event_id="event-1",
+            topic=topic,
+            payload=b"{}",
+            key=None,
+            headers={},
+            created_at=now,
+            expires_at=now + timedelta(minutes=1),
+        )
+
+
 def test_event_rejects_naive_datetimes() -> None:
     now = datetime.now()
 

@@ -162,3 +162,29 @@ verification evidence.
 - Focused green run:
   `uv run pytest tests/test_core.py::test_dispatcher_truncates_retryable_error_message_before_store_update tests/test_core.py::test_dispatcher_observes_retry_state_update_failure tests/test_core.py::test_dispatcher_observes_failed_state_update_failure tests/test_core.py::test_dispatcher_does_not_mark_pending_after_post_ack_store_failure -q`
   -> 4 passed
+
+## Batch 5: Topic Validation And Prometheus Label Escaping
+
+### Findings Accepted
+
+- **S-NEW-P1-1:** producer-controlled topics were accepted without a Kafka-style
+  grammar check and then used as metric labels. The Prometheus exposition helper
+  escaped newline, quote, and backslash but not carriage return or other C0
+  controls.
+
+### Fixes Implemented
+
+- Added a strict topic regex to `OutboxEvent`:
+  `^[A-Za-z0-9._-]{1,249}$`.
+- Updated Prometheus label escaping to render `\r` as `\\r` and every other C0
+  control as `\\xNN`, while preserving the existing escaping for newline,
+  quotes, and backslashes.
+
+### Verification
+
+- Focused red tests showed invalid topics with carriage returns, slashes, and
+  excessive length were accepted, and raw control characters appeared in
+  Prometheus output before implementation.
+- Focused green run:
+  `uv run pytest tests/test_core.py::test_event_rejects_invalid_topic_names tests/test_operations.py::test_collecting_metrics_adapter_exports_prometheus_text -q`
+  -> 5 passed

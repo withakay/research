@@ -273,7 +273,26 @@ def _format_prometheus_labels(labels: tuple[tuple[str, str], ...]) -> str:
 
 
 def _escape_prometheus_label_value(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+    escaped: list[str] = []
+    for char in value:
+        if char == "\\":
+            escaped.append("\\\\")
+        elif char == "\n":
+            escaped.append("\\n")
+        elif char == "\r":
+            escaped.append("\\r")
+        elif char == '"':
+            escaped.append('\\"')
+        elif _is_c0_control(char):
+            escaped.append(f"\\x{ord(char):02x}")
+        else:
+            escaped.append(char)
+    return "".join(escaped)
+
+
+def _is_c0_control(char: str) -> bool:
+    codepoint = ord(char)
+    return codepoint < 0x20 or codepoint == 0x7F
 
 
 def _format_metric_value(value: float) -> str:

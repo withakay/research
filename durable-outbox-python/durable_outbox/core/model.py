@@ -1,3 +1,4 @@
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -8,6 +9,7 @@ from durable_outbox.core.errors import ValidationError
 
 MAX_HEADER_COUNT = 64
 MAX_HEADER_VALUE_BYTES = 8192
+TOPIC_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,249}$")
 
 
 class OutboxStatus(StrEnum):
@@ -40,8 +42,8 @@ class OutboxEvent:
     def __post_init__(self) -> None:
         if not self.event_id:
             raise ValidationError("event_id is required")
-        if not self.topic:
-            raise ValidationError("topic is required")
+        if not TOPIC_PATTERN.fullmatch(self.topic):
+            raise ValidationError("topic must match ^[A-Za-z0-9._-]{1,249}$")
         if not isinstance(self.payload, bytes):
             raise ValidationError("payload must be bytes")
         _require_aware_datetime(self.created_at, field_name="created_at")

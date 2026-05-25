@@ -213,15 +213,15 @@ def test_collecting_metrics_adapter_exports_prometheus_text() -> None:
     metrics = CollectingMetricsAdapter()
     metrics.increment(
         "outbox_admin_actions_total",
-        action='manual_replay"quoted',
-        result="success\nnext",
+        action='manual_replay"quoted\rlater',
+        result="success\nnext\x00hidden",
     )
     metrics.gauge("outbox_events_pending_total", 2)
 
     assert metrics.to_prometheus_text() == (
         "# TYPE outbox_admin_actions_total counter\n"
-        'outbox_admin_actions_total{action="manual_replay\\"quoted",'
-        'result="success\\nnext"} 1\n'
+        'outbox_admin_actions_total{action="manual_replay\\"quoted\\rlater",'
+        'result="success\\nnext\\x00hidden"} 1\n'
         "# TYPE outbox_events_pending_total gauge\n"
         "outbox_events_pending_total 2\n"
     )
