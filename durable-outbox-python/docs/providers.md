@@ -18,6 +18,13 @@ Azure Storage GRS, RA-GRS, GZRS, or RA-GZRS alone is asynchronous replication an
 `BlobOutboxStore` protocol. The optional Aspire integration suite starts
 Azurite for local Blob coverage and Kafka for real broker coverage.
 
+Ordered Blob publishing requires a cross-process ordering lock. By default,
+`BlobOutboxStore` uses `BlobOrderingLockBackend`, which stores lock blobs with
+conditional writes through the same blob client. Deployments can provide another
+`OrderingLockBackend` implementation, such as Redis, when lock coordination
+should live outside the outbox container. `BlobOutboxStore.for_testing()` remains
+the intended path for process-local in-memory tests.
+
 ## Cosmos
 
 Cosmos RPO=0 requires strong consistency, more than one region, and single-write configuration. Multi-write and session-consistency modes can still be useful, but they must not declare `rpo_zero_for_accepted_events=True` in certified mode.

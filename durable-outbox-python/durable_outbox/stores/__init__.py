@@ -3,6 +3,7 @@ from typing import Any
 __all__ = [
     "AzureBlobClient",
     "AzureSqlSyncOutboxStore",
+    "BlobOrderingLockBackend",
     "BlobOutboxStore",
     "CosmosStrongOutboxStore",
     "DualRegionBlobOutboxStore",
@@ -16,13 +17,19 @@ def __getattr__(name: str) -> Any:
         from durable_outbox.stores.azure_blob import AzureBlobClient
 
         return AzureBlobClient
-    if name in {"BlobOutboxStore", "DualRegionBlobOutboxStore"}:
+    if name in {
+        "BlobOrderingLockBackend",
+        "BlobOutboxStore",
+        "DualRegionBlobOutboxStore",
+    }:
         from durable_outbox.stores.blob_geo import (
+            BlobOrderingLockBackend,
             BlobOutboxStore,
             DualRegionBlobOutboxStore,
         )
 
         return {
+            "BlobOrderingLockBackend": BlobOrderingLockBackend,
             "BlobOutboxStore": BlobOutboxStore,
             "DualRegionBlobOutboxStore": DualRegionBlobOutboxStore,
         }[name]

@@ -23,7 +23,6 @@ from durable_outbox.core.model import (
     PublishResult,
 )
 from durable_outbox.core.ordering import (
-    InMemoryOrderingLockBackend,
     OrderingLockBackend,
     OrderingLockLease,
     ordering_scope,
@@ -127,6 +126,56 @@ class InMemoryBlobClient:
         ]
 
 
+class BlobOrderingLockBackend:
+    def __init__(self, client: BlobClientProtocol) -> None:
+        self.client = client
+
+    async def acquire(
+        self,
+        *,
+        lock_name: str,
+        owner_token: str,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> OrderingLockLease | None:
+        expires_at = now + lease_duration
+        metadata = _lock_metadata(owner_token=owner_token, expires_at=expires_at)
+        try:
+            await self.client.put_blob(
+                lock_name,
+                b"",
+                metadata,
+                if_none_match=True,
+            )
+        except BlobPreconditionFailedError:
+            current = await self.client.get_blob(lock_name)
+            if current is None or not _lock_is_expired(current, now=now):
+                return None
+            try:
+                await self.client.put_blob(
+                    lock_name,
+                    b"",
+                    metadata,
+                    if_match=current.etag,
+                )
+            except BlobPreconditionFailedError:
+                return None
+        return OrderingLockLease(
+            lock_name=lock_name,
+            owner_token=owner_token,
+            expires_at=expires_at,
+        )
+
+    async def release(self, lease: OrderingLockLease) -> None:
+        current = await self.client.get_blob(lease.lock_name)
+        if current is None or current.metadata.get("owner_token") != lease.owner_token:
+            return
+        try:
+            await self.client.delete_blob(lease.lock_name, if_match=current.etag)
+        except BlobPreconditionFailedError:
+            return
+
+
 class BlobOutboxStore:
     capabilities = OutboxCapabilities(
         store_name="BlobOutboxStore",
@@ -155,8 +204,8 @@ class BlobOutboxStore:
             )
         self.client = client
         self.environment = environment
-        self.ordering_lock_backend = (
-            ordering_lock_backend or InMemoryOrderingLockBackend()
+        self.ordering_lock_backend = ordering_lock_backend or BlobOrderingLockBackend(
+            client
         )
         self.ordering_lock_lease_duration = ordering_lock_lease_duration
         self.claim_timeout = claim_timeout
@@ -839,6 +888,20 @@ def _record_metadata(record: StoredEvent, *, environment: str) -> Mapping[str, s
     values["status"] = record.status.value
     values["event_fingerprint"] = _event_fingerprint(record.event)
     return values
+
+
+def _lock_metadata(*, owner_token: str, expires_at: datetime) -> Mapping[str, str]:
+    return {
+        "owner_token": owner_token,
+        "expires_at": _encode_datetime(expires_at) or "",
+    }
+
+
+def _lock_is_expired(blob: BlobObject, *, now: datetime) -> bool:
+    expires_at = _decode_datetime(blob.metadata.get("expires_at"))
+    if expires_at is None:
+        return False
+    return expires_at <= now
 
 
 def _ordering_scope(event: OutboxEvent) -> str | None:

@@ -396,3 +396,28 @@ verification evidence.
 - Focused green run:
   `uv run pytest tests/test_adapters.py tests/test_failover_ordering_cleanup.py tests/test_core.py -q`
   -> 110 passed
+
+## Batch 14: Blob-Backed Ordering Locks
+
+### Findings Accepted
+
+- **A-P0-4:** Blob ordered mode used a process-local ordering lock by default,
+  allowing horizontally scaled publishers to claim the same ordering key from
+  stale local snapshots.
+
+### Fixes Implemented
+
+- Added `BlobOrderingLockBackend`, which coordinates leases through conditional
+  lock-blob writes on the shared blob client.
+- Changed `BlobOutboxStore` to default to the blob-backed lock backend for
+  explicit blob clients.
+- Exported `BlobOrderingLockBackend` from `durable_outbox.stores` and
+  documented the cross-process ordered-mode requirement in `docs/providers.md`.
+
+### Verification
+
+- Focused red test showed a stale second publisher could claim the next ordered
+  event for the same key before implementation.
+- Focused green run:
+  `uv run pytest tests/test_failover_ordering_cleanup.py::test_blob_ordering_lock_blocks_stale_second_publisher tests/test_failover_ordering_cleanup.py::test_blob_ordering_recovers_stale_lock_after_lease_expiry tests/test_adapters.py::test_store_package_exports_are_importable -q`
+  -> 3 passed

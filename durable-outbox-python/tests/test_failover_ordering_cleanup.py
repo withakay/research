@@ -15,6 +15,7 @@ from durable_outbox.core.model import (
 from durable_outbox.core.ordering import InMemoryOrderingLockBackend
 from durable_outbox.stores.blob_geo import (
     BlobOutboxStore,
+    InMemoryBlobClient,
     ordering_lock_blob_name,
 )
 from durable_outbox.stores.cosmos import CosmosConfiguration, CosmosStrongOutboxStore
@@ -340,3 +341,37 @@ async def test_blob_ordering_recovers_stale_lock_after_lease_expiry() -> None:
 
     assert first_claim.event.event_id == "stale"
     assert [claim.event.event_id for claim in recovered] == ["stale"]
+
+
+@pytest.mark.asyncio
+async def test_blob_ordering_lock_blocks_stale_second_publisher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = InMemoryBlobClient()
+    first = BlobOutboxStore(client=client, environment="prod")
+    second = BlobOutboxStore(client=client, environment="prod")
+    first_event = replace(
+        make_event("first-shared-lock", ordering_key="customer-1"),
+        publishing_mode=PublishingMode.ORDERED,
+        ordering_sequence=1,
+    )
+    second_event = replace(
+        make_event("second-shared-lock", ordering_key="customer-1"),
+        publishing_mode=PublishingMode.ORDERED,
+        ordering_sequence=2,
+    )
+    await first.put(first_event)
+    await first.put(second_event)
+    await first._refresh_records()
+    await second._refresh_records()
+
+    first_claim = await first.claim_batch(limit=1)
+    monkeypatch.setattr(second, "_refresh_records", _noop_refresh)
+    stale_second_claim = await second.claim_batch(limit=1)
+
+    assert [claim.event.event_id for claim in first_claim] == ["first-shared-lock"]
+    assert stale_second_claim == []
+
+
+async def _noop_refresh() -> None:
+    return None
