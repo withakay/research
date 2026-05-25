@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import MutableMapping
 from datetime import UTC, datetime, timedelta
+from random import Random
 from typing import cast
 
 import pytest
@@ -129,6 +130,51 @@ def test_event_rejects_naive_datetimes() -> None:
             created_at=now,
             expires_at=now + timedelta(minutes=1),
         )
+
+
+def test_retry_policy_can_disable_jitter_for_exact_backoff() -> None:
+    now = datetime.now(UTC)
+    policy = RetryPolicy(
+        initial_delay=timedelta(seconds=1),
+        max_delay=timedelta(minutes=1),
+        jitter=0.0,
+    )
+
+    assert policy.next_attempt_at(now, attempt_count=1) == now + timedelta(seconds=1)
+    assert policy.next_attempt_at(now, attempt_count=2) == now + timedelta(seconds=2)
+
+
+def test_retry_policy_jitter_is_seedable_and_bounded() -> None:
+    now = datetime.now(UTC)
+    first = RetryPolicy(
+        initial_delay=timedelta(seconds=10),
+        max_delay=timedelta(minutes=1),
+        jitter=0.5,
+        random=Random(42),
+    )
+    second = RetryPolicy(
+        initial_delay=timedelta(seconds=10),
+        max_delay=timedelta(minutes=1),
+        jitter=0.5,
+        random=Random(42),
+    )
+    different = RetryPolicy(
+        initial_delay=timedelta(seconds=10),
+        max_delay=timedelta(minutes=1),
+        jitter=0.5,
+        random=Random(7),
+    )
+
+    first_attempt = first.next_attempt_at(now, attempt_count=1)
+    assert first_attempt == second.next_attempt_at(now, attempt_count=1)
+    assert first_attempt != different.next_attempt_at(now, attempt_count=1)
+    assert now + timedelta(seconds=5) <= first_attempt <= now + timedelta(seconds=15)
+
+
+@pytest.mark.parametrize("jitter", [-0.1, 1.1])
+def test_retry_policy_rejects_invalid_jitter(jitter: float) -> None:
+    with pytest.raises(ValueError, match="jitter"):
+        RetryPolicy(jitter=jitter)
 
 
 def test_event_rejects_too_many_headers() -> None:
@@ -391,6 +437,7 @@ async def test_dispatcher_uses_claim_attempt_count_for_retry_backoff() -> None:
         retry_policy=RetryPolicy(
             initial_delay=timedelta(seconds=1),
             max_delay=timedelta(minutes=1),
+            jitter=0.0,
         ),
     )
 

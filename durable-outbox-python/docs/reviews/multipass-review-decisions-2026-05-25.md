@@ -789,3 +789,32 @@ verification evidence.
   `uv run ruff format --check .` -> 51 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 30: Retry Backoff Jitter
+
+### Findings Accepted
+
+- **P-P2-4:** retry scheduling used deterministic exponential backoff with no
+  jitter, so a Kafka or storage outage could cause synchronized retry waves when
+  many events fail in the same dispatch window.
+
+### Fixes Implemented
+
+- Added `RetryPolicy.jitter`, defaulting to `0.1`, and applied bounded
+  multiplicative jitter after exponential backoff and max-delay capping.
+- Added an injectable `Random` instance for deterministic tests and deployments
+  that need reproducible retry scheduling.
+- Added validation for invalid jitter and multiplier values.
+- Updated exact-backoff tests to opt into `jitter=0.0`.
+
+### Verification
+
+- Focused green run:
+  `uv run pytest tests/test_core.py -q`
+  -> 30 passed
+- Full package gates:
+  `uv run pytest -q` -> 184 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 51 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
