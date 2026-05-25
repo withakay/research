@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import binascii
 import json
@@ -797,10 +798,14 @@ class DualRegionBlobOutboxStore:
         self.use_region("primary")
 
     async def put(self, event: OutboxEvent) -> AcceptedReceipt:
-        await self._prepare(self.primary, event)
-        await self._prepare(self.secondary, event)
-        await self._accept(self.primary, event)
-        await self._accept(self.secondary, event)
+        await asyncio.gather(
+            self._prepare(self.primary, event),
+            self._prepare(self.secondary, event),
+        )
+        await asyncio.gather(
+            self._accept(self.primary, event),
+            self._accept(self.secondary, event),
+        )
         primary = self.primary.records[event.event_id]
         secondary = self.secondary.records[event.event_id]
         accepted_at_candidates = [

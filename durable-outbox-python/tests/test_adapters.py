@@ -1,3 +1,4 @@
+import asyncio
 import json
 from collections.abc import Mapping
 from dataclasses import replace
@@ -146,6 +147,40 @@ class FailingPutBlobClient(InMemoryBlobClient):
             if_none_match=if_none_match,
             if_match=if_match,
         )
+
+
+class CoordinatedDualRegionBlobOutboxStore(DualRegionBlobOutboxStore):
+    def __init__(self) -> None:
+        super().__init__(
+            primary_client=InMemoryBlobClient(),
+            secondary_client=InMemoryBlobClient(),
+        )
+        self.phase_events = {
+            "prepare": asyncio.Event(),
+            "accept": asyncio.Event(),
+        }
+        self.phase_starts: dict[str, list[str]] = {
+            "prepare": [],
+            "accept": [],
+        }
+        self.timeline: list[str] = []
+
+    async def _prepare(self, region: BlobOutboxStore, event: Any) -> None:
+        await self._enter_phase("prepare", region)
+        await super()._prepare(region, event)
+        self.timeline.append(f"prepare-finish:{region.environment}")
+
+    async def _accept(self, region: BlobOutboxStore, event: Any) -> None:
+        await self._enter_phase("accept", region)
+        await super()._accept(region, event)
+        self.timeline.append(f"accept-finish:{region.environment}")
+
+    async def _enter_phase(self, phase: str, region: BlobOutboxStore) -> None:
+        self.phase_starts[phase].append(region.environment)
+        self.timeline.append(f"{phase}-start:{region.environment}")
+        if len(self.phase_starts[phase]) == 2:
+            self.phase_events[phase].set()
+        await asyncio.wait_for(self.phase_events[phase].wait(), timeout=0.05)
 
 
 def test_store_package_exports_are_importable() -> None:
@@ -406,6 +441,36 @@ async def test_dual_region_blob_accepts_only_after_both_regions() -> None:
     assert receipt.rpo_zero is True
     assert store.primary.records[event.event_id].accepted is True
     assert store.secondary.records[event.event_id].accepted is True
+
+
+@pytest.mark.asyncio
+async def test_dual_region_blob_put_runs_prepare_and_accept_phases_concurrently() -> (
+    None
+):
+    store = CoordinatedDualRegionBlobOutboxStore()
+    event = make_event("parallel-dual-region-put")
+
+    await store.put(event)
+
+    assert set(store.phase_starts["prepare"]) == {
+        "default-primary",
+        "default-secondary",
+    }
+    assert set(store.phase_starts["accept"]) == {
+        "default-primary",
+        "default-secondary",
+    }
+    prepare_finishes = [
+        index
+        for index, entry in enumerate(store.timeline)
+        if entry.startswith("prepare-finish:")
+    ]
+    accept_starts = [
+        index
+        for index, entry in enumerate(store.timeline)
+        if entry.startswith("accept-start:")
+    ]
+    assert max(prepare_finishes) < min(accept_starts)
 
 
 @pytest.mark.asyncio

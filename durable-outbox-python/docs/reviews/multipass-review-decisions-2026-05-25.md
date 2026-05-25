@@ -1261,3 +1261,38 @@ verification evidence.
   `uv run ruff format --check .` -> 51 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 45: Dual-Region Put Phase Parallelism
+
+### Findings Accepted
+
+- **P-P0-3:** dual-region Blob `put()` performed four sequential network-shaped
+  operations: prepare primary, prepare secondary, accept primary, accept
+  secondary.
+
+### Fixes Implemented
+
+- Changed `DualRegionBlobOutboxStore.put()` to run the two prepare operations
+  concurrently, then run the two accept operations concurrently after both
+  prepares have completed.
+- Preserved the correctness barrier: no accept starts before both regions have
+  reached the prepared phase.
+- Added a regression test that coordinates both regions and fails if either
+  phase is executed serially.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_adapters.py::test_dual_region_blob_put_runs_prepare_and_accept_phases_concurrently -q`
+  -> failed because primary prepare waited for secondary prepare, which never
+  started under the sequential implementation.
+- Focused green run:
+  `uv run pytest tests/test_adapters.py::test_dual_region_blob_put_runs_prepare_and_accept_phases_concurrently -q`
+  -> 1 passed
+- Adapter and package gates:
+  `uv run pytest tests/test_adapters.py -q` -> 101 passed;
+  `uv run pytest -q` -> 205 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 51 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
