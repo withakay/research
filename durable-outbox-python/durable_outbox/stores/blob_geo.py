@@ -56,6 +56,21 @@ def cleanup_freeze_blob_name(environment: str) -> str:
     return f"outbox/v1/control/{environment_hash}/cleanup-freeze.json"
 
 
+def _resolve_ordering_lock_lease_duration(
+    *,
+    claim_timeout: timedelta,
+    ordering_lock_lease_duration: timedelta | None,
+) -> timedelta:
+    if ordering_lock_lease_duration is None:
+        return claim_timeout
+    if ordering_lock_lease_duration != claim_timeout:
+        raise ConfigurationError(
+            "ordering_lock_lease_duration must match claim_timeout until lock "
+            "renewal is supported"
+        )
+    return ordering_lock_lease_duration
+
+
 @dataclass(frozen=True, slots=True)
 class BlobObject:
     name: str
@@ -207,7 +222,7 @@ class BlobOutboxStore:
         environment: str = "default",
         store_name: str = "BlobOutboxStore",
         ordering_lock_backend: OrderingLockBackend | None = None,
-        ordering_lock_lease_duration: timedelta = timedelta(minutes=5),
+        ordering_lock_lease_duration: timedelta | None = None,
         claim_timeout: timedelta = timedelta(minutes=5),
         clock: Clock | None = None,
     ) -> None:
@@ -219,6 +234,10 @@ class BlobOutboxStore:
         self.client = client
         enforce_metadata_safe(environment, field_name="environment")
         self.environment = environment
+        ordering_lock_lease_duration = _resolve_ordering_lock_lease_duration(
+            claim_timeout=claim_timeout,
+            ordering_lock_lease_duration=ordering_lock_lease_duration,
+        )
         self.ordering_lock_backend = ordering_lock_backend or BlobOrderingLockBackend(
             client
         )
@@ -245,7 +264,7 @@ class BlobOutboxStore:
         *,
         environment: str = "test",
         ordering_lock_backend: OrderingLockBackend | None = None,
-        ordering_lock_lease_duration: timedelta = timedelta(minutes=5),
+        ordering_lock_lease_duration: timedelta | None = None,
         claim_timeout: timedelta = timedelta(minutes=5),
         clock: Clock | None = None,
     ) -> BlobOutboxStore:

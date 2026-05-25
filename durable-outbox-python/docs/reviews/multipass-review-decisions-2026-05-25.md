@@ -680,3 +680,25 @@ verification evidence.
 - Focused green run:
   `uv run pytest tests/test_operations.py tests/test_kafka_operations.py -q`
   -> 22 passed
+
+## Batch 26: Blob Ordering Lease Coherence
+
+### Findings Accepted
+
+- **A-P2-3:** Blob ordering locks relied on lease expiry for crash recovery, but
+  the constructor allowed the ordering lock lease duration to drift away from
+  the claim timeout without a renewal mechanism.
+
+### Fixes Implemented
+
+- Made Blob ordering lock lease duration derive from `claim_timeout` by default.
+- Rejected explicit lease durations that differ from `claim_timeout` until lock
+  renewal is supported.
+- Reworked stale-lock recovery coverage to use a fake clock with matching claim
+  timeout and lease duration instead of a zero-second lease.
+
+### Verification
+
+- Focused green run:
+  `uv run pytest tests/test_failover_ordering_cleanup.py::test_blob_ordering_recovers_stale_lock_after_lease_expiry tests/test_failover_ordering_cleanup.py::test_blob_ordering_lock_lease_duration_must_match_claim_timeout tests/test_failover_ordering_cleanup.py::test_blob_ordering_lock_blocks_stale_second_publisher -q`
+  -> 4 passed

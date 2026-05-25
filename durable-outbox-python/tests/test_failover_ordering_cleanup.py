@@ -38,6 +38,14 @@ class SelectivelyFailingSink(FakeSink):
         return await super().publish(event)
 
 
+class FixedClock:
+    def __init__(self, now: datetime) -> None:
+        self.now = now
+
+    def utcnow(self) -> datetime:
+        return self.now
+
+
 def test_failover_replayer_requires_rpo_zero_by_default() -> None:
     with pytest.raises(ConfigurationError, match="RPO=0"):
         FailoverReplayer(BlobOutboxStore.for_testing(), FakeSink())
@@ -354,10 +362,12 @@ async def test_ordering_scope_includes_topic_for_all_ordered_stores(store: Any) 
 
 @pytest.mark.asyncio
 async def test_blob_ordering_recovers_stale_lock_after_lease_expiry() -> None:
+    clock = FixedClock(datetime.now(UTC))
     store = BlobOutboxStore.for_testing(
         environment="prod",
         claim_timeout=timedelta(seconds=1),
-        ordering_lock_lease_duration=timedelta(seconds=0),
+        ordering_lock_lease_duration=timedelta(seconds=1),
+        clock=clock,
     )
     event = replace(
         make_event("stale", ordering_key="customer-1"),
@@ -366,13 +376,26 @@ async def test_blob_ordering_recovers_stale_lock_after_lease_expiry() -> None:
     )
     await store.put(event)
     first_claim = (await store.claim_batch(limit=1))[0]
-    store.records[event.event_id].claimed_at = datetime.now(UTC) - timedelta(seconds=2)
-    await store._save_record(store.records[event.event_id])
+    clock.now += timedelta(seconds=2)
 
     recovered = await store.claim_batch(limit=1)
 
     assert first_claim.event.event_id == "stale"
     assert [claim.event.event_id for claim in recovered] == ["stale"]
+
+
+@pytest.mark.parametrize(
+    "ordering_lock_lease_duration",
+    [timedelta(milliseconds=500), timedelta(seconds=2)],
+)
+def test_blob_ordering_lock_lease_duration_must_match_claim_timeout(
+    ordering_lock_lease_duration: timedelta,
+) -> None:
+    with pytest.raises(ConfigurationError, match="ordering_lock_lease_duration"):
+        BlobOutboxStore.for_testing(
+            claim_timeout=timedelta(seconds=1),
+            ordering_lock_lease_duration=ordering_lock_lease_duration,
+        )
 
 
 @pytest.mark.asyncio
