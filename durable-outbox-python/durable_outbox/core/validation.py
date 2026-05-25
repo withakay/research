@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import TYPE_CHECKING
 
-from durable_outbox.core.capabilities import OutboxCapabilities
 from durable_outbox.core.errors import ValidationError
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
+    from durable_outbox.core.capabilities import OutboxCapabilities
     from durable_outbox.core.model import OutboxEvent
 
 MAX_CLAIM_BATCH_LIMIT = 1000

@@ -67,7 +67,7 @@ def test_project_metadata_describes_package_surface() -> None:
 
     assert set(project["urls"]) == EXPECTED_PROJECT_URLS
     assert set(project["keywords"]) == EXPECTED_KEYWORDS
-    assert EXPECTED_CLASSIFIERS <= set(project["classifiers"])
+    assert set(project["classifiers"]) >= EXPECTED_CLASSIFIERS
     assert (PROJECT_ROOT / "durable_outbox" / "py.typed").is_file()
 
 

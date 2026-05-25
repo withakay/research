@@ -1,10 +1,16 @@
-from collections.abc import Iterable
+from __future__ import annotations
+
 from dataclasses import dataclass
-from datetime import datetime, timedelta
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from durable_outbox.core.errors import ValidationError
-from durable_outbox.core.model import ClaimedEvent, OutboxEvent, PublishingMode
+from durable_outbox.core.model import PublishingMode
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+    from datetime import datetime, timedelta
+
+    from durable_outbox.core.model import ClaimedEvent, OutboxEvent
 
 
 @dataclass(frozen=True, slots=True)

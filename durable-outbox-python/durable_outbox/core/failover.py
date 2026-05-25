@@ -1,11 +1,18 @@
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from typing import TYPE_CHECKING
 
 from durable_outbox.core.model import OutboxStatus
-from durable_outbox.core.sink import MessageSink
-from durable_outbox.core.store import DurableOutboxStore
-from durable_outbox.telemetry.metrics import MetricsAdapter, NoopMetrics
+from durable_outbox.telemetry.metrics import NoopMetrics
+
+if TYPE_CHECKING:
+    from datetime import datetime
+
+    from durable_outbox.core.sink import MessageSink
+    from durable_outbox.core.store import DurableOutboxStore
+    from durable_outbox.telemetry.metrics import MetricsAdapter
 
 _LOGGER = logging.getLogger(__name__)
 

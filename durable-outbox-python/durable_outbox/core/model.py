@@ -1,12 +1,17 @@
+from __future__ import annotations
+
 import re
-from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import StrEnum
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 
 from durable_outbox.core.errors import ValidationError
 from durable_outbox.core.validation import enforce_metadata_safe
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from datetime import datetime
 
 MAX_HEADER_COUNT = 64
 MAX_HEADER_NAME_BYTES = 256

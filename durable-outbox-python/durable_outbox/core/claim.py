@@ -1,9 +1,15 @@
-from collections.abc import Iterable
-from datetime import datetime, timedelta
-from typing import Protocol
+from __future__ import annotations
 
-from durable_outbox.core.model import OutboxEvent, OutboxStatus
+from typing import TYPE_CHECKING, Protocol
+
+from durable_outbox.core.model import OutboxStatus
 from durable_outbox.core.ordering import ordering_scope
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+    from datetime import datetime, timedelta
+
+    from durable_outbox.core.model import OutboxEvent
 
 
 class ClaimableRecord(Protocol):

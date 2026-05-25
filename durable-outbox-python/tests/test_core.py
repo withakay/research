@@ -1,11 +1,12 @@
+from __future__ import annotations
+
 import asyncio
 import logging
-from collections.abc import MutableMapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from random import Random
 from types import MappingProxyType
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -40,6 +41,9 @@ from durable_outbox.testing.provider_contract import (
     run_basic_provider_contract,
     run_provider_contract,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import MutableMapping
 
 
 class ConcurrentSink(FakeSink):
@@ -163,7 +167,7 @@ def test_event_preserves_opaque_payload_and_freezes_headers() -> None:
     assert event.payload == b"\x00\x01not-json"
     assert event.headers["traceparent"] == b"abc"
     with pytest.raises(TypeError):
-        cast(MutableMapping[str, bytes], event.headers)["x"] = b"nope"
+        cast("MutableMapping[str, bytes]", event.headers)["x"] = b"nope"
 
 
 def test_event_reuses_already_frozen_headers_after_validation() -> None:
@@ -267,19 +271,19 @@ def test_retry_policy_jitter_is_seedable_and_bounded() -> None:
         initial_delay=timedelta(seconds=10),
         max_delay=timedelta(minutes=1),
         jitter=0.5,
-        random=Random(42),
+        random=Random(42),  # noqa: S311
     )
     second = RetryPolicy(
         initial_delay=timedelta(seconds=10),
         max_delay=timedelta(minutes=1),
         jitter=0.5,
-        random=Random(42),
+        random=Random(42),  # noqa: S311
     )
     different = RetryPolicy(
         initial_delay=timedelta(seconds=10),
         max_delay=timedelta(minutes=1),
         jitter=0.5,
-        random=Random(7),
+        random=Random(7),  # noqa: S311
     )
 
     first_attempt = first.next_attempt_at(now, attempt_count=1)

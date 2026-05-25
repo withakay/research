@@ -234,20 +234,20 @@ async def test_in_memory_ordering_lock_backend_expires_stale_leases() -> None:
     now = datetime.now(UTC)
     lease = await backend.acquire(
         lock_name="lock",
-        owner_token="first",
+        owner_token="first",  # noqa: S106
         now=now,
         lease_duration=timedelta(seconds=5),
     )
 
     blocked = await backend.acquire(
         lock_name="lock",
-        owner_token="second",
+        owner_token="second",  # noqa: S106
         now=now + timedelta(seconds=1),
         lease_duration=timedelta(seconds=5),
     )
     recovered = await backend.acquire(
         lock_name="lock",
-        owner_token="second",
+        owner_token="second",  # noqa: S106
         now=now + timedelta(seconds=6),
         lease_duration=timedelta(seconds=5),
     )
@@ -255,7 +255,7 @@ async def test_in_memory_ordering_lock_backend_expires_stale_leases() -> None:
     assert lease is not None
     assert blocked is None
     assert recovered is not None
-    assert recovered.owner_token == "second"
+    assert recovered.owner_token == "second"  # noqa: S105
 
 
 @pytest.mark.asyncio

@@ -1,7 +1,9 @@
-from collections.abc import Callable
+from __future__ import annotations
+
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from threading import get_ident
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -22,6 +24,9 @@ from durable_outbox.operations import (
 from durable_outbox.sinks.kafka import KafkaProducerConfig, KafkaSink
 from durable_outbox.telemetry import InMemoryMetrics
 from durable_outbox.testing import FixedClock
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 @dataclass(frozen=True, slots=True)

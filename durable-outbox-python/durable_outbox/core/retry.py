@@ -31,5 +31,5 @@ class RetryPolicy:
         return now + timedelta(seconds=capped)
 
     def _jitter_factor(self) -> float:
-        value = self.random.random() if self.random is not None else random()
+        value = self.random.random() if self.random is not None else random()  # noqa: S311
         return 1 + ((value * 2) - 1) * self.jitter

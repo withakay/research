@@ -1,16 +1,21 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import os
-from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
-from durable_outbox.core.admin import AdminActionStatus
 from durable_outbox.core.model import OutboxStatus
 from durable_outbox.core.time import Clock, SystemClock
 from durable_outbox.telemetry.metrics import MetricsAdapter, NoopMetrics
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from datetime import datetime
+
+    from durable_outbox.core.admin import AdminActionStatus
 
 
 @dataclass(frozen=True, slots=True)

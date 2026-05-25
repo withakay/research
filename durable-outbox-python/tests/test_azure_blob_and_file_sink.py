@@ -1,10 +1,10 @@
+from __future__ import annotations
+
 import base64
 import json
-from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from importlib import import_module
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -14,6 +14,10 @@ from durable_outbox.sinks.file import FileSink
 from durable_outbox.stores.azure_blob import MAX_BLOB_DOWNLOAD_BYTES, AzureBlobClient
 from durable_outbox.stores.blob_geo import BlobObject
 from durable_outbox.testing.provider_contract import make_event
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Mapping
+    from pathlib import Path
 
 
 @dataclass(slots=True)

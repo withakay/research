@@ -1,6 +1,9 @@
-from typing import Protocol
+from __future__ import annotations
 
-from durable_outbox.core.model import OutboxEvent, PublishResult
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from durable_outbox.core.model import OutboxEvent, PublishResult
 
 
 class MessageSink(Protocol):

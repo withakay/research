@@ -211,10 +211,7 @@ def _is_non_retryable_error(error: object, message: str) -> bool:
 
 def _error_name(error: object) -> str | None:
     name = getattr(error, "name", None)
-    if callable(name):
-        value = name()
-    else:
-        value = name
+    value = name() if callable(name) else name
     if isinstance(value, str):
         return value
     return None
@@ -227,5 +224,5 @@ def _confluent_producer_factory(config: dict[str, object]) -> KafkaProducerLike:
         raise ConfigurationError(
             "Kafka sink requires the kafka extra: install durable-outbox[kafka]"
         ) from exc
-    producer_cls = cast(type[ConfluentProducer], module.Producer)
-    return cast(KafkaProducerLike, producer_cls(config))
+    producer_cls = cast("type[ConfluentProducer]", module.Producer)
+    return cast("KafkaProducerLike", producer_cls(config))

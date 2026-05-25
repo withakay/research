@@ -1,9 +1,10 @@
+from __future__ import annotations
+
 import asyncio
 import json
-from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -54,6 +55,9 @@ from durable_outbox.testing.provider_contract import (
     make_event,
     run_provider_contract,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
 class InterruptingClock(FixedClock):
@@ -1465,7 +1469,7 @@ async def test_azure_sql_sync_wait_runs_after_compatible_put() -> None:
 
 
 def test_always_on_requires_synchronized_secondary() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="synchronized secondary"):
         SqlAlwaysOnOutboxStore(required_synchronized_secondaries=0)
 
 

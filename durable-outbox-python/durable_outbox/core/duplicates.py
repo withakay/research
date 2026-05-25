@@ -1,8 +1,12 @@
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from durable_outbox.core.errors import DuplicateEventConflictError
-from durable_outbox.core.model import OutboxEvent
+
+if TYPE_CHECKING:
+    from durable_outbox.core.model import OutboxEvent
 
 _FIELDS = (
     "topic",

@@ -76,6 +76,11 @@ select = [
     "I",
     "B",
     "C4",
+    "SIM",
+    "PERF",
+    "PT",
+    "S",
+    "TCH",
     "UP",
     "ANN",
     "RUF",
@@ -89,7 +94,8 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
-"tests/**/*.py" = ["B017", "ANN201"]
+"durable_outbox/testing/provider_contract.py" = ["S101"]
+"tests/**/*.py" = ["B017", "ANN201", "S101"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["durable_outbox"]

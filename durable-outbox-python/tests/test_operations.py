@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 import json
 import threading
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -19,6 +21,9 @@ from durable_outbox.operations import (
     StatusSummary,
 )
 from durable_outbox.testing import FixedClock
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @dataclass(slots=True)

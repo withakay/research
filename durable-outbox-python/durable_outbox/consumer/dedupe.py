@@ -1,8 +1,11 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 from hashlib import sha256
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
-from durable_outbox.core.model import OutboxEvent
+if TYPE_CHECKING:
+    from durable_outbox.core.model import OutboxEvent
 
 
 class DedupeStore(Protocol):

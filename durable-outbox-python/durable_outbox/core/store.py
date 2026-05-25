@@ -1,14 +1,18 @@
-from datetime import datetime, timedelta
-from typing import Protocol
+from __future__ import annotations
 
-from durable_outbox.core.admin import AdminActionStatus
-from durable_outbox.core.capabilities import OutboxCapabilities
-from durable_outbox.core.model import (
-    AcceptedReceipt,
-    ClaimedEvent,
-    OutboxEvent,
-    PublishResult,
-)
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from datetime import datetime, timedelta
+
+    from durable_outbox.core.admin import AdminActionStatus
+    from durable_outbox.core.capabilities import OutboxCapabilities
+    from durable_outbox.core.model import (
+        AcceptedReceipt,
+        ClaimedEvent,
+        OutboxEvent,
+        PublishResult,
+    )
 
 
 class DurableOutboxStore(Protocol):

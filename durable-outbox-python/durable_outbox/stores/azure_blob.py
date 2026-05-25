@@ -87,7 +87,7 @@ class AzureBlobClient:
         return BlobObject(
             name=name,
             content=content,
-            metadata=dict(cast(Mapping[str, str], properties.metadata or {})),
+            metadata=dict(cast("Mapping[str, str]", properties.metadata or {})),
             etag=str(properties.etag),
         )
 
@@ -179,7 +179,7 @@ def _import_azure_module(name: str) -> Any:
 
 def _upload_response_etag(response: object) -> str:
     if isinstance(response, Mapping):
-        response_mapping = cast(Mapping[str, object], response)
+        response_mapping = cast("Mapping[str, object]", response)
         etag = response_mapping.get("etag")
         if isinstance(etag, str):
             return etag

@@ -1,7 +1,8 @@
-from collections.abc import Callable, Sequence
+from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 from uuid import uuid4
 
 from durable_outbox.core.admin import AdminActionStatus
@@ -29,6 +30,9 @@ from durable_outbox.core.model import (
 from durable_outbox.core.ordering import ordering_scope
 from durable_outbox.core.time import Clock, SystemClock
 from durable_outbox.core.validation import enforce_payload_size, require_positive_limit
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
 
 SQL_TABLE_NAME = "durable_outbox_events"
 SQL_PENDING_INDEX_NAME = "IX_outbox_pending"

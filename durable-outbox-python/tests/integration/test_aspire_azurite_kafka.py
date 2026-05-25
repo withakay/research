@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import json
 import os
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -11,14 +13,17 @@ from durable_outbox.sinks.kafka import KafkaProducerConfig, KafkaSink
 from durable_outbox.stores.azure_blob import AzureBlobClient
 from durable_outbox.stores.blob_geo import BlobOutboxStore
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 pytestmark = pytest.mark.integration
 
 
 def _connection_string() -> str:
     return (
         os.environ.get("DURABLE_OUTBOX_AZURITE_CONNECTION_STRING")
-        or os.environ.get("ConnectionStrings__blobs")
-        or os.environ.get("ConnectionStrings__storage")
+        or os.environ.get("ConnectionStrings__blobs")  # noqa: SIM112
+        or os.environ.get("ConnectionStrings__storage")  # noqa: SIM112
         or ""
     )
 
@@ -30,7 +35,7 @@ def _container_name() -> str:
 def _kafka_bootstrap_servers() -> str:
     return (
         os.environ.get("DURABLE_OUTBOX_KAFKA_BOOTSTRAP_SERVERS")
-        or os.environ.get("ConnectionStrings__kafka")
+        or os.environ.get("ConnectionStrings__kafka")  # noqa: SIM112
         or ""
     )
 

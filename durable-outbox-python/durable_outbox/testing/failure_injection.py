@@ -1,16 +1,22 @@
-from collections.abc import Iterable
-from datetime import datetime, timedelta
+from __future__ import annotations
 
-from durable_outbox.core.admin import AdminActionStatus
+from typing import TYPE_CHECKING
+
 from durable_outbox.core.errors import DurableOutboxError, RetryablePublishError
-from durable_outbox.core.model import (
-    AcceptedReceipt,
-    ClaimedEvent,
-    OutboxEvent,
-    PublishResult,
-)
-from durable_outbox.core.sink import MessageSink
-from durable_outbox.core.store import DurableOutboxStore
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+    from datetime import datetime, timedelta
+
+    from durable_outbox.core.admin import AdminActionStatus
+    from durable_outbox.core.model import (
+        AcceptedReceipt,
+        ClaimedEvent,
+        OutboxEvent,
+        PublishResult,
+    )
+    from durable_outbox.core.sink import MessageSink
+    from durable_outbox.core.store import DurableOutboxStore
 
 
 class FailingSink:

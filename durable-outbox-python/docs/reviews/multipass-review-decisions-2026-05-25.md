@@ -1809,3 +1809,45 @@ verification evidence.
   `uv run ruff format --check .` -> 53 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 60: Ruff Rule Family Hardening
+
+### Findings Accepted
+
+- **Q-P1-3:** The package lint configuration was missing high-payoff Ruff rule
+  families (`SIM`, `PERF`, `PT`, `S`, `TCH`) that catch maintainability,
+  security-adjacent, pytest, and type-import hygiene issues cheaply.
+
+### Fixes Implemented
+
+- Enabled `SIM`, `PERF`, `PT`, `S`, and `TCH` in `[tool.ruff.lint].select`.
+- Added targeted `S101` ignores for tests and reusable provider-contract test
+  helpers, where plain asserts are deliberate executable assertions.
+- Moved type-only imports behind `TYPE_CHECKING` in core protocols, dispatcher,
+  failover, validation, testing helpers, and selected tests while preserving
+  strict `ty` behavior with postponed annotations.
+- Replaced or annotated new-rule findings:
+  - quoted `typing.cast()` target types for `TCH`;
+  - simplified the Kafka error-name branch for `SIM`;
+  - added a specific `pytest.raises(..., match=...)` for `PT`;
+  - documented intentional non-cryptographic retry jitter and test seeded RNG
+    use with targeted `S311` ignores;
+  - documented Aspire's mixed-case environment variable compatibility lookups
+    with targeted `SIM112` ignores;
+  - documented ordering-lock test owner tokens with targeted security-rule
+    ignores.
+
+### Verification
+
+- Red measurement run:
+  `uv run ruff check . --select SIM,PERF,PT,S,TCH --statistics`
+  -> 469 findings before configuration and cleanup.
+- Focused green run:
+  `uv run ruff check . --select SIM,PERF,PT,S,TCH --output-format=concise`
+  -> all checks passed.
+- Full package gates:
+  `uv run pytest -q` -> 224 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 53 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
