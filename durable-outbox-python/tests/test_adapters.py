@@ -180,6 +180,40 @@ async def test_dual_region_blob_accepts_only_after_both_regions() -> None:
 
 
 @pytest.mark.asyncio
+async def test_dual_region_blob_can_promote_secondary_for_dispatch() -> None:
+    store = DualRegionBlobOutboxStore()
+    event = make_event("secondary-active")
+    await store.put(event)
+
+    store.promote_secondary()
+    claimed = await store.claim_batch(limit=1)
+    await store.mark_sent(
+        claimed[0],
+        PublishResult(partition=1, offset=2, published_at=datetime.now(UTC)),
+    )
+
+    assert [claim.event.event_id for claim in claimed] == [event.event_id]
+    assert store.secondary.records[event.event_id].status is OutboxStatus.SENT
+    assert store.primary.records[event.event_id].status is OutboxStatus.SENT
+
+
+@pytest.mark.asyncio
+async def test_dual_region_blob_failover_replay_uses_active_secondary() -> None:
+    store = DualRegionBlobOutboxStore()
+    event = make_event("secondary-replay")
+    await store._prepare(store.secondary, event)
+    await store._accept(store.secondary, event)
+
+    store.promote_secondary()
+    candidates = await store.failover_replay_candidates(
+        failover_started_at=datetime.now(UTC),
+        limit=10,
+    )
+
+    assert [claim.event.event_id for claim in candidates] == [event.event_id]
+
+
+@pytest.mark.asyncio
 async def test_dual_region_blob_repair_copies_missing_region() -> None:
     store = DualRegionBlobOutboxStore()
     event = make_event()

@@ -4,7 +4,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 from uuid import uuid4
 
 from durable_outbox.core.capabilities import OutboxCapabilities
@@ -30,6 +30,8 @@ from durable_outbox.core.ordering import (
 from durable_outbox.core.time import Clock, SystemClock
 from durable_outbox.core.validation import enforce_payload_size, require_positive_limit
 from durable_outbox.stores.memory import StoredEvent
+
+type BlobRegionName = Literal["primary", "secondary"]
 
 
 def event_blob_name(event_id: str) -> str:
@@ -536,9 +538,13 @@ class DualRegionBlobOutboxStore:
         primary_client: BlobClientProtocol | None = None,
         secondary_client: BlobClientProtocol | None = None,
         environment: str = "default",
+        active_region: BlobRegionName = "primary",
         claim_timeout: timedelta = timedelta(minutes=5),
         clock: Clock | None = None,
     ) -> None:
+        if active_region not in ("primary", "secondary"):
+            msg = "active_region must be 'primary' or 'secondary'"
+            raise ValueError(msg)
         self.clock = clock or SystemClock()
         self.primary = BlobOutboxStore(
             client=primary_client,
@@ -552,30 +558,60 @@ class DualRegionBlobOutboxStore:
             claim_timeout=claim_timeout,
             clock=self.clock,
         )
-        self.records = self.primary.records
+        self.active_region: BlobRegionName = active_region
+        self.records = self._active.records
         self.cleanup_frozen = False
         self.cleanup_freeze_reason: str | None = None
+
+    @property
+    def _active(self) -> BlobOutboxStore:
+        return self.primary if self.active_region == "primary" else self.secondary
+
+    @property
+    def _standby(self) -> BlobOutboxStore:
+        return self.secondary if self.active_region == "primary" else self.primary
+
+    def use_region(self, region: BlobRegionName) -> None:
+        if region not in ("primary", "secondary"):
+            msg = "region must be 'primary' or 'secondary'"
+            raise ValueError(msg)
+        self.active_region = region
+        self.records = self._active.records
+
+    def promote_secondary(self) -> None:
+        self.use_region("secondary")
+
+    def promote_primary(self) -> None:
+        self.use_region("primary")
 
     async def put(self, event: OutboxEvent) -> AcceptedReceipt:
         await self._prepare(self.primary, event)
         await self._prepare(self.secondary, event)
         await self._accept(self.primary, event)
         await self._accept(self.secondary, event)
-        self.records = self.primary.records
+        self.records = self._active.records
         primary = self.primary.records[event.event_id]
+        secondary = self.secondary.records[event.event_id]
+        accepted_at_candidates = [
+            accepted_at
+            for accepted_at in (primary.accepted_at, secondary.accepted_at)
+            if accepted_at is not None
+        ]
         return AcceptedReceipt(
             event_id=event.event_id,
-            accepted_at=primary.accepted_at or self.clock.utcnow(),
+            accepted_at=max(accepted_at_candidates)
+            if accepted_at_candidates
+            else self.clock.utcnow(),
             rpo_zero=True,
             store=self.capabilities.store_name,
         )
 
     async def claim_batch(self, *, limit: int) -> list[ClaimedEvent]:
-        return await self.primary.claim_batch(limit=limit)
+        return await self._active.claim_batch(limit=limit)
 
     async def mark_sent(self, claimed: ClaimedEvent, result: PublishResult) -> None:
-        await self.primary.mark_sent(claimed, result)
-        await self._mirror_terminal_update(claimed.event.event_id)
+        await self._active.mark_sent(claimed, result)
+        await self._mirror_active_update(claimed.event.event_id)
 
     async def mark_pending_after_retryable_failure(
         self,
@@ -585,13 +621,13 @@ class DualRegionBlobOutboxStore:
         error_message: str,
         next_attempt_at: datetime,
     ) -> None:
-        await self.primary.mark_pending_after_retryable_failure(
+        await self._active.mark_pending_after_retryable_failure(
             claimed,
             error_type=error_type,
             error_message=error_message,
             next_attempt_at=next_attempt_at,
         )
-        await self._mirror_terminal_update(claimed.event.event_id)
+        await self._mirror_active_update(claimed.event.event_id)
 
     async def mark_failed(
         self,
@@ -600,12 +636,12 @@ class DualRegionBlobOutboxStore:
         error_type: str,
         error_message: str,
     ) -> None:
-        await self.primary.mark_failed(
+        await self._active.mark_failed(
             claimed,
             error_type=error_type,
             error_message=error_message,
         )
-        await self._mirror_terminal_update(claimed.event.event_id)
+        await self._mirror_active_update(claimed.event.event_id)
 
     async def failover_replay_candidates(
         self,
@@ -613,7 +649,7 @@ class DualRegionBlobOutboxStore:
         failover_started_at: datetime,
         limit: int,
     ) -> list[ClaimedEvent]:
-        return await self.primary.failover_replay_candidates(
+        return await self._active.failover_replay_candidates(
             failover_started_at=failover_started_at,
             limit=limit,
         )
@@ -633,20 +669,20 @@ class DualRegionBlobOutboxStore:
     async def cleanup_sent(self, *, now: datetime, safety_margin: timedelta) -> int:
         if self.cleanup_frozen:
             return 0
-        deleted = await self.primary.cleanup_sent(now=now, safety_margin=safety_margin)
-        await self.secondary.cleanup_sent(now=now, safety_margin=safety_margin)
+        deleted = await self._active.cleanup_sent(now=now, safety_margin=safety_margin)
+        await self._standby.cleanup_sent(now=now, safety_margin=safety_margin)
         return deleted
 
     async def repair_failed_to_pending(self, *, event_id: str) -> bool:
-        repaired = await self.primary.repair_failed_to_pending(event_id=event_id)
+        repaired = await self._active.repair_failed_to_pending(event_id=event_id)
         if repaired:
-            await self._mirror_terminal_update(event_id)
+            await self._mirror_active_update(event_id)
         return repaired
 
     async def replay_event(self, *, event_id: str) -> bool:
-        replayed = await self.primary.replay_event(event_id=event_id)
+        replayed = await self._active.replay_event(event_id=event_id)
         if replayed:
-            await self._mirror_terminal_update(event_id)
+            await self._mirror_active_update(event_id)
         return replayed
 
     async def repair_prepared(self, event_id: str) -> None:
@@ -659,7 +695,7 @@ class DualRegionBlobOutboxStore:
         await self._prepare(self.secondary, source.event)
         await self._accept(self.primary, source.event)
         await self._accept(self.secondary, source.event)
-        self.records = self.primary.records
+        self.records = self._active.records
 
     async def _prepare(self, region: BlobOutboxStore, event: OutboxEvent) -> None:
         await region._put_prepared(event)
@@ -667,25 +703,25 @@ class DualRegionBlobOutboxStore:
     async def _accept(self, region: BlobOutboxStore, event: OutboxEvent) -> None:
         await region._accept_prepared(event)
 
-    async def _mirror_terminal_update(self, event_id: str) -> None:
-        primary_record = await self.primary._load_record(event_id)
-        if primary_record is None:
+    async def _mirror_active_update(self, event_id: str) -> None:
+        active_record = await self._active._load_record(event_id)
+        if active_record is None:
             return
-        secondary_record = await self.secondary._load_record(event_id)
-        if secondary_record is None:
-            await self.secondary._write_new_record(_clone_record(primary_record))
+        standby_record = await self._standby._load_record(event_id)
+        if standby_record is None:
+            await self._standby._write_new_record(_clone_record(active_record))
             return
-        secondary_record.status = primary_record.status
-        secondary_record.attempt_count = primary_record.attempt_count
-        secondary_record.claim_token = None
-        secondary_record.claimed_at = None
-        secondary_record.next_attempt_at = primary_record.next_attempt_at
-        secondary_record.sent_at = primary_record.sent_at
-        secondary_record.publish_result = primary_record.publish_result
-        secondary_record.failed_at = primary_record.failed_at
-        secondary_record.last_error_type = primary_record.last_error_type
-        secondary_record.last_error = primary_record.last_error
-        await self.secondary._save_record(secondary_record)
+        standby_record.status = active_record.status
+        standby_record.attempt_count = active_record.attempt_count
+        standby_record.claim_token = None
+        standby_record.claimed_at = None
+        standby_record.next_attempt_at = active_record.next_attempt_at
+        standby_record.sent_at = active_record.sent_at
+        standby_record.publish_result = active_record.publish_result
+        standby_record.failed_at = active_record.failed_at
+        standby_record.last_error_type = active_record.last_error_type
+        standby_record.last_error = active_record.last_error
+        await self._standby._save_record(standby_record)
 
 
 def blob_metadata(event: OutboxEvent, *, environment: str) -> Mapping[str, str]:

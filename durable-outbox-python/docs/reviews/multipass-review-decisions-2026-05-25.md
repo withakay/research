@@ -243,3 +243,32 @@ verification evidence.
 
 - Persistent cleanup-freeze state across process restarts remains open and
   should be implemented with the store-level freeze marker work.
+
+## Batch 8: Dual-Region Active Role Routing
+
+### Findings Accepted
+
+- **A-P0-2:** `DualRegionBlobOutboxStore` routed claim, replay, and terminal
+  updates through the original primary only, leaving no library path for the
+  secondary region to take over.
+- **A-NEW-NIT-1:** dual-region `put()` returned the primary region's
+  `accepted_at`, even though the RPO=0 acceptance instant is the later of the
+  two regional accepts.
+
+### Fixes Implemented
+
+- Added an explicit `active_region` role to `DualRegionBlobOutboxStore`, with
+  `use_region()`, `promote_secondary()`, and `promote_primary()` controls.
+- Routed `claim_batch`, `mark_sent`, retry/failure updates,
+  `failover_replay_candidates`, cleanup, repair, and manual replay through the
+  active region, mirroring terminal/admin updates into the standby region.
+- Kept dual-region `put()` writing both regions and changed its receipt
+  `accepted_at` to the maximum accepted timestamp across primary and secondary.
+
+### Verification
+
+- Focused red tests showed there was no secondary promotion API before
+  implementation.
+- Focused green run:
+  `uv run pytest tests/test_adapters.py::test_dual_region_blob_can_promote_secondary_for_dispatch tests/test_adapters.py::test_dual_region_blob_failover_replay_uses_active_secondary tests/test_adapters.py::test_dual_region_blob_accepts_only_after_both_regions -q`
+  -> 3 passed
