@@ -882,3 +882,35 @@ verification evidence.
   `uv run ruff format --check .` -> 51 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 33: Azure Blob Put Response ETags
+
+### Findings Accepted
+
+- **Q-P2-3:** `AzureBlobClient.put_blob()` performed a get-after-put round trip
+  after every upload just to read the ETag, even though Azure Blob upload
+  responses include the ETag.
+
+### Fixes Implemented
+
+- Returned the `BlobObject` from the upload request content, request metadata,
+  and upload response ETag.
+- Added strict response-shape handling that raises `BlobPreconditionFailedError`
+  if an upload response does not expose an ETag.
+- Added a focused Azure client test proving `put_blob()` performs no property
+  read or download after upload.
+
+### Verification
+
+- Focused red run reproduced the extra readback:
+  `uv run pytest tests/test_azure_blob_and_file_sink.py::test_azure_blob_client_put_uses_upload_response_without_readback -q`
+  -> failed before implementation with one property read.
+- Focused green run:
+  `uv run pytest tests/test_azure_blob_and_file_sink.py -q`
+  -> 5 passed
+- Full package gates:
+  `uv run pytest -q` -> 187 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 51 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.

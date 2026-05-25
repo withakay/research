@@ -87,7 +87,7 @@ class AzureBlobClient:
             kwargs["match_condition"] = _if_not_modified()
             overwrite = True
         try:
-            await blob_client.upload_blob(
+            response = await blob_client.upload_blob(
                 content,
                 overwrite=overwrite,
                 metadata=dict(metadata),
@@ -105,10 +105,12 @@ class AzureBlobClient:
             ):
                 raise BlobPreconditionFailedError(str(exc)) from exc
             raise
-        blob = await self.get_blob(name)
-        if blob is None:
-            raise BlobPreconditionFailedError("uploaded blob was not readable")
-        return blob
+        return BlobObject(
+            name=name,
+            content=bytes(content),
+            metadata=dict(metadata),
+            etag=_upload_response_etag(response),
+        )
 
     async def delete_blob(self, name: str, *, if_match: str | None = None) -> bool:
         blob_client = self.container_client.get_blob_client(name)
@@ -150,6 +152,18 @@ def _import_azure_module(name: str) -> Any:
     except ModuleNotFoundError as exc:
         raise ConfigurationError(_AZURE_EXTRA_MESSAGE) from exc
     return module
+
+
+def _upload_response_etag(response: object) -> str:
+    if isinstance(response, Mapping):
+        response_mapping = cast(Mapping[str, object], response)
+        etag = response_mapping.get("etag")
+        if isinstance(etag, str):
+            return etag
+    etag = getattr(response, "etag", None)
+    if isinstance(etag, str):
+        return etag
+    raise BlobPreconditionFailedError("uploaded blob response missing etag")
 
 
 def _is_azure_error(exc: Exception, names: set[str]) -> bool:

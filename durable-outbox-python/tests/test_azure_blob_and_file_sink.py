@@ -40,10 +40,12 @@ class Blob:
         self.name = name
 
     async def get_blob_properties(self) -> BlobProperties:
+        self.container.property_reads += 1
         blob = self.container.blobs[self.name]
         return BlobProperties(metadata=blob.metadata, etag=blob.etag)
 
     async def download_blob(self) -> Download:
+        self.container.downloads += 1
         return Download(self.container.blobs[self.name].content)
 
     async def upload_blob(
@@ -53,7 +55,7 @@ class Blob:
         overwrite: bool,
         metadata: Mapping[str, str],
         **kwargs: Any,
-    ) -> None:
+    ) -> Mapping[str, str]:
         _ = kwargs
         version = self.container.versions.get(self.name, 0) + 1
         self.container.versions[self.name] = version
@@ -64,6 +66,7 @@ class Blob:
             etag=f'"{version}"',
         )
         assert overwrite in {False, True}
+        return {"etag": self.container.blobs[self.name].etag}
 
     async def delete_blob(self, **kwargs: Any) -> None:
         _ = kwargs
@@ -75,6 +78,8 @@ class Container:
         self.blobs: dict[str, BlobObject] = {}
         self.versions: dict[str, int] = {}
         self.created = False
+        self.property_reads = 0
+        self.downloads = 0
 
     async def create_container(self) -> None:
         self.created = True
@@ -109,6 +114,27 @@ async def test_azure_blob_client_adapts_container_protocol() -> None:
     assert written.etag == '"1"'
     assert read == written
     assert listed == [written]
+
+
+@pytest.mark.asyncio
+async def test_azure_blob_client_put_uses_upload_response_without_readback() -> None:
+    container = Container()
+    client = AzureBlobClient(container)
+
+    written = await client.put_blob(
+        "outbox/v1/events/one.json",
+        b"payload",
+        {"event_id": "one"},
+    )
+
+    assert written == BlobObject(
+        name="outbox/v1/events/one.json",
+        content=b"payload",
+        metadata={"event_id": "one"},
+        etag='"1"',
+    )
+    assert container.property_reads == 0
+    assert container.downloads == 0
 
 
 def test_azure_blob_client_reports_missing_optional_dependency(
