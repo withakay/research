@@ -215,6 +215,7 @@ async def test_file_sink_appends_kafka_like_jsonl_records(tmp_path: Path) -> Non
 
     first = await sink.publish(event)
     second = await sink.publish(make_event("event-2"))
+    await sink.aclose()
 
     rows = [json.loads(line) for line in path.read_text().splitlines()]
     assert first.partition == 0
@@ -226,3 +227,34 @@ async def test_file_sink_appends_kafka_like_jsonl_records(tmp_path: Path) -> Non
     assert rows[0]["headers"]["content-type"] == base64.b64encode(
         b"application/json"
     ).decode("ascii")
+
+
+@pytest.mark.asyncio
+async def test_file_sink_batches_fsync_until_interval_or_close(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fsync_calls = 0
+
+    def fsync(fd: int) -> None:
+        nonlocal fsync_calls
+        _ = fd
+        fsync_calls += 1
+
+    monkeypatch.setattr("durable_outbox.sinks.file.os.fsync", fsync)
+    sink = FileSink(
+        tmp_path / "published" / "events.jsonl",
+        fsync=True,
+        fsync_interval_events=2,
+    )
+
+    await sink.publish(make_event("event-1"))
+    assert fsync_calls == 0
+    await sink.publish(make_event("event-2"))
+    assert fsync_calls == 1
+    await sink.publish(make_event("event-3"))
+    assert fsync_calls == 1
+
+    await sink.aclose()
+
+    assert fsync_calls == 2

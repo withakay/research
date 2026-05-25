@@ -199,6 +199,7 @@ def test_provider_docs_cover_rpo_zero_modes() -> None:
     assert "fingerprint_key" in docs
     assert "HMAC-SHA256" in docs
     assert "max_payload_bytes" in docs
+    assert "fsync_interval_events" in docs
 
 
 def test_operations_docs_describe_error_and_outcome_policy() -> None:

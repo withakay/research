@@ -67,6 +67,7 @@ async def test_azurite_blob_store_dispatches_to_local_file(tmp_path: Path) -> No
         receipt = await store.put(event)
         summary = await OutboxDispatcher(store, sink).run_once(limit=10)
     finally:
+        await sink.aclose()
         await client.close()
 
     rows = [

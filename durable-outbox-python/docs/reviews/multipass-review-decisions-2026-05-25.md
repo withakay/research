@@ -1768,3 +1768,44 @@ verification evidence.
   `uv run ruff format --check .` -> 53 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 59: File Sink Fsync Batching
+
+### Findings Accepted
+
+- **P-P2-1:** `FileSink` reopened the output file and flushed/fsynced on every
+  publish, limiting throughput for local-file dispatch tests and demos.
+
+### Fixes Implemented
+
+- Kept the JSONL file handle open across publishes and added `aclose()` plus
+  async context-manager support for deterministic close/flush behavior.
+- Changed `FileSink` to default to `fsync=False`, matching its test/deterministic
+  local sink role, while keeping explicit `fsync=True` available.
+- Added `fsync_interval_events` and `fsync_interval_ms` so callers can batch
+  local durability boundaries instead of forcing one `fsync` per event.
+- Ensured `aclose()` flushes and fsyncs any pending partial batch when
+  `fsync=True`.
+- Updated FileSink tests, the Azurite-to-file integration test lifecycle, and
+  provider docs for the close/fsync behavior.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_azure_blob_and_file_sink.py::test_file_sink_batches_fsync_until_interval_or_close -q`
+  -> failed because `FileSink` did not accept `fsync_interval_events`.
+- Focused green run:
+  `uv run pytest tests/test_azure_blob_and_file_sink.py::test_file_sink_appends_kafka_like_jsonl_records tests/test_azure_blob_and_file_sink.py::test_file_sink_batches_fsync_until_interval_or_close tests/test_packaging_docs.py::test_provider_docs_cover_rpo_zero_modes tests/integration/test_aspire_azurite_kafka.py::test_azurite_blob_store_dispatches_to_local_file -q`
+  -> 3 passed, 1 skipped when Azurite env vars were absent.
+- Focused lint/type/format:
+  `uv run ruff check durable_outbox/sinks/file.py tests/test_azure_blob_and_file_sink.py tests/integration/test_aspire_azurite_kafka.py tests/test_packaging_docs.py`
+  -> all checks passed;
+  `uv run ruff format --check durable_outbox/sinks/file.py tests/test_azure_blob_and_file_sink.py tests/integration/test_aspire_azurite_kafka.py tests/test_packaging_docs.py`
+  -> 4 files already formatted;
+  `uv run ty check` -> all checks passed.
+- Full package gates:
+  `uv run pytest -q` -> 224 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 53 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
