@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from collections.abc import MutableMapping
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from random import Random
 from types import MappingProxyType
@@ -22,6 +23,11 @@ from durable_outbox.core import (
     RetryPolicy,
     ValidationError,
 )
+from durable_outbox.core.claim import (
+    claim_order_key,
+    in_flight_ordering_keys,
+    is_claimable_record,
+)
 from durable_outbox.core.errors import DuplicateEventConflictError
 from durable_outbox.stores.blob_geo import BlobOutboxStore
 from durable_outbox.telemetry import InMemoryMetrics
@@ -30,6 +36,7 @@ from durable_outbox.testing.failure_injection import FailingStore
 from durable_outbox.testing.provider_contract import (
     ProviderContract,
     make_event,
+    make_ordered_event,
     run_basic_provider_contract,
     run_provider_contract,
 )
@@ -68,6 +75,77 @@ class IncompatibleDuplicateAcceptingStore(FakeOutboxStore):
             store=self.capabilities.store_name,
             durability_witness=("broken:test",),
         )
+
+
+@dataclass(slots=True)
+class StoredClaimState:
+    event: OutboxEvent
+    status: OutboxStatus
+    claimed_at: datetime | None = None
+    next_attempt_at: datetime | None = None
+
+
+def test_claim_helpers_match_store_claimability_rules() -> None:
+    now = datetime.now(UTC)
+    pending = StoredClaimState(
+        event=make_event("claimable-pending"),
+        status=OutboxStatus.PENDING,
+    )
+    delayed = StoredClaimState(
+        event=make_event("delayed-pending"),
+        status=OutboxStatus.PENDING,
+        next_attempt_at=now + timedelta(seconds=1),
+    )
+    stale_in_flight = StoredClaimState(
+        event=make_event("stale-in-flight"),
+        status=OutboxStatus.IN_FLIGHT,
+        claimed_at=now - timedelta(minutes=10),
+    )
+    fresh_ordered = StoredClaimState(
+        event=make_ordered_event("fresh-ordered", ordering_key="customer-1"),
+        status=OutboxStatus.IN_FLIGHT,
+        claimed_at=now,
+    )
+
+    assert is_claimable_record(
+        pending,
+        now=now,
+        claim_timeout=timedelta(minutes=5),
+    )
+    assert not is_claimable_record(
+        delayed,
+        now=now,
+        claim_timeout=timedelta(minutes=5),
+    )
+    assert is_claimable_record(
+        stale_in_flight,
+        now=now,
+        claim_timeout=timedelta(minutes=5),
+    )
+    assert not is_claimable_record(
+        fresh_ordered,
+        now=now,
+        claim_timeout=timedelta(minutes=5),
+    )
+    assert in_flight_ordering_keys(
+        (pending, delayed, stale_in_flight, fresh_ordered),
+        now=now,
+        claim_timeout=timedelta(minutes=5),
+    ) == {"v1\0durable.outbox.outputs\0customer-1"}
+    ordered_for_sort = StoredClaimState(
+        event=make_ordered_event(
+            "claim-order-key",
+            ordering_key="customer-1",
+            ordering_sequence=7,
+        ),
+        status=OutboxStatus.PENDING,
+    )
+    assert claim_order_key(ordered_for_sort) == (
+        "durable.outbox.outputs",
+        "customer-1",
+        7,
+        ordered_for_sort.event.created_at,
+    )
 
 
 def test_event_preserves_opaque_payload_and_freezes_headers() -> None:

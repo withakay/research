@@ -14,6 +14,11 @@ from uuid import uuid4
 
 from durable_outbox.core.admin import AdminActionStatus
 from durable_outbox.core.capabilities import OutboxCapabilities
+from durable_outbox.core.claim import (
+    claim_order_key,
+    in_flight_ordering_keys,
+    is_claimable_record,
+)
 from durable_outbox.core.claim_token import claim_token_matches
 from durable_outbox.core.duplicates import raise_if_incompatible_duplicate
 from durable_outbox.core.errors import (
@@ -644,40 +649,23 @@ class BlobOutboxStore:
         raise_if_incompatible_duplicate(record.event, event)
 
     def _ordered_records(self) -> Iterable[StoredEvent]:
-        return sorted(
-            self.records.values(),
-            key=lambda item: (
-                item.event.topic,
-                item.event.ordering_key or "",
-                item.event.ordering_sequence or 0,
-                item.event.created_at,
-            ),
-        )
+        return sorted(self.records.values(), key=claim_order_key)
 
     def _eligible_for_claim(self, record: StoredEvent, now: datetime) -> bool:
         if not record.accepted:
             return False
-        if record.status is OutboxStatus.PENDING:
-            return record.next_attempt_at is None or record.next_attempt_at <= now
-        if record.status is OutboxStatus.IN_FLIGHT and record.claimed_at is not None:
-            return record.claimed_at + self.claim_timeout <= now
-        return False
+        return is_claimable_record(
+            record,
+            now=now,
+            claim_timeout=self.claim_timeout,
+        )
 
     def _in_flight_ordering_keys(self, now: datetime) -> set[str]:
-        locked: set[str] = set()
-        for record in self.records.values():
-            key = record.event.effective_ordering_key
-            if key is None or record.status is not OutboxStatus.IN_FLIGHT:
-                continue
-            if (
-                record.claimed_at is None
-                or record.claimed_at + self.claim_timeout <= now
-            ):
-                continue
-            scoped_key = _ordering_scope(record.event)
-            if scoped_key is not None:
-                locked.add(scoped_key)
-        return locked
+        return in_flight_ordering_keys(
+            self.records.values(),
+            now=now,
+            claim_timeout=self.claim_timeout,
+        )
 
     async def _acquire_ordering_lease(
         self, event: OutboxEvent, *, now: datetime

@@ -6,6 +6,11 @@ from uuid import uuid4
 
 from durable_outbox.core.admin import AdminActionStatus
 from durable_outbox.core.capabilities import OutboxCapabilities
+from durable_outbox.core.claim import (
+    claim_order_key,
+    in_flight_ordering_keys,
+    is_claimable_record,
+)
 from durable_outbox.core.claim_token import claim_token_matches
 from durable_outbox.core.duplicates import raise_if_incompatible_duplicate
 from durable_outbox.core.errors import (
@@ -226,15 +231,7 @@ class _SqlOutboxStoreBase:
         )
 
     async def _claim_ordered_records(self) -> list[SqlStoredEvent]:
-        return sorted(
-            await self.client.list_records(),
-            key=lambda record: (
-                record.event.topic,
-                record.event.ordering_key or "",
-                record.event.ordering_sequence or 0,
-                record.event.created_at,
-            ),
-        )
+        return sorted(await self.client.list_records(), key=claim_order_key)
 
     async def _claim_from_candidates(
         self,
@@ -468,27 +465,18 @@ class _SqlOutboxStoreBase:
         raise RetryableStoreError("record update lost too many version races")
 
     def _eligible_for_claim(self, record: SqlStoredEvent, now: datetime) -> bool:
-        if record.status is OutboxStatus.PENDING:
-            return record.next_attempt_at is None or record.next_attempt_at <= now
-        if record.status is OutboxStatus.IN_FLIGHT and record.claimed_at is not None:
-            return record.claimed_at + self.claim_timeout <= now
-        return False
+        return is_claimable_record(
+            record,
+            now=now,
+            claim_timeout=self.claim_timeout,
+        )
 
     async def _in_flight_ordering_keys(self, now: datetime) -> set[str]:
-        locked: set[str] = set()
-        for record in await self.client.list_records():
-            key = ordering_scope(record.event)
-            if key is None:
-                continue
-            if record.status is not OutboxStatus.IN_FLIGHT:
-                continue
-            if (
-                record.claimed_at is None
-                or record.claimed_at + self.claim_timeout <= now
-            ):
-                continue
-            locked.add(key)
-        return locked
+        return in_flight_ordering_keys(
+            await self.client.list_records(),
+            now=now,
+            claim_timeout=self.claim_timeout,
+        )
 
 
 def _mark_sent_if_claimed(

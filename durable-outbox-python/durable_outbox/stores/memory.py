@@ -4,6 +4,11 @@ from uuid import uuid4
 
 from durable_outbox.core.admin import AdminActionStatus
 from durable_outbox.core.capabilities import OutboxCapabilities
+from durable_outbox.core.claim import (
+    claim_order_key,
+    in_flight_ordering_keys,
+    is_claimable_record,
+)
 from durable_outbox.core.claim_token import claim_token_matches
 from durable_outbox.core.duplicates import raise_if_incompatible_duplicate
 from durable_outbox.core.errors import (
@@ -92,15 +97,7 @@ class MemoryOutboxStore:
         now = self.clock.utcnow()
         claimed: list[ClaimedEvent] = []
         locked_keys = self._in_flight_ordering_keys(now)
-        ordered_pending = sorted(
-            self.records.values(),
-            key=lambda record: (
-                record.event.topic,
-                record.event.ordering_key or "",
-                record.event.ordering_sequence or 0,
-                record.event.created_at,
-            ),
-        )
+        ordered_pending = sorted(self.records.values(), key=claim_order_key)
         for record in ordered_pending:
             if len(claimed) >= limit:
                 break
@@ -279,27 +276,18 @@ class MemoryOutboxStore:
     def _eligible_for_claim(self, record: StoredEvent, now: datetime) -> bool:
         if not record.accepted:
             return False
-        if record.status is OutboxStatus.PENDING:
-            return record.next_attempt_at is None or record.next_attempt_at <= now
-        if record.status is OutboxStatus.IN_FLIGHT and record.claimed_at is not None:
-            return record.claimed_at + self.claim_timeout <= now
-        return False
+        return is_claimable_record(
+            record,
+            now=now,
+            claim_timeout=self.claim_timeout,
+        )
 
     def _in_flight_ordering_keys(self, now: datetime) -> set[str]:
-        locked: set[str] = set()
-        for record in self.records.values():
-            key = ordering_scope(record.event)
-            if key is None:
-                continue
-            if record.status is not OutboxStatus.IN_FLIGHT:
-                continue
-            if (
-                record.claimed_at is None
-                or record.claimed_at + self.claim_timeout <= now
-            ):
-                continue
-            locked.add(key)
-        return locked
+        return in_flight_ordering_keys(
+            self.records.values(),
+            now=now,
+            claim_timeout=self.claim_timeout,
+        )
 
 
 def _clone_record(record: StoredEvent) -> StoredEvent:

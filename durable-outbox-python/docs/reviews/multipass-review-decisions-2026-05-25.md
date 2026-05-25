@@ -1679,3 +1679,46 @@ verification evidence.
 - Focused test:
   `uv run pytest tests/test_adapters.py::test_cosmos_unordered_partition_key_uses_stable_bucket -q`
   -> 1 passed.
+
+## Batch 57: Shared Claim Decision Helpers
+
+### Findings Accepted
+
+- **Q-P3-5:** memory, Blob, Cosmos, and SQL stores duplicated the same
+  claimability checks, active ordered-key scan, and claim ordering tuple.
+
+### Fixes Implemented
+
+- Added `durable_outbox.core.claim` with a narrow `ClaimableRecord` protocol
+  and pure helpers:
+  `is_claimable_record()`, `in_flight_ordering_keys()`, and
+  `claim_order_key()`.
+- Kept the helper protocol intentionally small (`event`, `status`,
+  `claimed_at`, `next_attempt_at`) so memory/Blob can retain local `accepted`
+  pre-checks and each provider keeps its own mutation, lease, and CAS logic.
+- Replaced duplicate eligibility and in-flight ordered-key scans in memory,
+  Blob, Cosmos, and SQL stores.
+- Replaced duplicate claim sort keys with the shared `claim_order_key()`.
+- Added a core regression test covering pending, delayed pending, stale
+  in-flight, fresh ordered in-flight locking, and the claim sort key.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_core.py::test_claim_helpers_match_store_claimability_rules -q`
+  -> failed because `durable_outbox.core.claim` did not exist.
+- Focused green run:
+  `uv run pytest tests/test_core.py::test_claim_helpers_match_store_claimability_rules tests/test_adapters.py::test_builtin_adapters_pass_reusable_provider_contract tests/test_failover_ordering_cleanup.py -q`
+  -> 28 passed
+- Focused lint/type/format:
+  `uv run ruff check durable_outbox/core/claim.py durable_outbox/stores/memory.py durable_outbox/stores/blob_geo.py durable_outbox/stores/sql.py durable_outbox/stores/cosmos.py tests/test_core.py`
+  -> all checks passed;
+  `uv run ty check` -> all checks passed;
+  `uv run ruff format --check durable_outbox/core/claim.py durable_outbox/stores/memory.py durable_outbox/stores/blob_geo.py durable_outbox/stores/sql.py durable_outbox/stores/cosmos.py tests/test_core.py`
+  -> 6 files already formatted.
+- Full package gates:
+  `uv run pytest -q` -> 222 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 53 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
