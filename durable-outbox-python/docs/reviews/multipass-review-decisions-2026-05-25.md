@@ -914,3 +914,34 @@ verification evidence.
   `uv run ruff format --check .` -> 51 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 34: Package Metadata Hardening
+
+### Findings Accepted
+
+- **Q-P3-3:** package metadata was sparse for an installable typed library,
+  making project links, search keywords, and target runtime characteristics less
+  discoverable.
+
+### Fixes Implemented
+
+- Added project URLs for homepage, documentation, repository, and issues.
+- Added durable-outbox, Azure, Kafka, RPO=0, and transactional-outbox keywords.
+- Added relevant AsyncIO, OS-independent, database, and distributed-computing
+  classifiers.
+- Added a packaging regression test that verifies URLs, keywords, classifiers,
+  and the local `py.typed` marker.
+
+### Verification
+
+- Focused green run:
+  `uv run pytest tests/test_packaging_docs.py -q`
+  -> 6 passed
+- Full package gates:
+  `uv run pytest -q` -> 188 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 51 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
+- Wheel inspection:
+  `uv run python - ...` -> `durable_outbox/py.typed` present in the built wheel.

@@ -12,6 +12,21 @@ OPTIONAL_DEPENDENCY_FLOORS = {
     "kafka": {"confluent-kafka>=2.14.0"},
     "sql": {"pyodbc>=5.3.0"},
 }
+EXPECTED_PROJECT_URLS = {"Homepage", "Documentation", "Repository", "Issues"}
+EXPECTED_KEYWORDS = {
+    "azure",
+    "durable-outbox",
+    "kafka",
+    "rpo-zero",
+    "transactional-outbox",
+}
+EXPECTED_CLASSIFIERS = {
+    "Framework :: AsyncIO",
+    "Operating System :: OS Independent",
+    "Topic :: Database",
+    "Topic :: System :: Distributed Computing",
+    "Typing :: Typed",
+}
 
 
 def test_readme_documents_configured_extras_and_verification_commands() -> None:
@@ -42,6 +57,16 @@ def test_optional_dependency_floors_match_reviewed_provider_versions() -> None:
         extra: set(dependencies)
         for extra, dependencies in pyproject["project"]["optional-dependencies"].items()
     } == OPTIONAL_DEPENDENCY_FLOORS
+
+
+def test_project_metadata_describes_package_surface() -> None:
+    pyproject = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
+    project = pyproject["project"]
+
+    assert set(project["urls"]) == EXPECTED_PROJECT_URLS
+    assert set(project["keywords"]) == EXPECTED_KEYWORDS
+    assert EXPECTED_CLASSIFIERS <= set(project["classifiers"])
+    assert (PROJECT_ROOT / "durable_outbox" / "py.typed").is_file()
 
 
 def test_dependabot_tracks_uv_lockfiles_for_durable_outbox_packages() -> None:

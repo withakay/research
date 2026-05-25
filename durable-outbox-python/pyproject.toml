@@ -11,15 +11,32 @@ requires-python = ">=3.14"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Durable Outbox Maintainers" }]
+keywords = [
+    "azure",
+    "durable-outbox",
+    "kafka",
+    "rpo-zero",
+    "transactional-outbox",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
+    "Framework :: AsyncIO",
     "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.14",
+    "Topic :: Database",
+    "Topic :: System :: Distributed Computing",
     "Typing :: Typed",
 ]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/withakay/research/tree/main/durable-outbox-python"
+Documentation = "https://github.com/withakay/research/tree/main/durable-outbox-python/docs"
+Repository = "https://github.com/withakay/research"
+Issues = "https://github.com/withakay/research/issues"
 
 [project.optional-dependencies]
 kafka = ["confluent-kafka>=2.14.0"]
