@@ -108,6 +108,12 @@ class SqlOutboxClient(Protocol):
 
     async def synchronized_secondary_count(self) -> int: ...
 
+    async def get_cleanup_freeze_reason(self) -> str | None: ...
+
+    async def set_cleanup_freeze(self, reason: str) -> None: ...
+
+    async def clear_cleanup_freeze(self) -> None: ...
+
 
 class InMemorySqlOutboxClient:
     def __init__(
@@ -120,6 +126,7 @@ class InMemorySqlOutboxClient:
         self.sync_wait_succeeds = sync_wait_succeeds
         self.synchronized_secondaries = synchronized_secondaries
         self.sync_wait_count = 0
+        self.cleanup_freeze_reason: str | None = None
 
     async def get(self, event_id: str) -> SqlStoredEvent | None:
         record = self.records.get(event_id)
@@ -158,6 +165,15 @@ class InMemorySqlOutboxClient:
 
     async def synchronized_secondary_count(self) -> int:
         return self.synchronized_secondaries
+
+    async def get_cleanup_freeze_reason(self) -> str | None:
+        return self.cleanup_freeze_reason
+
+    async def set_cleanup_freeze(self, reason: str) -> None:
+        self.cleanup_freeze_reason = reason
+
+    async def clear_cleanup_freeze(self) -> None:
+        self.cleanup_freeze_reason = None
 
 
 class _SqlOutboxStoreBase:
@@ -352,15 +368,17 @@ class _SqlOutboxStoreBase:
         return candidates
 
     async def freeze_cleanup(self, *, reason: str) -> None:
+        await self.client.set_cleanup_freeze(reason)
         self.cleanup_frozen = True
         self.cleanup_freeze_reason = reason
 
     async def resume_cleanup(self) -> None:
+        await self.client.clear_cleanup_freeze()
         self.cleanup_frozen = False
         self.cleanup_freeze_reason = None
 
     async def cleanup_sent(self, *, now: datetime, safety_margin: timedelta) -> int:
-        if self.cleanup_frozen:
+        if await self._cleanup_is_frozen():
             return 0
         event_ids = [
             record.event.event_id
@@ -377,6 +395,11 @@ class _SqlOutboxStoreBase:
 
     async def replay_event(self, *, event_id: str) -> bool:
         return await self._cas_update(event_id, _replay_record)
+
+    async def _cleanup_is_frozen(self) -> bool:
+        self.cleanup_freeze_reason = await self.client.get_cleanup_freeze_reason()
+        self.cleanup_frozen = self.cleanup_freeze_reason is not None
+        return self.cleanup_frozen
 
     async def _after_put_acceptance_boundary(self) -> None:
         return

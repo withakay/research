@@ -38,6 +38,11 @@ class StoredEvent:
     last_error: str | None = None
 
 
+@dataclass(slots=True)
+class CleanupFreezeState:
+    reason: str | None = None
+
+
 class MemoryOutboxStore:
     capabilities = OutboxCapabilities(
         store_name="MemoryOutboxStore",
@@ -51,11 +56,13 @@ class MemoryOutboxStore:
         self,
         *,
         claim_timeout: timedelta = timedelta(minutes=5),
+        cleanup_state: CleanupFreezeState | None = None,
         clock: Clock | None = None,
     ) -> None:
         self.records: dict[str, StoredEvent] = {}
         self.claim_timeout = claim_timeout
         self.clock = clock or SystemClock()
+        self._cleanup_state = cleanup_state or CleanupFreezeState()
         self.cleanup_frozen = False
         self.cleanup_freeze_reason: str | None = None
 
@@ -194,15 +201,17 @@ class MemoryOutboxStore:
         return candidates
 
     async def freeze_cleanup(self, *, reason: str) -> None:
+        self._cleanup_state.reason = reason
         self.cleanup_frozen = True
         self.cleanup_freeze_reason = reason
 
     async def resume_cleanup(self) -> None:
+        self._cleanup_state.reason = None
         self.cleanup_frozen = False
         self.cleanup_freeze_reason = None
 
     async def cleanup_sent(self, *, now: datetime, safety_margin: timedelta) -> int:
-        if self.cleanup_frozen:
+        if self._cleanup_is_frozen():
             return 0
         to_delete = [
             event_id
@@ -229,6 +238,11 @@ class MemoryOutboxStore:
         record.claim_token = None
         record.claimed_at = None
         return True
+
+    def _cleanup_is_frozen(self) -> bool:
+        self.cleanup_freeze_reason = self._cleanup_state.reason
+        self.cleanup_frozen = self.cleanup_freeze_reason is not None
+        return self.cleanup_frozen
 
     async def replay_event(self, *, event_id: str) -> bool:
         record = self.records.get(event_id)

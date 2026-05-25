@@ -421,3 +421,30 @@ verification evidence.
 - Focused green run:
   `uv run pytest tests/test_failover_ordering_cleanup.py::test_blob_ordering_lock_blocks_stale_second_publisher tests/test_failover_ordering_cleanup.py::test_blob_ordering_recovers_stale_lock_after_lease_expiry tests/test_adapters.py::test_store_package_exports_are_importable -q`
   -> 3 passed
+
+## Batch 15: Backend-Persisted Cleanup Freeze
+
+### Findings Accepted
+
+- **A-P1-1:** cleanup freeze state was kept only on the store instance, so a
+  restarted cleanup worker could delete sent records while failover replay was
+  still active.
+
+### Fixes Implemented
+
+- Persisted Blob cleanup freeze state as a marker blob in the same backend.
+- Added cleanup-freeze marker operations to SQL and Cosmos client protocols and
+  in-memory client implementations.
+- Added injectable shared cleanup state to the memory store so tests and fake
+  stores can model cross-instance freeze behavior.
+- Updated cleanup paths to read the backend marker before deleting expired sent
+  records.
+
+### Verification
+
+- Focused red tests showed second store instances over the same Blob, Cosmos,
+  and SQL backends deleted expired sent records despite a freeze from the first
+  instance before implementation.
+- Focused green run:
+  `uv run pytest tests/test_adapters.py::test_cleanup_freeze_survives_backend_reopen tests/test_adapters.py::test_memory_cleanup_freeze_can_use_shared_state -q`
+  -> 4 passed

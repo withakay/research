@@ -25,6 +25,11 @@ conditional writes through the same blob client. Deployments can provide another
 should live outside the outbox container. `BlobOutboxStore.for_testing()` remains
 the intended path for process-local in-memory tests.
 
+Cleanup freeze state is written to the backing provider rather than only to the
+store instance. A restarted Blob, SQL, or Cosmos store that reopens the same
+backend will continue skipping TTL cleanup until `resume_cleanup()` clears the
+freeze marker.
+
 ## Cosmos
 
 Cosmos RPO=0 requires strong consistency, more than one region, and single-write configuration. Multi-write and session-consistency modes can still be useful, but they must not declare `rpo_zero_for_accepted_events=True` in certified mode.

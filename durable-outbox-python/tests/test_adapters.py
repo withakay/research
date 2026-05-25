@@ -27,6 +27,7 @@ from durable_outbox.stores.cosmos import (
     CosmosStrongOutboxStore,
     InMemoryCosmosOutboxClient,
 )
+from durable_outbox.stores.memory import CleanupFreezeState, MemoryOutboxStore
 from durable_outbox.stores.sql import (
     SQL_ORDERED_INDEX_NAME,
     SQL_PENDING_INDEX_NAME,
@@ -564,6 +565,80 @@ async def test_provider_claim_retry_sent_failed_replay_and_cleanup_freeze(
 
     assert deleted == 0
     assert store.cleanup_frozen is True
+
+
+@pytest.mark.parametrize(
+    ("first_store", "second_store"),
+    [
+        (
+            BlobOutboxStore(client=(blob_client := InMemoryBlobClient())),
+            BlobOutboxStore(client=blob_client),
+        ),
+        (
+            CosmosStrongOutboxStore(
+                CosmosConfiguration(consistency="Strong", regions=("westus", "eastus")),
+                client=(cosmos_client := InMemoryCosmosOutboxClient()),
+            ),
+            CosmosStrongOutboxStore(
+                CosmosConfiguration(consistency="Strong", regions=("westus", "eastus")),
+                client=cosmos_client,
+            ),
+        ),
+        (
+            AzureSqlSyncOutboxStore(client=(sql_client := InMemorySqlOutboxClient())),
+            AzureSqlSyncOutboxStore(client=sql_client),
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_cleanup_freeze_survives_backend_reopen(
+    first_store: Any,
+    second_store: Any,
+) -> None:
+    event = make_event("persisted-freeze")
+    await first_store.put(event)
+    claimed = (await first_store.claim_batch(limit=1))[0]
+    await first_store.mark_sent(
+        claimed,
+        PublishResult(partition=1, offset=2, published_at=datetime.now(UTC)),
+    )
+
+    await first_store.freeze_cleanup(reason="failover")
+    frozen_deleted = await second_store.cleanup_sent(
+        now=datetime.now(UTC) + timedelta(hours=1),
+        safety_margin=timedelta(seconds=0),
+    )
+    await second_store.resume_cleanup()
+    resumed_deleted = await second_store.cleanup_sent(
+        now=datetime.now(UTC) + timedelta(hours=1),
+        safety_margin=timedelta(seconds=0),
+    )
+
+    assert frozen_deleted == 0
+    assert resumed_deleted == 1
+
+
+@pytest.mark.asyncio
+async def test_memory_cleanup_freeze_can_use_shared_state() -> None:
+    cleanup_state = CleanupFreezeState()
+    first_store = MemoryOutboxStore(cleanup_state=cleanup_state)
+    second_store = MemoryOutboxStore(cleanup_state=cleanup_state)
+    event = make_event("memory-persisted-freeze")
+    await second_store.put(event)
+    claimed = (await second_store.claim_batch(limit=1))[0]
+    await second_store.mark_sent(
+        claimed,
+        PublishResult(partition=1, offset=2, published_at=datetime.now(UTC)),
+    )
+
+    await first_store.freeze_cleanup(reason="failover")
+    deleted = await second_store.cleanup_sent(
+        now=datetime.now(UTC) + timedelta(hours=1),
+        safety_margin=timedelta(seconds=0),
+    )
+
+    assert deleted == 0
+    assert second_store.cleanup_frozen is True
 
 
 @pytest.mark.parametrize(

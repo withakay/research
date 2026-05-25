@@ -45,6 +45,11 @@ def ordering_lock_blob_name(environment: str, topic: str, ordering_key: str) -> 
     return f"outbox/v1/key-locks/{environment}/{topic_hash}/{key_hash}.lock"
 
 
+def cleanup_freeze_blob_name(environment: str) -> str:
+    environment_hash = sha256(environment.encode("utf-8")).hexdigest()
+    return f"outbox/v1/control/{environment_hash}/cleanup-freeze.json"
+
+
 @dataclass(frozen=True, slots=True)
 class BlobObject:
     name: str
@@ -396,15 +401,28 @@ class BlobOutboxStore:
         return candidates
 
     async def freeze_cleanup(self, *, reason: str) -> None:
+        await self.client.put_blob(
+            cleanup_freeze_blob_name(self.environment),
+            json.dumps(
+                {
+                    "reason": reason,
+                    "frozen_at": _encode_datetime(self.clock.utcnow()),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8"),
+            {"reason": reason},
+        )
         self.cleanup_frozen = True
         self.cleanup_freeze_reason = reason
 
     async def resume_cleanup(self) -> None:
+        await self.client.delete_blob(cleanup_freeze_blob_name(self.environment))
         self.cleanup_frozen = False
         self.cleanup_freeze_reason = None
 
     async def cleanup_sent(self, *, now: datetime, safety_margin: timedelta) -> int:
-        if self.cleanup_frozen:
+        if await self._cleanup_is_frozen():
             return 0
         await self._refresh_records()
         deleted = 0
@@ -437,6 +455,16 @@ class BlobOutboxStore:
         record.claim_token = None
         record.claimed_at = None
         await self._save_record(record)
+        return True
+
+    async def _cleanup_is_frozen(self) -> bool:
+        marker = await self.client.get_blob(cleanup_freeze_blob_name(self.environment))
+        if marker is None:
+            self.cleanup_frozen = False
+            self.cleanup_freeze_reason = None
+            return False
+        self.cleanup_frozen = True
+        self.cleanup_freeze_reason = marker.metadata.get("reason") or "cleanup frozen"
         return True
 
     async def replay_event(self, *, event_id: str) -> bool:
