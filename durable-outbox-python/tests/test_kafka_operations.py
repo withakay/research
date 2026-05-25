@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
+from threading import get_ident
 
 import pytest
 
@@ -47,6 +48,7 @@ class Producer:
     ) -> None:
         self.calls: list[ProduceCall] = []
         self.polls: list[float] = []
+        self.poll_thread_ids: list[int] = []
         self.flushes: list[float] = []
         self.delivery_error = delivery_error
         self.deliver_after_polls = deliver_after_polls
@@ -72,6 +74,7 @@ class Producer:
 
     def poll(self, timeout: float) -> None:
         self.polls.append(timeout)
+        self.poll_thread_ids.append(get_ident())
         if (
             self._on_delivery is not None
             and len(self.polls) >= self.deliver_after_polls
@@ -212,6 +215,20 @@ async def test_kafka_sink_polls_until_delivery_ack() -> None:
 
     assert result.partition == 3
     assert len(producer.polls) == 3
+
+
+@pytest.mark.asyncio
+async def test_kafka_sink_poll_does_not_run_on_event_loop_thread() -> None:
+    producer = Producer(deliver_after_polls=1)
+    sink = KafkaSink(producer=producer, poll_interval_seconds=0)
+    event_loop_thread_id = get_ident()
+
+    await sink.publish(make_event())
+
+    assert producer.poll_thread_ids
+    assert all(
+        thread_id != event_loop_thread_id for thread_id in producer.poll_thread_ids
+    )
 
 
 @pytest.mark.asyncio

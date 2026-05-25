@@ -148,7 +148,8 @@ class KafkaSink:
                 ),
             )
 
-        self.producer.produce(
+        await asyncio.to_thread(
+            self.producer.produce,
             event.topic,
             key=_kafka_key(event),
             value=event.payload,
@@ -157,7 +158,7 @@ class KafkaSink:
         )
         deadline = monotonic() + self.delivery_timeout_seconds
         while not future.done():
-            self.producer.poll(self.poll_interval_seconds)
+            await asyncio.to_thread(self.producer.poll, self.poll_interval_seconds)
             if future.done():
                 break
             if monotonic() >= deadline:

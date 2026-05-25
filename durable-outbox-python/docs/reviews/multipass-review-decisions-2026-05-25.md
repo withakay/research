@@ -539,3 +539,27 @@ verification evidence.
 - Focused green run:
   `uv run pytest tests/test_adapters.py::test_dual_region_mirror_retries_transient_standby_update_failure tests/test_adapters.py::test_dual_region_mirror_queues_reconciliation_after_repeated_failure -q`
   -> 2 passed
+
+## Batch 20: Dispatcher Publish Concurrency And Kafka Poll Offload
+
+### Findings Accepted
+
+- **P-P0-1:** dispatcher publish/mark loops were strictly sequential even for
+  independent claimed events.
+- **P-P1-2 / Q-P2-6:** Kafka `poll()` ran synchronously on the asyncio event-loop
+  thread.
+
+### Fixes Implemented
+
+- Added `OutboxDispatcher(concurrency=...)` with a bounded semaphore and
+  per-claim `_publish_one()` worker while preserving existing per-event error,
+  retry, metrics, and summary accounting.
+- Offloaded Kafka `produce()` and `poll()` calls via `asyncio.to_thread()`.
+
+### Verification
+
+- Focused red tests showed `OutboxDispatcher` had no concurrency option and
+  Kafka `poll()` ran on the event-loop thread before implementation.
+- Focused green run:
+  `uv run pytest tests/test_core.py::test_dispatcher_publishes_claimed_events_concurrently tests/test_core.py::test_dispatcher_marks_sent_after_sink_ack tests/test_core.py::test_dispatcher_returns_retryable_failure_to_pending tests/test_core.py::test_dispatcher_does_not_mark_pending_after_post_ack_store_failure tests/test_kafka_operations.py::test_kafka_sink_poll_does_not_run_on_event_loop_thread tests/test_kafka_operations.py::test_kafka_sink_polls_until_delivery_ack tests/test_kafka_operations.py::test_kafka_sink_returns_result_after_ack_and_adds_event_id_header -q`
+  -> 7 passed

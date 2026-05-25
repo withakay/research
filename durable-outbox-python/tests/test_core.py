@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import MutableMapping
 from datetime import UTC, datetime, timedelta
 from typing import cast
@@ -12,6 +13,7 @@ from durable_outbox.core import (
     OutboxEvent,
     OutboxStatus,
     PublishingMode,
+    PublishResult,
     RetryableStoreError,
     RetryPolicy,
     ValidationError,
@@ -35,6 +37,26 @@ class FixedClock:
 
     def utcnow(self) -> datetime:
         return self.now
+
+
+class ConcurrentSink(FakeSink):
+    def __init__(self, *, started: asyncio.Event, release: asyncio.Event) -> None:
+        super().__init__()
+        self.started = started
+        self.release = release
+        self.in_flight = 0
+        self.max_in_flight = 0
+
+    async def publish(self, event: OutboxEvent) -> PublishResult:
+        self.in_flight += 1
+        self.max_in_flight = max(self.max_in_flight, self.in_flight)
+        if self.in_flight >= 2:
+            self.started.set()
+        await self.release.wait()
+        try:
+            return await super().publish(event)
+        finally:
+            self.in_flight -= 1
 
 
 def test_event_preserves_opaque_payload_and_freezes_headers() -> None:
@@ -200,6 +222,27 @@ async def test_dispatcher_marks_sent_after_sink_ack() -> None:
 
     assert summary.sent == 1
     assert store.records[event.event_id].status is OutboxStatus.SENT
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_publishes_claimed_events_concurrently() -> None:
+    store = FakeOutboxStore()
+    for index in range(3):
+        await store.put(make_event(f"event-{index}"))
+    started = asyncio.Event()
+    release = asyncio.Event()
+    sink = ConcurrentSink(started=started, release=release)
+    dispatch_task = asyncio.create_task(
+        OutboxDispatcher(store, sink, concurrency=3).run_once(limit=3)
+    )
+
+    await asyncio.wait_for(started.wait(), timeout=1)
+    release.set()
+    summary = await dispatch_task
+
+    assert summary.claimed == 3
+    assert summary.sent == 3
+    assert sink.max_in_flight >= 2
 
 
 def test_dispatcher_can_require_rpo_zero_store() -> None:
