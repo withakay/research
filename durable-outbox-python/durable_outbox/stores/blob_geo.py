@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import binascii
+import hmac
 import json
 import logging
 from collections.abc import Iterable, Mapping
@@ -230,6 +231,7 @@ class BlobOutboxStore:
         ordering_lock_backend: OrderingLockBackend | None = None,
         ordering_lock_lease_duration: timedelta | None = None,
         claim_timeout: timedelta = timedelta(minutes=5),
+        fingerprint_key: bytes | None = None,
         clock: Clock | None = None,
     ) -> None:
         if client is None:
@@ -238,6 +240,9 @@ class BlobOutboxStore:
                 "use BlobOutboxStore.for_testing() for in-memory tests"
             )
         self.client = client
+        if fingerprint_key is not None and not isinstance(fingerprint_key, bytes):
+            raise ConfigurationError("fingerprint_key must be bytes")
+        self.fingerprint_key = fingerprint_key
         enforce_metadata_safe(environment, field_name="environment")
         self.environment = environment
         ordering_lock_lease_duration = _resolve_ordering_lock_lease_duration(
@@ -272,6 +277,7 @@ class BlobOutboxStore:
         ordering_lock_backend: OrderingLockBackend | None = None,
         ordering_lock_lease_duration: timedelta | None = None,
         claim_timeout: timedelta = timedelta(minutes=5),
+        fingerprint_key: bytes | None = None,
         clock: Clock | None = None,
     ) -> BlobOutboxStore:
         return cls(
@@ -281,6 +287,7 @@ class BlobOutboxStore:
             ordering_lock_backend=ordering_lock_backend,
             ordering_lock_lease_duration=ordering_lock_lease_duration,
             claim_timeout=claim_timeout,
+            fingerprint_key=fingerprint_key,
             clock=clock,
         )
 
@@ -562,7 +569,9 @@ class BlobOutboxStore:
             return None
         record = _decode_record(blob.content)
         expected_fingerprint = blob.metadata.get("event_fingerprint")
-        if expected_fingerprint != _event_fingerprint(record.event):
+        if expected_fingerprint != _event_fingerprint(
+            record.event, key=self.fingerprint_key
+        ):
             raise RetryableStoreError("blob record fingerprint mismatch")
         self.records[event_id] = record
         self._record_etags[event_id] = blob.etag
@@ -574,7 +583,9 @@ class BlobOutboxStore:
         for blob in blobs:
             record = _decode_record(blob.content)
             expected_fingerprint = blob.metadata.get("event_fingerprint")
-            if expected_fingerprint != _event_fingerprint(record.event):
+            if expected_fingerprint != _event_fingerprint(
+                record.event, key=self.fingerprint_key
+            ):
                 raise RetryableStoreError("blob record fingerprint mismatch")
             event_id = record.event.event_id
             seen_ids.add(event_id)
@@ -588,7 +599,11 @@ class BlobOutboxStore:
         blob = await self.client.put_blob(
             event_blob_name(record.event.event_id),
             _encode_record(record),
-            _record_metadata(record, environment=self.environment),
+            _record_metadata(
+                record,
+                environment=self.environment,
+                fingerprint_key=self.fingerprint_key,
+            ),
             if_none_match=True,
         )
         self.records[record.event.event_id] = record
@@ -599,7 +614,11 @@ class BlobOutboxStore:
         blob = await self.client.put_blob(
             event_blob_name(event_id),
             _encode_record(record),
-            _record_metadata(record, environment=self.environment),
+            _record_metadata(
+                record,
+                environment=self.environment,
+                fingerprint_key=self.fingerprint_key,
+            ),
             if_match=self._record_etags.get(event_id),
         )
         self.records[event_id] = record
@@ -706,6 +725,7 @@ class DualRegionBlobOutboxStore:
         store_name: str = "DualRegionBlobOutboxStore",
         active_region: BlobRegionName = "primary",
         claim_timeout: timedelta = timedelta(minutes=5),
+        fingerprint_key: bytes | None = None,
         metrics: MetricsAdapter | None = None,
         clock: Clock | None = None,
     ) -> None:
@@ -723,12 +743,14 @@ class DualRegionBlobOutboxStore:
             client=primary_client,
             environment=f"{environment}-primary",
             claim_timeout=claim_timeout,
+            fingerprint_key=fingerprint_key,
             clock=self.clock,
         )
         self.secondary = BlobOutboxStore(
             client=secondary_client,
             environment=f"{environment}-secondary",
             claim_timeout=claim_timeout,
+            fingerprint_key=fingerprint_key,
             clock=self.clock,
         )
         self.metrics = metrics or NoopMetrics()
@@ -755,6 +777,7 @@ class DualRegionBlobOutboxStore:
         environment: str = "test",
         active_region: BlobRegionName = "primary",
         claim_timeout: timedelta = timedelta(minutes=5),
+        fingerprint_key: bytes | None = None,
         metrics: MetricsAdapter | None = None,
         clock: Clock | None = None,
     ) -> DualRegionBlobOutboxStore:
@@ -765,6 +788,7 @@ class DualRegionBlobOutboxStore:
             store_name="InMemoryDualRegionBlobOutboxStore",
             active_region=active_region,
             claim_timeout=claim_timeout,
+            fingerprint_key=fingerprint_key,
             metrics=metrics,
             clock=clock,
         )
@@ -1030,11 +1054,19 @@ def blob_metadata(event: OutboxEvent, *, environment: str) -> Mapping[str, str]:
     return values
 
 
-def _record_metadata(record: StoredEvent, *, environment: str) -> Mapping[str, str]:
+def _record_metadata(
+    record: StoredEvent,
+    *,
+    environment: str,
+    fingerprint_key: bytes | None = None,
+) -> Mapping[str, str]:
     values = dict(blob_metadata(record.event, environment=environment))
     values["accepted"] = str(record.accepted).lower()
     values["status"] = record.status.value
-    values["event_fingerprint"] = _event_fingerprint(record.event)
+    values["event_fingerprint"] = _event_fingerprint(
+        record.event,
+        key=fingerprint_key,
+    )
     return values
 
 
@@ -1205,12 +1237,14 @@ def _decode_publish_result(data: Mapping[str, Any] | None) -> PublishResult | No
     )
 
 
-def _event_fingerprint(event: OutboxEvent) -> str:
+def _event_fingerprint(event: OutboxEvent, *, key: bytes | None = None) -> str:
     encoded = json.dumps(
         _encode_event(event),
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
+    if key is not None:
+        return hmac.new(key, encoded, sha256).hexdigest()
     return sha256(encoded).hexdigest()
 
 

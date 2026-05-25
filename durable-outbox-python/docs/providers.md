@@ -35,6 +35,15 @@ backend durability boundaries reached for that event. The legacy `rpo_zero`
 boolean remains for compatibility, but operators should prefer the witness for
 per-event audit evidence.
 
+Blob records include an `event_fingerprint` metadata value so readers can detect
+metadata/content mismatch before replaying a poisoned record. Without extra
+configuration this is an unkeyed SHA-256 over the event envelope, which is
+appropriate for corruption detection but can leak equality information to
+principals with Blob metadata read access. Sensitive deployments should pass a
+deployment-secret `fingerprint_key` to `BlobOutboxStore` or
+`DualRegionBlobOutboxStore`; keyed mode stores an HMAC-SHA256 instead and all
+readers of the same container must use the same key.
+
 ## Cosmos
 
 Cosmos RPO=0 requires strong consistency, more than one region, and single-write configuration. Multi-write and session-consistency modes can still be useful, but they must not declare `rpo_zero_for_accepted_events=True` in certified mode.

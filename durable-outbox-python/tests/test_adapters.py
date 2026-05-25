@@ -21,6 +21,7 @@ from durable_outbox.stores.blob_geo import (
     InMemoryBlobClient,
     _decode_record,
     _encode_record,
+    _event_fingerprint,
     blob_metadata,
     event_blob_name,
     ordering_lock_blob_name,
@@ -355,6 +356,29 @@ async def test_blob_load_rejects_tampered_fingerprint() -> None:
 
     with pytest.raises(RetryableStoreError, match="fingerprint"):
         await store._load_record(event.event_id)
+
+
+@pytest.mark.asyncio
+async def test_blob_store_can_use_keyed_event_fingerprints() -> None:
+    client = InMemoryBlobClient()
+    store = BlobOutboxStore(client=client, fingerprint_key=b"secret")
+    event = make_event("keyed-fingerprint")
+
+    await store.put(event)
+
+    blob = await client.get_blob(event_blob_name(event.event_id))
+    assert blob is not None
+    fingerprint = blob.metadata["event_fingerprint"]
+    assert fingerprint != _event_fingerprint(event)
+
+    same_key_store = BlobOutboxStore(client=client, fingerprint_key=b"secret")
+    loaded = await same_key_store._load_record(event.event_id)
+    assert loaded is not None
+    assert loaded.event.event_id == event.event_id
+
+    wrong_key_store = BlobOutboxStore(client=client, fingerprint_key=b"wrong")
+    with pytest.raises(RetryableStoreError, match="fingerprint"):
+        await wrong_key_store._load_record(event.event_id)
 
 
 @pytest.mark.asyncio

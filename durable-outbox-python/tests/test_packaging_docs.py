@@ -158,6 +158,8 @@ def test_provider_docs_cover_rpo_zero_modes() -> None:
     assert "Cosmos" in docs
     assert "SQL" in docs
     assert "adapter acceptance contract" in docs
+    assert "fingerprint_key" in docs
+    assert "HMAC-SHA256" in docs
 
 
 def test_operations_docs_describe_error_and_outcome_policy() -> None:

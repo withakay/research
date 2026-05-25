@@ -1465,3 +1465,41 @@ verification evidence.
   `uv run ruff format --check .` -> 52 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 51: Keyed Blob Event Fingerprints
+
+### Findings Accepted
+
+- **S-P2-3:** Blob `event_fingerprint` metadata is useful for integrity checks,
+  but the unkeyed SHA-256 value can leak equality information and candidate
+  guesses to principals with metadata read access.
+
+### Fixes Implemented
+
+- Added optional `fingerprint_key: bytes` support to `BlobOutboxStore` and
+  `DualRegionBlobOutboxStore`.
+- When configured, Blob metadata stores an HMAC-SHA256 event fingerprint instead
+  of the unkeyed SHA-256 fingerprint.
+- Blob load and refresh validation use the same configured key, so wrong-key
+  readers reject records with the existing fingerprint mismatch path.
+- Documented the unkeyed hash leakage tradeoff and HMAC mode in
+  `docs/providers.md`.
+- Added focused tests for keyed write, same-key read, wrong-key rejection, and
+  provider documentation.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_adapters.py::test_blob_store_can_use_keyed_event_fingerprints tests/test_packaging_docs.py::test_provider_docs_cover_rpo_zero_modes -q`
+  -> failed because `BlobOutboxStore` had no `fingerprint_key` argument and
+  provider docs did not mention HMAC mode.
+- Focused green run:
+  `uv run pytest tests/test_adapters.py::test_blob_store_can_use_keyed_event_fingerprints tests/test_packaging_docs.py::test_provider_docs_cover_rpo_zero_modes -q`
+  -> 2 passed
+- Adapter/docs and package gates:
+  `uv run pytest tests/test_adapters.py tests/test_packaging_docs.py -q` -> 114 passed;
+  `uv run pytest -q` -> 212 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 52 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
