@@ -272,3 +272,29 @@ verification evidence.
 - Focused green run:
   `uv run pytest tests/test_adapters.py::test_dual_region_blob_can_promote_secondary_for_dispatch tests/test_adapters.py::test_dual_region_blob_failover_replay_uses_active_secondary tests/test_adapters.py::test_dual_region_blob_accepts_only_after_both_regions -q`
   -> 3 passed
+
+## Batch 9: Dual-Region Prepared Reconciliation
+
+### Findings Accepted
+
+- **A-NEW-P0-1:** dual-region prepared-only records were invisible to failover
+  replay, so a process failure during the prepare/accept sequence could leave
+  recoverable records stranded.
+
+### Fixes Implemented
+
+- Added `DualRegionBlobOutboxStore.list_prepared_event_ids()` to scan both
+  regions for `accepted=False` records.
+- Added `reconcile_prepared()` to repair every prepared record through the
+  existing `repair_prepared()` path.
+- Ran prepared reconciliation at the start of
+  `DualRegionBlobOutboxStore.failover_replay_candidates()` so replay candidates
+  include records that stopped mid dual-write.
+
+### Verification
+
+- Focused red test showed there was no prepared-listing API before
+  implementation.
+- Focused green run:
+  `uv run pytest tests/test_adapters.py::test_dual_region_blob_reconciles_prepared_records_before_failover_replay tests/test_adapters.py::test_dual_region_blob_failover_replay_uses_active_secondary tests/test_adapters.py::test_dual_region_blob_repairs_partial_write_matrix -q`
+  -> 6 passed

@@ -649,6 +649,7 @@ class DualRegionBlobOutboxStore:
         failover_started_at: datetime,
         limit: int,
     ) -> list[ClaimedEvent]:
+        await self.reconcile_prepared()
         return await self._active.failover_replay_candidates(
             failover_started_at=failover_started_at,
             limit=limit,
@@ -684,6 +685,25 @@ class DualRegionBlobOutboxStore:
         if replayed:
             await self._mirror_active_update(event_id)
         return replayed
+
+    async def list_prepared_event_ids(self) -> tuple[str, ...]:
+        await self.primary._refresh_records()
+        await self.secondary._refresh_records()
+        event_ids = set(self.primary.records) | set(self.secondary.records)
+        return tuple(
+            sorted(
+                event_id
+                for event_id in event_ids
+                if _is_prepared(self.primary.records.get(event_id))
+                or _is_prepared(self.secondary.records.get(event_id))
+            )
+        )
+
+    async def reconcile_prepared(self) -> int:
+        event_ids = await self.list_prepared_event_ids()
+        for event_id in event_ids:
+            await self.repair_prepared(event_id)
+        return len(event_ids)
 
     async def repair_prepared(self, event_id: str) -> None:
         primary_record = await self.primary._load_record(event_id)
@@ -760,6 +780,10 @@ def _copy_blob(blob: BlobObject) -> BlobObject:
         metadata=dict(blob.metadata),
         etag=blob.etag,
     )
+
+
+def _is_prepared(record: StoredEvent | None) -> bool:
+    return record is not None and not record.accepted
 
 
 def _clone_record(record: StoredEvent) -> StoredEvent:

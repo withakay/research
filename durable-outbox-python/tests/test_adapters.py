@@ -214,6 +214,27 @@ async def test_dual_region_blob_failover_replay_uses_active_secondary() -> None:
 
 
 @pytest.mark.asyncio
+async def test_dual_region_blob_reconciles_prepared_records_before_failover_replay() -> (
+    None
+):
+    store = DualRegionBlobOutboxStore()
+    event = make_event("prepared-replay")
+    await store._prepare(store.primary, event)
+    await store._prepare(store.secondary, event)
+
+    prepared = await store.list_prepared_event_ids()
+    candidates = await store.failover_replay_candidates(
+        failover_started_at=datetime.now(UTC),
+        limit=10,
+    )
+
+    assert prepared == ("prepared-replay",)
+    assert [claim.event.event_id for claim in candidates] == [event.event_id]
+    assert store.primary.records[event.event_id].accepted is True
+    assert store.secondary.records[event.event_id].accepted is True
+
+
+@pytest.mark.asyncio
 async def test_dual_region_blob_repair_copies_missing_region() -> None:
     store = DualRegionBlobOutboxStore()
     event = make_event()
