@@ -1623,3 +1623,35 @@ verification evidence.
   `uv run ruff format --check .` -> 52 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 55: Shared Failing Sink Cleanup
+
+### Findings Accepted
+
+- **Q-NIT-1:** failover tests still carried local failing sink helpers even
+  though `durable_outbox.testing.FailingSink` is the shared public test helper.
+
+### Fixes Implemented
+
+- Removed the unused local always-failing sink test class.
+- Replaced the selective failover publish failure helper with
+  `FailingSink(errors=[...])`, preserving the same one-failure-then-success
+  replay scenario through the shared helper.
+- Removed now-unused model imports from the failover test module.
+
+### Verification
+
+- Focused run:
+  `uv run pytest tests/test_failover_ordering_cleanup.py::test_replay_continues_after_publish_failure_and_keeps_cleanup_frozen -q`
+  -> 1 passed
+- Focused lint/format:
+  `uv run ruff check tests/test_failover_ordering_cleanup.py --fix`
+  -> removed two unused imports;
+  `uv run ruff format --check tests/test_failover_ordering_cleanup.py`
+  -> 1 file already formatted.
+- Full package gates:
+  `uv run pytest -q` -> 221 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 52 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
