@@ -402,39 +402,49 @@ class BlobOutboxStore:
         require_positive_limit(limit)
         await self._refresh_records()
         candidates: list[ClaimedEvent] = []
-        for record in sorted(
-            self.records.values(), key=lambda item: item.event.created_at
-        ):
-            if len(candidates) >= limit:
-                break
-            if not record.accepted:
-                continue
-            if record.status not in {
-                OutboxStatus.PENDING,
-                OutboxStatus.IN_FLIGHT,
-                OutboxStatus.SENT,
-            }:
-                continue
-            if record.event.expires_at < failover_started_at:
-                continue
-            token = str(uuid4())
-            source_status = record.status
-            record.status = OutboxStatus.IN_FLIGHT
-            record.claim_token = token
-            record.claimed_at = self.clock.utcnow()
-            record.attempt_count += 1
-            try:
-                await self._save_record(record)
-            except BlobPreconditionFailedError:
-                continue
-            candidates.append(
-                ClaimedEvent(
-                    event=record.event,
-                    claim_token=token,
-                    attempt_count=record.attempt_count,
-                    source_status=source_status,
+        originals: dict[str, StoredEvent] = {}
+        try:
+            for record in sorted(
+                self.records.values(), key=lambda item: item.event.created_at
+            ):
+                if len(candidates) >= limit:
+                    break
+                if not record.accepted:
+                    continue
+                if record.status not in {
+                    OutboxStatus.PENDING,
+                    OutboxStatus.IN_FLIGHT,
+                    OutboxStatus.SENT,
+                }:
+                    continue
+                if record.event.expires_at < failover_started_at:
+                    continue
+                event_id = record.event.event_id
+                originals.setdefault(event_id, _clone_record(record))
+                token = str(uuid4())
+                source_status = record.status
+                record.status = OutboxStatus.IN_FLIGHT
+                record.claim_token = token
+                record.claimed_at = self.clock.utcnow()
+                record.attempt_count += 1
+                try:
+                    await self._save_record(record)
+                except BlobPreconditionFailedError:
+                    self.records[event_id] = originals.pop(event_id)
+                    continue
+                candidates.append(
+                    ClaimedEvent(
+                        event=record.event,
+                        claim_token=token,
+                        attempt_count=record.attempt_count,
+                        source_status=source_status,
+                    )
                 )
-            )
+        except BaseException:
+            for original in reversed(tuple(originals.values())):
+                self.records[original.event.event_id] = original
+                await self._save_record(original)
+            raise
         return candidates
 
     async def freeze_cleanup(self, *, reason: str) -> None:

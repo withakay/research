@@ -57,6 +57,24 @@ class FixedClock:
         return self.now
 
 
+class InterruptingClock(FixedClock):
+    def __init__(self, now: datetime) -> None:
+        super().__init__(now)
+        self._fail_after: int | None = None
+        self._calls = 0
+
+    def interrupt_after(self, successful_calls: int) -> None:
+        self._fail_after = successful_calls
+        self._calls = 0
+
+    def utcnow(self) -> datetime:
+        if self._fail_after is not None:
+            if self._calls >= self._fail_after:
+                raise RuntimeError("clock interrupted")
+            self._calls += 1
+        return self.now
+
+
 class ConflictOnceCosmosClient(InMemoryCosmosOutboxClient):
     def __init__(self) -> None:
         super().__init__()
@@ -858,6 +876,52 @@ async def test_provider_claim_retry_sent_failed_replay_and_cleanup_freeze(
 
     assert deleted == 0
     assert store.cleanup_frozen is True
+
+
+async def _record_from_store(store: Any, event_id: str) -> Any:
+    if isinstance(store, BlobOutboxStore | MemoryOutboxStore):
+        return store.records[event_id]
+    if hasattr(store, "client"):
+        return await store.client.get(event_id)
+    return store.records[event_id]
+
+
+@pytest.mark.parametrize(
+    "store_factory",
+    [
+        lambda clock: MemoryOutboxStore(clock=clock),
+        lambda clock: BlobOutboxStore.for_testing(clock=clock),
+        lambda clock: CosmosStrongOutboxStore.for_testing(
+            CosmosConfiguration(consistency="Strong", regions=("westus", "eastus")),
+            clock=clock,
+        ),
+        lambda clock: AzureSqlSyncOutboxStore.for_testing(clock=clock),
+        lambda clock: SqlAlwaysOnOutboxStore.for_testing(clock=clock),
+    ],
+)
+@pytest.mark.asyncio
+async def test_provider_failover_replay_candidates_rolls_back_on_interruption(
+    store_factory: Any,
+) -> None:
+    clock = InterruptingClock(datetime.now(UTC))
+    store = store_factory(clock)
+    events = [make_event("rollback-1"), make_event("rollback-2")]
+    for event in events:
+        await store.put(event)
+
+    clock.interrupt_after(1)
+    with pytest.raises(RuntimeError, match="clock interrupted"):
+        await store.failover_replay_candidates(
+            failover_started_at=datetime.now(UTC),
+            limit=10,
+        )
+
+    for event in events:
+        record = await _record_from_store(store, event.event_id)
+        assert record.status is OutboxStatus.PENDING
+        assert record.claim_token is None
+        assert record.claimed_at is None
+        assert record.attempt_count == 0
 
 
 @pytest.mark.parametrize(

@@ -172,35 +172,43 @@ class MemoryOutboxStore:
     ) -> list[ClaimedEvent]:
         require_positive_limit(limit)
         candidates: list[ClaimedEvent] = []
-        for record in sorted(
-            self.records.values(), key=lambda item: item.event.created_at
-        ):
-            if len(candidates) >= limit:
-                break
-            if not record.accepted:
-                continue
-            if record.status not in {
-                OutboxStatus.PENDING,
-                OutboxStatus.IN_FLIGHT,
-                OutboxStatus.SENT,
-            }:
-                continue
-            if record.event.expires_at < failover_started_at:
-                continue
-            token = str(uuid4())
-            source_status = record.status
-            record.status = OutboxStatus.IN_FLIGHT
-            record.claim_token = token
-            record.claimed_at = self.clock.utcnow()
-            record.attempt_count += 1
-            candidates.append(
-                ClaimedEvent(
-                    event=record.event,
-                    claim_token=token,
-                    attempt_count=record.attempt_count,
-                    source_status=source_status,
+        originals: dict[str, StoredEvent] = {}
+        try:
+            for record in sorted(
+                self.records.values(), key=lambda item: item.event.created_at
+            ):
+                if len(candidates) >= limit:
+                    break
+                if not record.accepted:
+                    continue
+                if record.status not in {
+                    OutboxStatus.PENDING,
+                    OutboxStatus.IN_FLIGHT,
+                    OutboxStatus.SENT,
+                }:
+                    continue
+                if record.event.expires_at < failover_started_at:
+                    continue
+                event_id = record.event.event_id
+                originals.setdefault(event_id, _clone_record(record))
+                token = str(uuid4())
+                source_status = record.status
+                record.status = OutboxStatus.IN_FLIGHT
+                record.claim_token = token
+                record.claimed_at = self.clock.utcnow()
+                record.attempt_count += 1
+                candidates.append(
+                    ClaimedEvent(
+                        event=record.event,
+                        claim_token=token,
+                        attempt_count=record.attempt_count,
+                        source_status=source_status,
+                    )
                 )
-            )
+        except BaseException:
+            for event_id, original in originals.items():
+                self.records[event_id] = original
+            raise
         return candidates
 
     async def freeze_cleanup(self, *, reason: str) -> None:
@@ -292,3 +300,21 @@ class MemoryOutboxStore:
                 continue
             locked.add(key)
         return locked
+
+
+def _clone_record(record: StoredEvent) -> StoredEvent:
+    return StoredEvent(
+        event=record.event,
+        status=record.status,
+        accepted=record.accepted,
+        accepted_at=record.accepted_at,
+        attempt_count=record.attempt_count,
+        claim_token=record.claim_token,
+        claimed_at=record.claimed_at,
+        next_attempt_at=record.next_attempt_at,
+        sent_at=record.sent_at,
+        publish_result=record.publish_result,
+        failed_at=record.failed_at,
+        last_error_type=record.last_error_type,
+        last_error=record.last_error,
+    )

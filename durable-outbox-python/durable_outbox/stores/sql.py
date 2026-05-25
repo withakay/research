@@ -338,38 +338,46 @@ class _SqlOutboxStoreBase:
         records = sorted(
             await self.client.list_records(), key=lambda item: item.event.created_at
         )
-        for record in records:
-            if len(candidates) >= limit:
-                break
-            if record.status not in {
-                OutboxStatus.PENDING,
-                OutboxStatus.IN_FLIGHT,
-                OutboxStatus.SENT,
-            }:
-                continue
-            if record.event.expires_at < failover_started_at:
-                continue
-            token = str(uuid4())
-            source_status = record.status
-            record.status = OutboxStatus.IN_FLIGHT
-            record.claim_token = token
-            record.claimed_at = self.clock.utcnow()
-            record.attempt_count += 1
-            try:
-                record = await self.client.replace(
-                    record,
-                    expected_version=record.version,
+        claimed_originals: list[tuple[SqlStoredEvent, SqlStoredEvent]] = []
+        try:
+            for record in records:
+                if len(candidates) >= limit:
+                    break
+                if record.status not in {
+                    OutboxStatus.PENDING,
+                    OutboxStatus.IN_FLIGHT,
+                    OutboxStatus.SENT,
+                }:
+                    continue
+                if record.event.expires_at < failover_started_at:
+                    continue
+                original = _clone_record(record)
+                token = str(uuid4())
+                source_status = record.status
+                record.status = OutboxStatus.IN_FLIGHT
+                record.claim_token = token
+                record.claimed_at = self.clock.utcnow()
+                record.attempt_count += 1
+                try:
+                    claimed = await self.client.replace(
+                        record,
+                        expected_version=record.version,
+                    )
+                except ClaimConflictError:
+                    continue
+                claimed_originals.append((claimed, original))
+                candidates.append(
+                    ClaimedEvent(
+                        event=claimed.event,
+                        claim_token=token,
+                        attempt_count=claimed.attempt_count,
+                        source_status=source_status,
+                    )
                 )
-            except ClaimConflictError:
-                continue
-            candidates.append(
-                ClaimedEvent(
-                    event=record.event,
-                    claim_token=token,
-                    attempt_count=record.attempt_count,
-                    source_status=source_status,
-                )
-            )
+        except BaseException:
+            for claimed, original in reversed(claimed_originals):
+                await self.client.replace(original, expected_version=claimed.version)
+            raise
         return candidates
 
     async def freeze_cleanup(self, *, reason: str) -> None:

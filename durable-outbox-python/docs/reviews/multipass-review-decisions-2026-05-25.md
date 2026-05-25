@@ -1127,3 +1127,37 @@ verification evidence.
   `uv run ruff format --check .` -> 51 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 41: Failover Replay Candidate Rollback
+
+### Findings Accepted
+
+- **A-P2-4:** `failover_replay_candidates()` claimed records while building a
+  returned list. If candidate construction was interrupted by cancellation or
+  another exception, records already claimed in that call could remain
+  `IN_FLIGHT` until claim timeout.
+
+### Fixes Implemented
+
+- Added rollback for interrupted candidate construction in memory, Blob, Cosmos,
+  Azure SQL sync, and SQL Always On stores.
+- Restored in-memory/Blob records from cloned originals when an interruption
+  happens before the method returns.
+- Restored SQL and Cosmos records with CAS replacement when a later interruption
+  occurs after earlier replay claims were persisted.
+- Added a provider-level regression test using an interrupting clock across all
+  five store families.
+
+### Verification
+
+- Focused red run showed all five store families leaked `IN_FLIGHT` state before
+  implementation.
+- Focused green run:
+  `uv run pytest tests/test_adapters.py::test_provider_failover_replay_candidates_rolls_back_on_interruption -q`
+  -> 5 passed
+- Full package gates:
+  `uv run pytest -q` -> 202 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 51 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
