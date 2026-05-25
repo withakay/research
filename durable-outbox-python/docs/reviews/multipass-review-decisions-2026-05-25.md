@@ -1365,3 +1365,36 @@ verification evidence.
   `uv run ruff format --check .` -> 51 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 48: Frozen Mapping Fast Path
+
+### Findings Accepted
+
+- **P-P2-2 / P-NIT-1:** `OutboxEvent` and `PublishResult` always allocated a
+  fresh `MappingProxyType`, even when constructed from an already immutable
+  mapping.
+
+### Fixes Implemented
+
+- Kept full `OutboxEvent.headers` validation, including count, name, blocked
+  prefix, value type, and aggregate byte limits.
+- Returned the original `MappingProxyType` for headers after validation instead
+  of allocating another dict/proxy pair.
+- Reused an existing `MappingProxyType` for `PublishResult.metadata`.
+- Added focused tests for both immutable-mapping fast paths.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_core.py::test_event_reuses_already_frozen_headers_after_validation tests/test_core.py::test_publish_result_reuses_already_frozen_metadata -q`
+  -> both tests failed because constructors wrapped new mapping proxies.
+- Focused green run:
+  `uv run pytest tests/test_core.py::test_event_reuses_already_frozen_headers_after_validation tests/test_core.py::test_publish_result_reuses_already_frozen_metadata -q`
+  -> 2 passed
+- Core and package gates:
+  `uv run pytest tests/test_core.py -q` -> 34 passed;
+  `uv run pytest -q` -> 209 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 51 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.

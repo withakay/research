@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import MutableMapping
 from datetime import UTC, datetime, timedelta
 from random import Random
+from types import MappingProxyType
 from typing import cast
 
 import pytest
@@ -76,6 +77,35 @@ def test_event_preserves_opaque_payload_and_freezes_headers() -> None:
     assert event.headers["traceparent"] == b"abc"
     with pytest.raises(TypeError):
         cast(MutableMapping[str, bytes], event.headers)["x"] = b"nope"
+
+
+def test_event_reuses_already_frozen_headers_after_validation() -> None:
+    now = datetime.now(UTC)
+    headers = MappingProxyType({"traceparent": b"abc"})
+
+    event = OutboxEvent(
+        event_id="event-1",
+        topic="topic",
+        payload=b"{}",
+        key=None,
+        headers=headers,
+        created_at=now,
+        expires_at=now + timedelta(minutes=1),
+    )
+
+    assert event.headers is headers
+
+
+def test_publish_result_reuses_already_frozen_metadata() -> None:
+    metadata = MappingProxyType({"broker": "kafka"})
+    result = PublishResult(
+        partition=1,
+        offset=2,
+        published_at=datetime.now(UTC),
+        metadata=metadata,
+    )
+
+    assert result.metadata is metadata
 
 
 def test_ordered_event_requires_key() -> None:

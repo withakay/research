@@ -82,6 +82,7 @@ def _freeze_headers(headers: Mapping[str, bytes]) -> Mapping[str, bytes]:
         raise ValidationError(
             f"headers cannot contain more than {MAX_HEADER_COUNT} entries"
         )
+    already_frozen = isinstance(headers, MappingProxyType)
     frozen: dict[str, bytes] = {}
     total_bytes = 0
     for name, value in headers.items():
@@ -107,6 +108,8 @@ def _freeze_headers(headers: Mapping[str, bytes]) -> Mapping[str, bytes]:
                 f"headers cannot exceed {MAX_HEADER_TOTAL_BYTES} total bytes"
             )
         frozen[name] = value
+    if already_frozen:
+        return headers
     return MappingProxyType(frozen)
 
 
@@ -142,4 +145,6 @@ class PublishResult:
     def __post_init__(self) -> None:
         # Normalize caller-owned mutable metadata while preserving the frozen
         # public dataclass contract.
+        if isinstance(self.metadata, MappingProxyType):
+            return
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
