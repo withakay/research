@@ -1,3 +1,4 @@
+import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -11,6 +12,7 @@ from durable_outbox.stores.blob_geo import (
     BlobOutboxStore,
     DualRegionBlobOutboxStore,
     InMemoryBlobClient,
+    _encode_record,
     blob_metadata,
     event_blob_name,
     ordering_lock_blob_name,
@@ -100,6 +102,47 @@ async def test_blob_put_rejects_incompatible_duplicate() -> None:
 
     with pytest.raises(DuplicateEventConflictError, match="incompatible"):
         await store.put(incompatible)
+
+
+@pytest.mark.asyncio
+async def test_blob_load_rejects_tampered_fingerprint() -> None:
+    client = InMemoryBlobClient()
+    store = BlobOutboxStore(client=client)
+    event = make_event("tamper")
+    await store.put(event)
+    blob = await client.get_blob(event_blob_name(event.event_id))
+    assert blob is not None
+    await client.put_blob(
+        blob.name,
+        blob.content,
+        {**blob.metadata, "event_fingerprint": "bad"},
+        if_match=blob.etag,
+    )
+
+    with pytest.raises(RetryableStoreError, match="fingerprint"):
+        await store._load_record(event.event_id)
+
+
+@pytest.mark.asyncio
+async def test_blob_decode_requires_created_and_expires_timestamps() -> None:
+    client = InMemoryBlobClient()
+    store = BlobOutboxStore(client=client)
+    event = make_event("missing-created")
+    await store.put(event)
+    record = store.records[event.event_id]
+    encoded = json.loads(_encode_record(record))
+    encoded["event"]["created_at"] = None
+    blob = await client.get_blob(event_blob_name(event.event_id))
+    assert blob is not None
+    await client.put_blob(
+        blob.name,
+        json.dumps(encoded).encode(),
+        blob.metadata,
+        if_match=blob.etag,
+    )
+
+    with pytest.raises(RetryableStoreError, match="created_at"):
+        await store._load_record(event.event_id)
 
 
 @pytest.mark.asyncio

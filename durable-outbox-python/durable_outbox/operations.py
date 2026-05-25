@@ -213,21 +213,34 @@ class AdminService:
         succeeded: bool,
     ) -> None:
         result = "success" if succeeded else "not_found"
+        if not succeeded:
+            self.metrics.increment(
+                "outbox_admin_actions_total",
+                action=action,
+                result=result,
+            )
+            return
+        try:
+            await self.audit_sink.record(
+                AuditRecord(
+                    action=action,
+                    event_id=event_id,
+                    operator=operator,
+                    reason=reason,
+                    occurred_at=self.clock.utcnow(),
+                )
+            )
+        except Exception:
+            self.metrics.increment(
+                "outbox_admin_actions_total",
+                action=action,
+                result="audit_failed",
+            )
+            raise
         self.metrics.increment(
             "outbox_admin_actions_total",
             action=action,
             result=result,
-        )
-        if not succeeded:
-            return
-        await self.audit_sink.record(
-            AuditRecord(
-                action=action,
-                event_id=event_id,
-                operator=operator,
-                reason=reason,
-                occurred_at=self.clock.utcnow(),
-            )
         )
 
 

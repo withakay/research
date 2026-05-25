@@ -378,6 +378,9 @@ class BlobOutboxStore:
         if blob is None:
             return None
         record = _decode_record(blob.content)
+        expected_fingerprint = blob.metadata.get("event_fingerprint")
+        if expected_fingerprint != _event_fingerprint(record.event):
+            raise RetryableStoreError("blob record fingerprint mismatch")
         self.records[event_id] = record
         self._record_etags[event_id] = blob.etag
         return record
@@ -386,6 +389,9 @@ class BlobOutboxStore:
         blobs = await self.client.list_blobs(prefix="outbox/v1/events/")
         for blob in blobs:
             record = _decode_record(blob.content)
+            expected_fingerprint = blob.metadata.get("event_fingerprint")
+            if expected_fingerprint != _event_fingerprint(record.event):
+                raise RetryableStoreError("blob record fingerprint mismatch")
             event_id = record.event.event_id
             self.records[event_id] = record
             self._record_etags[event_id] = blob.etag
@@ -775,6 +781,8 @@ def _encode_event(event: OutboxEvent) -> dict[str, Any]:
 
 
 def _decode_event(data: Mapping[str, Any]) -> OutboxEvent:
+    created_at = _require_datetime(data["created_at"], field_name="created_at")
+    expires_at = _require_datetime(data["expires_at"], field_name="expires_at")
     return OutboxEvent(
         event_id=str(data["event_id"]),
         topic=str(data["topic"]),
@@ -784,8 +792,8 @@ def _decode_event(data: Mapping[str, Any]) -> OutboxEvent:
             str(name): _decode_bytes(str(value))
             for name, value in dict(data["headers"]).items()
         },
-        created_at=_decode_datetime(data["created_at"]) or datetime.now(UTC),
-        expires_at=_decode_datetime(data["expires_at"]) or datetime.now(UTC),
+        created_at=created_at,
+        expires_at=expires_at,
         ordering_key=data["ordering_key"],
         ordering_sequence=data["ordering_sequence"],
         publishing_mode=PublishingMode(data["publishing_mode"]),
@@ -808,10 +816,11 @@ def _encode_publish_result(result: PublishResult | None) -> dict[str, Any] | Non
 def _decode_publish_result(data: Mapping[str, Any] | None) -> PublishResult | None:
     if data is None:
         return None
+    published_at = _require_datetime(data["published_at"], field_name="published_at")
     return PublishResult(
         partition=data["partition"],
         offset=data["offset"],
-        published_at=_decode_datetime(data["published_at"]) or datetime.now(UTC),
+        published_at=published_at,
         metadata={
             str(key): str(value) for key, value in dict(data["metadata"]).items()
         },
@@ -839,6 +848,13 @@ def _decode_datetime(value: Any) -> datetime | None:
     decoded = datetime.fromisoformat(str(value))
     if decoded.tzinfo is None:
         return decoded.replace(tzinfo=UTC)
+    return decoded
+
+
+def _require_datetime(value: Any, *, field_name: str) -> datetime:
+    decoded = _decode_datetime(value)
+    if decoded is None:
+        raise RetryableStoreError(f"blob record missing required {field_name}")
     return decoded
 
 

@@ -21,7 +21,13 @@ class AzureBlobClient:
         *,
         container_name: str,
     ) -> AzureBlobClient:
-        module: Any = import_module("azure.storage.blob.aio")
+        try:
+            module: Any = import_module("azure.storage.blob.aio")
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "Azure Blob support requires the azure extra: "
+                "install durable-outbox[azure]"
+            ) from exc
         container_client = module.ContainerClient.from_connection_string(
             connection_string,
             container_name=container_name,

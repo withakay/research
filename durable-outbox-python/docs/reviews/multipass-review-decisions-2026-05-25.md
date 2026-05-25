@@ -54,3 +54,37 @@ verification evidence.
   Kafka hardening, Blob decode integrity, and admin replay remain valid findings
   but are larger follow-up batches.
 
+## Batch 2: Blob Integrity, Optional Azure Diagnostics, And Audit Metrics
+
+### Findings Accepted
+
+- **Q-P0-1:** missing Azure SDK imports raised raw `ModuleNotFoundError` instead
+  of an install-actionable package error.
+- **S-P2-2 / S-NEW-P2-2:** Blob reads trusted decoded content without checking the
+  stored fingerprint metadata.
+- **Q-P2-1 / S-NEW-P3-1:** Blob event decoding substituted current time for
+  missing required timestamps, which could create misleading or long-lived
+  records from corrupted content.
+- **S-NEW-NIT-1:** admin action success metrics were incremented before audit
+  writes completed, so an audit failure could still look like a successful
+  operator action.
+
+### Fixes Implemented
+
+- Wrapped Azure Blob SDK import failures in a `RuntimeError` that tells callers
+  to install `durable-outbox[azure]`.
+- Verified `event_fingerprint` metadata against the decoded event on Blob load
+  and refresh; mismatches now raise `RetryableStoreError`.
+- Required `created_at`, `expires_at`, and publish-result `published_at` during
+  Blob decode instead of silently substituting `datetime.now(UTC)`.
+- Moved admin action success metrics after successful audit writes. Audit write
+  failures now increment `outbox_admin_actions_total{result="audit_failed"}` and
+  re-raise the audit error.
+
+### Verification
+
+- `uv run pytest` -> 101 passed, 2 skipped
+- `uv run ruff check .`
+- `uv run ruff format --check .`
+- `uv run ty check`
+- `uv build`

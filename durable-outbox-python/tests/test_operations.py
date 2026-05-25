@@ -38,6 +38,12 @@ class OperationsAdapter:
         return self.action_result
 
 
+class FailingAuditSink:
+    async def record(self, record: AuditRecord) -> None:
+        _ = record
+        raise RuntimeError("audit unavailable")
+
+
 class FixedClock:
     def __init__(self, now: datetime) -> None:
         self.now = now
@@ -218,4 +224,42 @@ def test_collecting_metrics_adapter_exports_prometheus_text() -> None:
         'result="success\\nnext"} 1\n'
         "# TYPE outbox_events_pending_total gauge\n"
         "outbox_events_pending_total 2\n"
+    )
+
+
+@pytest.mark.asyncio
+async def test_admin_service_records_success_metric_only_after_audit_success() -> None:
+    occurred_at = datetime(2026, 5, 21, tzinfo=UTC)
+    adapter = OperationsAdapter(
+        events=[make_metadata("event-1", OutboxStatus.FAILED)],
+        action_result=True,
+    )
+    metrics = CollectingMetricsAdapter()
+    service = AdminService(
+        status_reader=adapter,
+        admin_actions=adapter,
+        audit_sink=FailingAuditSink(),
+        metrics=metrics,
+        clock=FixedClock(occurred_at),
+    )
+
+    with pytest.raises(RuntimeError, match="audit unavailable"):
+        await service.repair_failed(
+            event_id="event-1",
+            operator="ops@example.test",
+            reason="route fixed",
+        )
+
+    assert (
+        MetricSample(
+            name="outbox_admin_actions_total",
+            kind="counter",
+            value=1.0,
+            labels=(("action", "repair_failed"), ("result", "audit_failed")),
+        )
+        in metrics.collect()
+    )
+    assert not any(
+        sample.labels == (("action", "repair_failed"), ("result", "success"))
+        for sample in metrics.collect()
     )

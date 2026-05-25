@@ -2,6 +2,7 @@ import base64
 import json
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
+from importlib import import_module
 from pathlib import Path
 from typing import Any
 
@@ -107,6 +108,27 @@ async def test_azure_blob_client_adapts_container_protocol() -> None:
     assert written.etag == '"1"'
     assert read == written
     assert listed == [written]
+
+
+def test_azure_blob_client_reports_missing_optional_dependency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_import_module = import_module
+
+    def fail_azure_import(name: str) -> Any:
+        if name == "azure.storage.blob.aio":
+            raise ModuleNotFoundError("No module named 'azure'")
+        return real_import_module(name)
+
+    monkeypatch.setattr(
+        "durable_outbox.stores.azure_blob.import_module", fail_azure_import
+    )
+
+    with pytest.raises(RuntimeError, match="durable-outbox\\[azure\\]"):
+        AzureBlobClient.from_connection_string(
+            "UseDevelopmentStorage=true",
+            container_name="outbox",
+        )
 
 
 @pytest.mark.asyncio
