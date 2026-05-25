@@ -1655,3 +1655,27 @@ verification evidence.
   `uv run ruff format --check .` -> 52 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 56: Cosmos Hash Bucket Verification
+
+### Findings Reviewed
+
+- **P-P3-2:** Cosmos unordered partition bucket selection should avoid parsing
+  a full SHA-256 hex string into an unbounded integer.
+
+### Decision
+
+- Accepted the finding, but no new implementation change was needed in the
+  current worktree. `durable_outbox.stores.cosmos._hash_bucket()` already uses
+  `sha256(value.encode("utf-8")).digest()[:8]` with
+  `int.from_bytes(..., "big")`, matching the recommended bounded conversion.
+- Existing regression coverage already locks the stable unordered bucket for
+  `event-1` in `test_cosmos_unordered_partition_key_uses_stable_bucket`.
+
+### Verification
+
+- Source inspection:
+  `_hash_bucket()` uses the first eight digest bytes and `int.from_bytes`.
+- Focused test:
+  `uv run pytest tests/test_adapters.py::test_cosmos_unordered_partition_key_uses_stable_bucket -q`
+  -> 1 passed.
