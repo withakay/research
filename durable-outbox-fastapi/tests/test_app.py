@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
@@ -81,6 +81,18 @@ class Store:
 
     async def resume_cleanup(self) -> None:
         return None
+
+    async def cleanup_sent(self, *, now: datetime, safety_margin: timedelta) -> int:
+        _ = now, safety_margin
+        return 0
+
+    async def repair_failed_to_pending(self, *, event_id: str) -> bool:
+        _ = event_id
+        return False
+
+    async def replay_event(self, *, event_id: str) -> bool:
+        _ = event_id
+        return False
 
 
 class Sink:

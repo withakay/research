@@ -74,7 +74,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     await blob_client.ensure_container()
     store = BlobOutboxStore(client=blob_client, environment="fastapi")
     sink = KafkaSink.from_config(
-        KafkaProducerConfig({"bootstrap.servers": settings.kafka_bootstrap_servers})
+        KafkaProducerConfig(
+            {"bootstrap.servers": settings.kafka_bootstrap_servers},
+            certified_mode=False,
+        )
     )
     app.state.publisher = PublisherService(
         store=store,

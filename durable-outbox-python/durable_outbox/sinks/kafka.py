@@ -19,6 +19,7 @@ type KafkaProducerFactory = Callable[[dict[str, object]], KafkaProducerLike]
 _DEFAULT_DELIVERY_TIMEOUT_SECONDS = 30.0
 _DEFAULT_POLL_INTERVAL_SECONDS = 0.05
 _DEFAULT_CLOSE_TIMEOUT_SECONDS = 10.0
+_CERTIFIED_SECURITY_PROTOCOLS = frozenset({"SSL", "SASL_SSL"})
 _NON_RETRYABLE_ERROR_NAMES = frozenset(
     {
         "TOPIC_AUTHORIZATION_FAILED",
@@ -60,6 +61,7 @@ class KafkaProducerConfig:
             "max.in.flight.requests.per.connection": 5,
             "compression.type": "zstd",
             "linger.ms": 5,
+            "security.protocol": "SASL_SSL",
             **dict(self.values),
         }
         if self.certified_mode:
@@ -68,6 +70,13 @@ class KafkaProducerConfig:
             if config.get("enable.idempotence") is not True:
                 raise ConfigurationError(
                     "certified Kafka sink requires enable.idempotence=true"
+                )
+            protocol = str(config.get("security.protocol", "")).upper()
+            if protocol not in _CERTIFIED_SECURITY_PROTOCOLS:
+                allowed = ", ".join(sorted(_CERTIFIED_SECURITY_PROTOCOLS))
+                raise ConfigurationError(
+                    "certified Kafka sink requires security.protocol in "
+                    f"{{{allowed}}}; got {protocol or 'unset'}"
                 )
         return config
 

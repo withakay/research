@@ -94,7 +94,10 @@ async def test_azurite_blob_store_dispatches_to_real_kafka() -> None:
     await client.ensure_container()
     store = BlobOutboxStore(client=client, environment="integration")
     sink = KafkaSink.from_config(
-        KafkaProducerConfig({"bootstrap.servers": bootstrap_servers}),
+        KafkaProducerConfig(
+            {"bootstrap.servers": bootstrap_servers},
+            certified_mode=False,
+        ),
         delivery_timeout_seconds=30,
     )
     event = _event("azurite-kafka-1")

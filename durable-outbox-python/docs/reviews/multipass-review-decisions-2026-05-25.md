@@ -322,3 +322,32 @@ verification evidence.
 - Focused green run:
   `uv run pytest tests/test_adapters.py::test_sql_and_cosmos_repair_retry_cas_conflict tests/test_adapters.py::test_sql_and_cosmos_mark_sent_retry_cas_conflict -q`
   -> 4 passed
+
+## Batch 11: Kafka Certified TLS And Header Filtering
+
+### Findings Accepted
+
+- **S-P1-1:** certified Kafka mode validated `acks=all` and idempotence but did
+  not reject plaintext transport.
+- **S-P1-2:** `OutboxEvent` headers were forwarded to Kafka without a
+  defence-in-depth block list for common secret-bearing headers.
+
+### Fixes Implemented
+
+- Added `security.protocol=SASL_SSL` to certified Kafka defaults and rejected
+  certified configs whose protocol is not `SSL` or `SASL_SSL`.
+- Left plaintext available only when callers explicitly construct
+  `KafkaProducerConfig(..., certified_mode=False)`.
+- Added a default blocked header prefix list for `authorization`, cookies,
+  proxy authorization, API keys, and `x-auth-*` headers at the `OutboxEvent`
+  validation boundary.
+- Marked local/Aspire Kafka usage in integration wiring as non-certified because
+  those test brokers are plaintext by design.
+
+### Verification
+
+- Focused red tests showed plaintext certified Kafka configs and
+  `Authorization` headers were accepted before implementation.
+- Focused green run:
+  `uv run pytest tests/test_kafka_operations.py::test_kafka_config_rejects_plaintext_in_certified_mode tests/test_kafka_operations.py::test_kafka_config_allows_plaintext_when_not_certified tests/test_kafka_operations.py::test_outbox_event_rejects_sensitive_headers tests/test_kafka_operations.py::test_kafka_sink_from_config_uses_real_producer_factory_hook tests/test_kafka_operations.py::test_kafka_sink_preserves_trace_headers_and_adds_event_identity -q`
+  -> 5 passed

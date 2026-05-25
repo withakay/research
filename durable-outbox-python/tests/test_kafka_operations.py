@@ -8,6 +8,7 @@ from durable_outbox.core import (
     ConfigurationError,
     NonRetryablePublishError,
     RetryablePublishError,
+    ValidationError,
 )
 from durable_outbox.core.model import OutboxEvent, OutboxStatus, PublishResult
 from durable_outbox.operations import (
@@ -167,6 +168,25 @@ def test_kafka_config_rejects_unsafe_certified_settings() -> None:
         KafkaProducerConfig({"acks": "1"}).validated()
 
 
+def test_kafka_config_rejects_plaintext_in_certified_mode() -> None:
+    with pytest.raises(ConfigurationError, match=r"security\.protocol"):
+        KafkaProducerConfig({"security.protocol": "PLAINTEXT"}).validated()
+
+
+def test_kafka_config_allows_plaintext_when_not_certified() -> None:
+    config = KafkaProducerConfig(
+        {"security.protocol": "PLAINTEXT"},
+        certified_mode=False,
+    ).validated()
+
+    assert config["security.protocol"] == "PLAINTEXT"
+
+
+def test_outbox_event_rejects_sensitive_headers() -> None:
+    with pytest.raises(ValidationError, match="blocked"):
+        make_event(headers={"Authorization": b"Bearer secret"})
+
+
 @pytest.mark.asyncio
 async def test_kafka_sink_returns_result_after_ack_and_adds_event_id_header() -> None:
     producer = Producer()
@@ -226,7 +246,12 @@ def test_kafka_sink_from_config_uses_real_producer_factory_hook() -> None:
         return Producer()
 
     sink = KafkaSink.from_config(
-        KafkaProducerConfig({"bootstrap.servers": "localhost:9092"}),
+        KafkaProducerConfig(
+            {
+                "bootstrap.servers": "localhost:9092",
+                "security.protocol": "SASL_SSL",
+            }
+        ),
         producer_factory=producer_factory,
     )
 
@@ -240,6 +265,7 @@ def test_kafka_sink_from_config_uses_real_producer_factory_hook() -> None:
             "compression.type": "zstd",
             "linger.ms": 5,
             "bootstrap.servers": "localhost:9092",
+            "security.protocol": "SASL_SSL",
         }
     ]
 

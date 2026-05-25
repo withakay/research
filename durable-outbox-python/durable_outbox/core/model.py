@@ -10,6 +10,14 @@ from durable_outbox.core.errors import ValidationError
 MAX_HEADER_COUNT = 64
 MAX_HEADER_VALUE_BYTES = 8192
 TOPIC_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,249}$")
+BLOCKED_HEADER_PREFIXES = (
+    "authorization",
+    "cookie",
+    "set-cookie",
+    "proxy-authorization",
+    "x-api-key",
+    "x-auth-",
+)
 
 
 class OutboxStatus(StrEnum):
@@ -72,6 +80,9 @@ def _freeze_headers(headers: Mapping[str, bytes]) -> Mapping[str, bytes]:
     for name, value in headers.items():
         if not name:
             raise ValidationError("header names cannot be empty")
+        lowered = name.lower()
+        if any(lowered.startswith(prefix) for prefix in BLOCKED_HEADER_PREFIXES):
+            raise ValidationError(f"header name {name!r} is blocked")
         if not isinstance(value, bytes):
             raise ValidationError("header values must be bytes")
         if len(value) > MAX_HEADER_VALUE_BYTES:
