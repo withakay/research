@@ -1,0 +1,5 @@
+{
+  "appHost": {
+    "path": "DurableOutbox.FastApi.Integration.AppHost/DurableOutbox.FastApi.Integration.AppHost.csproj"
+  }
+}
