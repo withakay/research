@@ -1296,3 +1296,36 @@ verification evidence.
   `uv run ruff format --check .` -> 51 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 46: Top-Level Public API Polish
+
+### Findings Accepted
+
+- **Q-P0-2:** the top-level `durable_outbox` package exported most obvious
+  primitives but still missed `MessageSink`, `RetryPolicy`, and package version
+  metadata, while the README quickstart taught imports from `durable_outbox.core`.
+
+### Fixes Implemented
+
+- Re-exported `MessageSink`, `RetryPolicy`, and `__version__` from
+  `durable_outbox`.
+- Kept `__version__` aligned with installed package metadata, with a source-tree
+  fallback matching the current project version.
+- Updated the README quickstart to import `OutboxDispatcher` and `OutboxEvent`
+  from the top-level package.
+- Added a packaging/docs regression test for the top-level public API surface.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_packaging_docs.py::test_top_level_package_exports_obvious_public_api -q`
+  -> failed because `MessageSink` was not in `durable_outbox.__all__`.
+- Focused green run:
+  `uv run pytest tests/test_packaging_docs.py::test_top_level_package_exports_obvious_public_api -q`
+  -> 1 passed
+- Full package gates:
+  `uv run pytest -q` -> 206 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 51 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.

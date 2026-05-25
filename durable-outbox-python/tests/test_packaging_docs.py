@@ -1,4 +1,5 @@
 import tomllib
+from importlib import import_module
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -67,6 +68,24 @@ def test_project_metadata_describes_package_surface() -> None:
     assert set(project["keywords"]) == EXPECTED_KEYWORDS
     assert EXPECTED_CLASSIFIERS <= set(project["classifiers"])
     assert (PROJECT_ROOT / "durable_outbox" / "py.typed").is_file()
+
+
+def test_top_level_package_exports_obvious_public_api() -> None:
+    pyproject = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
+    package = import_module("durable_outbox")
+    readme = (PROJECT_ROOT / "README.md").read_text()
+
+    for name in (
+        "MessageSink",
+        "OutboxDispatcher",
+        "OutboxEvent",
+        "RetryPolicy",
+        "__version__",
+    ):
+        assert name in package.__all__
+        assert hasattr(package, name)
+    assert package.__version__ == pyproject["project"]["version"]
+    assert "from durable_outbox import OutboxDispatcher, OutboxEvent" in readme
 
 
 def test_dependabot_tracks_uv_lockfiles_for_durable_outbox_packages() -> None:

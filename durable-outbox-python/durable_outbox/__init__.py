@@ -1,3 +1,5 @@
+from importlib.metadata import PackageNotFoundError, version
+
 from durable_outbox.core.admin import AdminActionStatus
 from durable_outbox.core.capabilities import OutboxCapabilities
 from durable_outbox.core.dispatcher import DispatchSummary, OutboxDispatcher
@@ -19,7 +21,14 @@ from durable_outbox.core.model import (
     PublishingMode,
     PublishResult,
 )
+from durable_outbox.core.retry import RetryPolicy
+from durable_outbox.core.sink import MessageSink
 from durable_outbox.core.store import DurableOutboxStore
+
+try:
+    __version__ = version("durable-outbox")
+except PackageNotFoundError:
+    __version__ = "0.1.0"
 
 __all__ = [
     "AcceptedReceipt",
@@ -31,6 +40,7 @@ __all__ = [
     "DuplicateEventConflictError",
     "DurableOutboxError",
     "DurableOutboxStore",
+    "MessageSink",
     "NonRetryablePublishError",
     "OutboxCapabilities",
     "OutboxDispatcher",
@@ -38,7 +48,9 @@ __all__ = [
     "OutboxStatus",
     "PublishResult",
     "PublishingMode",
+    "RetryPolicy",
     "RetryablePublishError",
     "RetryableStoreError",
     "ValidationError",
+    "__version__",
 ]

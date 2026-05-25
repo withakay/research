@@ -18,7 +18,7 @@ uv add "durable-outbox[sql]"
 ```python
 from datetime import UTC, datetime, timedelta
 
-from durable_outbox.core import OutboxDispatcher, OutboxEvent
+from durable_outbox import OutboxDispatcher, OutboxEvent
 from durable_outbox.testing import FakeOutboxStore, FakeSink
 
 now = datetime.now(UTC)
