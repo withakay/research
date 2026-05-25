@@ -551,9 +551,10 @@ class BlobOutboxStore:
         self._ensure_compatible_duplicate(record, event)
         if record.accepted:
             return
-        record.accepted = True
-        record.accepted_at = record.accepted_at or self.clock.utcnow()
-        await self._save_record(record)
+        accepted_record = _clone_record(record)
+        accepted_record.accepted = True
+        accepted_record.accepted_at = accepted_record.accepted_at or self.clock.utcnow()
+        await self._save_record(accepted_record)
 
     async def _load_record(self, event_id: str) -> StoredEvent | None:
         blob = await self.client.get_blob(event_blob_name(event_id))

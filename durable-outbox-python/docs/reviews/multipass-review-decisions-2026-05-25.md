@@ -1329,3 +1329,39 @@ verification evidence.
   `uv run ruff format --check .` -> 51 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 47: Dual-Write Failure Contract Coverage
+
+### Findings Accepted
+
+- **A-NEW-P2-3:** the RPO=0 dual-write contract needed stronger tests for
+  secondary-region failures during `put()`.
+
+### Fixes Implemented
+
+- Added a secondary-accept failure regression test that proves
+  `DualRegionBlobOutboxStore.put()` raises and does not return an RPO=0 receipt
+  when the secondary accept write fails.
+- Fixed `BlobOutboxStore._accept_prepared()` so it clones the cached prepared
+  record before mutation and installs the accepted state only after the
+  conditional blob write succeeds.
+- Preserved the backend prepared record when the secondary accept write fails,
+  leaving partial-write repair/retry paths with an accurate local and persisted
+  view.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_adapters.py::test_dual_region_blob_put_does_not_cache_secondary_accept_failure -q`
+  -> failed because the secondary in-memory cache showed `accepted=True` after
+  the accept write raised.
+- Focused green run:
+  `uv run pytest tests/test_adapters.py::test_dual_region_blob_put_does_not_cache_secondary_accept_failure tests/test_adapters.py::test_dual_region_blob_put_runs_prepare_and_accept_phases_concurrently tests/test_adapters.py::test_dual_region_blob_accepts_only_after_both_regions -q`
+  -> 3 passed
+- Adapter and package gates:
+  `uv run pytest tests/test_adapters.py -q` -> 102 passed;
+  `uv run pytest -q` -> 207 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 51 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.

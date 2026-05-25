@@ -149,6 +149,34 @@ class FailingPutBlobClient(InMemoryBlobClient):
         )
 
 
+class FailingNthEventPutBlobClient(InMemoryBlobClient):
+    def __init__(self, *, fail_on_event_put: int) -> None:
+        super().__init__()
+        self.fail_on_event_put = fail_on_event_put
+        self.event_put_count = 0
+
+    async def put_blob(
+        self,
+        name: str,
+        content: bytes,
+        metadata: Mapping[str, str],
+        *,
+        if_none_match: bool = False,
+        if_match: str | None = None,
+    ) -> Any:
+        if name.startswith("outbox/v1/events/"):
+            self.event_put_count += 1
+            if self.event_put_count == self.fail_on_event_put:
+                raise RuntimeError("secondary accept failed")
+        return await super().put_blob(
+            name,
+            content,
+            metadata,
+            if_none_match=if_none_match,
+            if_match=if_match,
+        )
+
+
 class CoordinatedDualRegionBlobOutboxStore(DualRegionBlobOutboxStore):
     def __init__(self) -> None:
         super().__init__(
@@ -471,6 +499,25 @@ async def test_dual_region_blob_put_runs_prepare_and_accept_phases_concurrently(
         if entry.startswith("accept-start:")
     ]
     assert max(prepare_finishes) < min(accept_starts)
+
+
+@pytest.mark.asyncio
+async def test_dual_region_blob_put_does_not_cache_secondary_accept_failure() -> None:
+    secondary_client = FailingNthEventPutBlobClient(fail_on_event_put=2)
+    store = DualRegionBlobOutboxStore(
+        primary_client=InMemoryBlobClient(),
+        secondary_client=secondary_client,
+    )
+    event = make_event("secondary-accept-failure")
+
+    with pytest.raises(RuntimeError, match="secondary accept failed"):
+        await store.put(event)
+
+    assert store.primary.records[event.event_id].accepted is True
+    assert store.secondary.records[event.event_id].accepted is False
+    secondary_blob = await secondary_client.get_blob(event_blob_name(event.event_id))
+    assert secondary_blob is not None
+    assert _decode_record(secondary_blob.content).accepted is False
 
 
 @pytest.mark.asyncio
