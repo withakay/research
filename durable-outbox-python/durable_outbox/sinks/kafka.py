@@ -195,20 +195,13 @@ def _classify_error(error: object) -> RetryablePublishError | NonRetryablePublis
 
 
 def _is_non_retryable_error(error: object, message: str) -> bool:
+    _ = message
     retriable = getattr(error, "retriable", None)
     if callable(retriable) and retriable():
         return False
 
     name_value = _error_name(error)
-    if name_value in _NON_RETRYABLE_ERROR_NAMES:
-        return True
-
-    normalized = message.lower()
-    return (
-        "authorization" in normalized
-        or "invalid config" in normalized
-        or "invalid topic" in normalized
-    )
+    return name_value in _NON_RETRYABLE_ERROR_NAMES
 
 
 def _error_name(error: object) -> str | None:

@@ -850,3 +850,35 @@ verification evidence.
   `uv run ruff format --check .` -> 51 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 32: Kafka Error Classification Hardening
+
+### Findings Accepted
+
+- **S-P3-2:** Kafka delivery errors were classified as non-retryable when an
+  otherwise unknown error message contained substrings such as
+  `authorization`, `invalid config`, or `invalid topic`. That can turn
+  transient infrastructure text into terminal outbox failures.
+
+### Fixes Implemented
+
+- Removed message-substring fallback classification.
+- Kept explicit `error.retriable()` handling and the known broker error-name
+  allowlist for terminal errors.
+- Added a regression test proving a known `TOPIC_AUTHORIZATION_FAILED` remains
+  non-retryable while unknown text mentioning authorization stays retryable.
+
+### Verification
+
+- Focused red run reproduced the substring-classification bug:
+  `uv run pytest tests/test_kafka_operations.py::test_kafka_sink_treats_unknown_message_text_as_retryable -q`
+  -> failed before implementation.
+- Focused green run:
+  `uv run pytest tests/test_kafka_operations.py::test_kafka_sink_classifies_authorization_errors_as_non_retryable tests/test_kafka_operations.py::test_kafka_sink_treats_unknown_message_text_as_retryable -q`
+  -> 2 passed
+- Full package gates:
+  `uv run pytest -q` -> 186 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 51 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.

@@ -316,6 +316,20 @@ async def test_kafka_sink_classifies_authorization_errors_as_non_retryable() -> 
 
 
 @pytest.mark.asyncio
+async def test_kafka_sink_treats_unknown_message_text_as_retryable() -> None:
+    producer = Producer(
+        delivery_error=KafkaError(
+            "authorization service temporarily unavailable",
+            name="UNKNOWN",
+        ),
+    )
+    sink = KafkaSink(producer=producer)
+
+    with pytest.raises(RetryablePublishError, match="authorization service"):
+        await sink.publish(make_event())
+
+
+@pytest.mark.asyncio
 async def test_kafka_sink_preserves_trace_headers_and_adds_event_identity() -> None:
     producer = Producer()
     sink = KafkaSink(producer=producer)
