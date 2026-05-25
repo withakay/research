@@ -330,6 +330,20 @@ async def test_dual_region_blob_accepts_only_after_both_regions() -> None:
 
 
 @pytest.mark.asyncio
+async def test_dual_region_records_view_is_read_only_snapshot() -> None:
+    store = DualRegionBlobOutboxStore.for_testing()
+    event = make_event("records-view")
+    await store.put(event)
+    records: Any = store.records
+
+    with pytest.raises(TypeError):
+        records[event.event_id] = records[event.event_id]
+    records[event.event_id].accepted = False
+
+    assert store.primary.records[event.event_id].accepted is True
+
+
+@pytest.mark.asyncio
 async def test_dual_region_blob_can_promote_secondary_for_dispatch() -> None:
     store = DualRegionBlobOutboxStore.for_testing()
     event = make_event("secondary-active")
@@ -452,7 +466,6 @@ async def test_dual_region_blob_prepared_records_are_hidden_from_claims() -> Non
     store = DualRegionBlobOutboxStore.for_testing()
     event = make_event()
     await store._prepare(store.primary, event)
-    store.records = store.primary.records
 
     assert await store.claim_batch(limit=10) == []
 

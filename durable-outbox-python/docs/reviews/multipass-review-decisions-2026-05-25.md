@@ -610,3 +610,25 @@ verification evidence.
 - Focused green run:
   `uv run pytest tests/test_security.py -q`
   -> 3 passed
+
+## Batch 23: Dual-Region Records Snapshot
+
+### Findings Accepted
+
+- **A-P2-1:** `DualRegionBlobOutboxStore.records` exposed a mutable alias to
+  the active region's internal record dictionary.
+
+### Fixes Implemented
+
+- Replaced the dual-region mutable records alias with a dynamic read-only
+  mapping snapshot.
+- Returned cloned `StoredEvent` values from the snapshot so callers cannot
+  mutate active-region records through inspection APIs.
+- Removed internal alias refresh assignments from region switching, writes, and
+  prepared repair.
+
+### Verification
+
+- Focused green run:
+  `uv run pytest tests/test_adapters.py::test_dual_region_records_view_is_read_only_snapshot tests/test_adapters.py::test_dual_region_blob_prepared_records_are_hidden_from_claims tests/test_adapters.py::test_dual_region_blob_can_promote_secondary_for_dispatch -q`
+  -> 3 passed

@@ -4,6 +4,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from types import MappingProxyType
 from typing import Any, Literal, Protocol
 from uuid import uuid4
 
@@ -682,7 +683,6 @@ class DualRegionBlobOutboxStore:
             clock=self.clock,
         )
         self.active_region: BlobRegionName = active_region
-        self.records = self._active.records
         self._pending_mirror_event_ids: set[str] = set()
         self.cleanup_frozen = False
         self.cleanup_freeze_reason: str | None = None
@@ -725,12 +725,20 @@ class DualRegionBlobOutboxStore:
     def _standby(self) -> BlobOutboxStore:
         return self.secondary if self.active_region == "primary" else self.primary
 
+    @property
+    def records(self) -> Mapping[str, StoredEvent]:
+        return MappingProxyType(
+            {
+                event_id: _clone_record(record)
+                for event_id, record in self._active.records.items()
+            }
+        )
+
     def use_region(self, region: BlobRegionName) -> None:
         if region not in ("primary", "secondary"):
             msg = "region must be 'primary' or 'secondary'"
             raise ValueError(msg)
         self.active_region = region
-        self.records = self._active.records
 
     def promote_secondary(self) -> None:
         self.use_region("secondary")
@@ -743,7 +751,6 @@ class DualRegionBlobOutboxStore:
         await self._prepare(self.secondary, event)
         await self._accept(self.primary, event)
         await self._accept(self.secondary, event)
-        self.records = self._active.records
         primary = self.primary.records[event.event_id]
         secondary = self.secondary.records[event.event_id]
         accepted_at_candidates = [
@@ -884,7 +891,6 @@ class DualRegionBlobOutboxStore:
         await self._prepare(self.secondary, source.event)
         await self._accept(self.primary, source.event)
         await self._accept(self.secondary, source.event)
-        self.records = self._active.records
 
     async def _prepare(self, region: BlobOutboxStore, event: OutboxEvent) -> None:
         await region._put_prepared(event)
