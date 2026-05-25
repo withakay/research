@@ -8,6 +8,7 @@ from typing import Any, Literal, Protocol
 from uuid import uuid4
 
 from durable_outbox.core.capabilities import OutboxCapabilities
+from durable_outbox.core.claim_token import claim_token_matches
 from durable_outbox.core.duplicates import raise_if_incompatible_duplicate
 from durable_outbox.core.errors import (
     ClaimConflictError,
@@ -173,7 +174,10 @@ class BlobOrderingLockBackend:
 
     async def release(self, lease: OrderingLockLease) -> None:
         current = await self.client.get_blob(lease.lock_name)
-        if current is None or current.metadata.get("owner_token") != lease.owner_token:
+        if current is None or not claim_token_matches(
+            current.metadata.get("owner_token"),
+            lease.owner_token,
+        ):
             return
         try:
             await self.client.delete_blob(lease.lock_name, if_match=current.etag)
@@ -559,7 +563,7 @@ class BlobOutboxStore:
             if loaded is None:
                 raise ClaimConflictError("claimed event no longer exists")
             record = loaded
-        if record.claim_token != claimed.claim_token:
+        if not claim_token_matches(record.claim_token, claimed.claim_token):
             raise ClaimConflictError("claim token does not match current owner")
         return record
 

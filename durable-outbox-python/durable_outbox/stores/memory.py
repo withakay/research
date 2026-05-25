@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from uuid import uuid4
 
 from durable_outbox.core.capabilities import OutboxCapabilities
+from durable_outbox.core.claim_token import claim_token_matches
 from durable_outbox.core.duplicates import raise_if_incompatible_duplicate
 from durable_outbox.core.errors import (
     ClaimConflictError,
@@ -262,7 +263,7 @@ class MemoryOutboxStore:
 
     def _claimed_record(self, claimed: ClaimedEvent) -> StoredEvent:
         record = self.records[claimed.event.event_id]
-        if record.claim_token != claimed.claim_token:
+        if not claim_token_matches(record.claim_token, claimed.claim_token):
             raise ClaimConflictError("claim token does not match current owner")
         return record
 

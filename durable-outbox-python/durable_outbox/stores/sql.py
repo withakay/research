@@ -5,6 +5,7 @@ from typing import Protocol
 from uuid import uuid4
 
 from durable_outbox.core.capabilities import OutboxCapabilities
+from durable_outbox.core.claim_token import claim_token_matches
 from durable_outbox.core.duplicates import raise_if_incompatible_duplicate
 from durable_outbox.core.errors import (
     ClaimConflictError,
@@ -409,7 +410,10 @@ class _SqlOutboxStoreBase:
 
     async def _claimed_record(self, claimed: ClaimedEvent) -> SqlStoredEvent:
         record = await self.client.get(claimed.event.event_id)
-        if record is None or record.claim_token != claimed.claim_token:
+        if record is None or not claim_token_matches(
+            record.claim_token,
+            claimed.claim_token,
+        ):
             raise ClaimConflictError("claim token does not match current owner")
         return record
 
@@ -535,7 +539,7 @@ def _replay_record(record: SqlStoredEvent) -> bool:
 
 
 def _require_claim(record: SqlStoredEvent, claimed: ClaimedEvent) -> None:
-    if record.claim_token != claimed.claim_token:
+    if not claim_token_matches(record.claim_token, claimed.claim_token):
         raise ClaimConflictError("claim token does not match current owner")
 
 

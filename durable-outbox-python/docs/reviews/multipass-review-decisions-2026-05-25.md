@@ -588,3 +588,25 @@ verification evidence.
 - Focused green run:
   `uv run pytest tests/test_adapters.py::test_blob_accept_prepared_preserves_existing_accepted_at tests/test_adapters.py::test_blob_put_rejects_incompatible_duplicate tests/test_adapters.py::test_provider_put_rejects_incompatible_duplicate tests/test_core.py::test_duplicate_put_rejects_incompatible_event_envelope -q`
   -> 6 passed
+
+## Batch 22: Claim Token Handling Hardening
+
+### Findings Accepted
+
+- **S-NEW-P1-3:** claim-token-shaped UUIDs could leak through stored dispatcher
+  error messages, and store ownership checks used normal string equality.
+
+### Fixes Implemented
+
+- Redacted UUID-shaped values from stored dispatcher error messages before
+  truncation and persistence.
+- Added a shared constant-time claim token comparison helper.
+- Applied constant-time token checks to memory, Blob, Cosmos, SQL, and Blob
+  ordering lock release ownership paths.
+
+### Verification
+
+- Focused red test showed stored error messages preserved UUID-shaped tokens.
+- Focused green run:
+  `uv run pytest tests/test_security.py -q`
+  -> 3 passed

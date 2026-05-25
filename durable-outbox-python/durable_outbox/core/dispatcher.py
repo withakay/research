@@ -1,4 +1,5 @@
 import asyncio
+import re
 from dataclasses import dataclass
 
 from durable_outbox.core.errors import NonRetryablePublishError
@@ -11,6 +12,7 @@ from durable_outbox.telemetry.metrics import MetricsAdapter, NoopMetrics
 
 MAX_STORED_ERROR_MESSAGE_BYTES = 512
 TRUNCATED_ERROR_SUFFIX = "...[truncated]"
+UUID_PATTERN = re.compile(r"\b[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\b")
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,7 +179,7 @@ class StoredErrorMessage:
 
 
 def _stored_error_message(exc: BaseException) -> StoredErrorMessage:
-    message = str(exc)
+    message = UUID_PATTERN.sub("<uuid>", str(exc))
     encoded = message.encode("utf-8", errors="replace")
     if len(encoded) <= MAX_STORED_ERROR_MESSAGE_BYTES:
         return StoredErrorMessage(message=message, truncated=False)
