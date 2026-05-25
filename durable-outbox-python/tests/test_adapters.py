@@ -1,4 +1,5 @@
 import json
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -93,6 +94,34 @@ class FailingDeleteBlobClient(InMemoryBlobClient):
         if self.fail_deletes and name.startswith("outbox/v1/events/"):
             raise RuntimeError("secondary cleanup failed")
         return await super().delete_blob(name, if_match=if_match)
+
+
+class FailingPutBlobClient(InMemoryBlobClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.remaining_event_put_failures = 0
+
+    async def put_blob(
+        self,
+        name: str,
+        content: bytes,
+        metadata: Mapping[str, str],
+        *,
+        if_none_match: bool = False,
+        if_match: str | None = None,
+    ) -> Any:
+        if self.remaining_event_put_failures > 0 and name.startswith(
+            "outbox/v1/events/"
+        ):
+            self.remaining_event_put_failures -= 1
+            raise RuntimeError("standby mirror update failed")
+        return await super().put_blob(
+            name,
+            content,
+            metadata,
+            if_none_match=if_none_match,
+            if_match=if_match,
+        )
 
 
 def test_store_package_exports_are_importable() -> None:
@@ -433,6 +462,56 @@ async def test_dual_region_cleanup_preserves_active_when_standby_delete_fails() 
 
     assert event.event_id in store.primary.records
     assert event.event_id in store.secondary.records
+
+
+@pytest.mark.asyncio
+async def test_dual_region_mirror_retries_transient_standby_update_failure() -> None:
+    secondary_client = FailingPutBlobClient()
+    store = DualRegionBlobOutboxStore(
+        primary_client=InMemoryBlobClient(),
+        secondary_client=secondary_client,
+    )
+    event = make_event("mirror-retry")
+    await store.put(event)
+    claimed = (await store.claim_batch(limit=1))[0]
+
+    secondary_client.remaining_event_put_failures = 1
+    await store.mark_sent(
+        claimed,
+        PublishResult(partition=1, offset=2, published_at=datetime.now(UTC)),
+    )
+
+    assert store.secondary.records[event.event_id].status is OutboxStatus.SENT
+    assert await store.pending_mirror_event_ids() == ()
+
+
+@pytest.mark.asyncio
+async def test_dual_region_mirror_queues_reconciliation_after_repeated_failure() -> (
+    None
+):
+    secondary_client = FailingPutBlobClient()
+    store = DualRegionBlobOutboxStore(
+        primary_client=InMemoryBlobClient(),
+        secondary_client=secondary_client,
+    )
+    event = make_event("mirror-queue")
+    await store.put(event)
+    claimed = (await store.claim_batch(limit=1))[0]
+
+    secondary_client.remaining_event_put_failures = 3
+    with pytest.raises(RetryableStoreError, match="mirror"):
+        await store.mark_sent(
+            claimed,
+            PublishResult(partition=1, offset=2, published_at=datetime.now(UTC)),
+        )
+
+    assert await store.pending_mirror_event_ids() == (event.event_id,)
+    secondary_client.remaining_event_put_failures = 0
+    repaired = await store.reconcile_mirror_updates()
+
+    assert repaired == 1
+    assert await store.pending_mirror_event_ids() == ()
+    assert store.secondary.records[event.event_id].status is OutboxStatus.SENT
 
 
 @pytest.mark.asyncio

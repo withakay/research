@@ -516,3 +516,26 @@ verification evidence.
 - Focused green run:
   `uv run pytest tests/test_failover_ordering_cleanup.py::test_failover_replay_warns_when_republishing_sent_event tests/test_consumer_dedupe.py -q`
   -> 3 passed
+
+## Batch 19: Dual-Region Mirror Update Repair
+
+### Findings Accepted
+
+- **A-P2-2 / effective P1 after role-swap:** standby mirror updates were a
+  single write after the active region was already updated, so transient standby
+  failures could leave the future active region stale.
+
+### Fixes Implemented
+
+- Added three-attempt retry around dual-region mirror updates.
+- Added a pending mirror repair set plus `pending_mirror_event_ids()` and
+  `reconcile_mirror_updates()` APIs.
+- Ran mirror reconciliation before failover replay candidate selection.
+
+### Verification
+
+- Focused red test showed a single transient standby write failure escaped
+  before implementation.
+- Focused green run:
+  `uv run pytest tests/test_adapters.py::test_dual_region_mirror_retries_transient_standby_update_failure tests/test_adapters.py::test_dual_region_mirror_queues_reconciliation_after_repeated_failure -q`
+  -> 2 passed

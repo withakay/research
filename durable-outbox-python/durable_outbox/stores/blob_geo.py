@@ -682,6 +682,7 @@ class DualRegionBlobOutboxStore:
         )
         self.active_region: BlobRegionName = active_region
         self.records = self._active.records
+        self._pending_mirror_event_ids: set[str] = set()
         self.cleanup_frozen = False
         self.cleanup_freeze_reason: str | None = None
         self.capabilities = OutboxCapabilities(
@@ -805,6 +806,7 @@ class DualRegionBlobOutboxStore:
         failover_started_at: datetime,
         limit: int,
     ) -> list[ClaimedEvent]:
+        await self.reconcile_mirror_updates()
         await self.reconcile_prepared()
         return await self._active.failover_replay_candidates(
             failover_started_at=failover_started_at,
@@ -861,6 +863,16 @@ class DualRegionBlobOutboxStore:
             await self.repair_prepared(event_id)
         return len(event_ids)
 
+    async def pending_mirror_event_ids(self) -> tuple[str, ...]:
+        return tuple(sorted(self._pending_mirror_event_ids))
+
+    async def reconcile_mirror_updates(self) -> int:
+        repaired = 0
+        for event_id in tuple(sorted(self._pending_mirror_event_ids)):
+            await self._mirror_active_update(event_id)
+            repaired += 1
+        return repaired
+
     async def repair_prepared(self, event_id: str) -> None:
         primary_record = await self.primary._load_record(event_id)
         secondary_record = await self.secondary._load_record(event_id)
@@ -880,6 +892,18 @@ class DualRegionBlobOutboxStore:
         await region._accept_prepared(event)
 
     async def _mirror_active_update(self, event_id: str) -> None:
+        last_error: Exception | None = None
+        for _ in range(3):
+            try:
+                await self._mirror_active_update_once(event_id)
+                self._pending_mirror_event_ids.discard(event_id)
+                return
+            except Exception as exc:
+                last_error = exc
+        self._pending_mirror_event_ids.add(event_id)
+        raise RetryableStoreError("standby mirror update failed") from last_error
+
+    async def _mirror_active_update_once(self, event_id: str) -> None:
         active_record = await self._active._load_record(event_id)
         if active_record is None:
             return
