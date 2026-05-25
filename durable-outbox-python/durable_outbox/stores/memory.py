@@ -84,6 +84,7 @@ class MemoryOutboxStore:
             accepted_at=record.accepted_at or now,
             rpo_zero=self.capabilities.rpo_zero_for_accepted_events,
             store=self.capabilities.store_name,
+            durability_witness=("memory:process",),
         )
 
     async def claim_batch(self, *, limit: int) -> list[ClaimedEvent]:

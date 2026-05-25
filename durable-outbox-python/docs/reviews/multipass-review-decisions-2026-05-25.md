@@ -471,3 +471,24 @@ verification evidence.
 - Focused green run:
   `uv run pytest tests/test_adapters.py::test_dual_region_cleanup_preserves_active_when_standby_delete_fails tests/test_adapters.py::test_provider_claim_retry_sent_failed_replay_and_cleanup_freeze -q`
   -> 4 passed
+
+## Batch 17: Per-Event Durability Witnesses
+
+### Findings Accepted
+
+- **A-NEW-P1-5:** `AcceptedReceipt.rpo_zero` was only a copy of static store
+  capabilities and did not provide auditable per-event durability evidence.
+
+### Fixes Implemented
+
+- Added additive `AcceptedReceipt.durability_witness: tuple[str, ...]`.
+- Populated witnesses for memory, Blob, dual-region Blob, Cosmos, Azure SQL
+  sync, and SQL Always On stores.
+- Documented that operators should prefer the witness over the compatibility
+  boolean for per-event audit evidence.
+
+### Verification
+
+- Focused green run:
+  `uv run pytest tests/test_adapters.py::test_accept_receipts_include_durability_witness -q`
+  -> 6 passed

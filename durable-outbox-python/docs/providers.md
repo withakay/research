@@ -30,6 +30,11 @@ store instance. A restarted Blob, SQL, or Cosmos store that reopens the same
 backend will continue skipping TTL cleanup until `resume_cleanup()` clears the
 freeze marker.
 
+Every `AcceptedReceipt` includes a `durability_witness` tuple naming the
+backend durability boundaries reached for that event. The legacy `rpo_zero`
+boolean remains for compatibility, but operators should prefer the witness for
+per-event audit evidence.
+
 ## Cosmos
 
 Cosmos RPO=0 requires strong consistency, more than one region, and single-write configuration. Multi-write and session-consistency modes can still be useful, but they must not declare `rpo_zero_for_accepted_events=True` in certified mode.

@@ -104,6 +104,7 @@ class AcceptedReceipt:
     accepted_at: datetime
     rpo_zero: bool
     store: str
+    durability_witness: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

@@ -211,6 +211,9 @@ class CosmosStrongOutboxStore:
             accepted_at=record.accepted_at or now,
             rpo_zero=self.capabilities.rpo_zero_for_accepted_events,
             store=self.capabilities.store_name,
+            durability_witness=tuple(
+                f"cosmos:{region}" for region in self.config.regions
+            ),
         )
 
     async def claim_batch(self, *, limit: int) -> list[ClaimedEvent]:

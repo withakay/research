@@ -137,6 +137,48 @@ def test_for_testing_adapters_use_non_production_store_names() -> None:
     assert all(store.capabilities.store_name.startswith("InMemory") for store in stores)
 
 
+@pytest.mark.parametrize(
+    ("store", "expected_witness"),
+    [
+        (FakeOutboxStore(), ("memory:process",)),
+        (BlobOutboxStore.for_testing(environment="unit"), ("blob:unit",)),
+        (
+            DualRegionBlobOutboxStore.for_testing(environment="unit"),
+            ("blob:unit-primary", "blob:unit-secondary"),
+        ),
+        (
+            CosmosStrongOutboxStore.for_testing(
+                CosmosConfiguration(consistency="Strong", regions=("westus", "eastus"))
+            ),
+            ("cosmos:westus", "cosmos:eastus"),
+        ),
+        (
+            AzureSqlSyncOutboxStore.for_testing(),
+            ("azure-sql:primary", "azure-sql:sync-secondary"),
+        ),
+        (
+            SqlAlwaysOnOutboxStore.for_testing(
+                required_synchronized_secondaries=2,
+                synchronized_secondaries=2,
+            ),
+            (
+                "sql-always-on:primary",
+                "sql-always-on:sync-secondary-1",
+                "sql-always-on:sync-secondary-2",
+            ),
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_accept_receipts_include_durability_witness(
+    store: Any,
+    expected_witness: tuple[str, ...],
+) -> None:
+    receipt = await store.put(make_event("receipt-witness"))
+
+    assert receipt.durability_witness == expected_witness
+
+
 def test_blob_names_are_deterministic_and_do_not_embed_raw_event_id() -> None:
     first = event_blob_name("event/with/slash")
     second = event_blob_name("event/with/slash")

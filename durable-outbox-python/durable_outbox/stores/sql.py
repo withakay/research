@@ -178,6 +178,7 @@ class InMemorySqlOutboxClient:
 
 class _SqlOutboxStoreBase:
     capabilities: OutboxCapabilities
+    _durability_witness: tuple[str, ...]
 
     def __init__(
         self,
@@ -214,6 +215,7 @@ class _SqlOutboxStoreBase:
             accepted_at=record.accepted_at or now,
             rpo_zero=self.capabilities.rpo_zero_for_accepted_events,
             store=self.capabilities.store_name,
+            durability_witness=self._durability_witness,
         )
 
     async def claim_batch(self, *, limit: int) -> list[ClaimedEvent]:
@@ -559,6 +561,7 @@ class AzureSqlSyncOutboxStore(_SqlOutboxStoreBase):
             supports_failover_replay=True,
             supports_ttl_freeze=True,
         )
+        self._durability_witness = ("azure-sql:primary", "azure-sql:sync-secondary")
 
     @classmethod
     def for_testing(
@@ -607,6 +610,13 @@ class SqlAlwaysOnOutboxStore(_SqlOutboxStoreBase):
             supports_ordering=True,
             supports_failover_replay=True,
             supports_ttl_freeze=True,
+        )
+        self._durability_witness = (
+            "sql-always-on:primary",
+            *(
+                f"sql-always-on:sync-secondary-{index}"
+                for index in range(1, required_synchronized_secondaries + 1)
+            ),
         )
 
     @classmethod

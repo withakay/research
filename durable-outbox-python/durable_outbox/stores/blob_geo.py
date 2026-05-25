@@ -267,6 +267,7 @@ class BlobOutboxStore:
             accepted_at=record.accepted_at or now,
             rpo_zero=self.capabilities.rpo_zero_for_accepted_events,
             store=self.capabilities.store_name,
+            durability_witness=(f"blob:{self.environment}",),
         )
 
     async def claim_batch(self, *, limit: int) -> list[ClaimedEvent]:
@@ -753,6 +754,10 @@ class DualRegionBlobOutboxStore:
             else self.clock.utcnow(),
             rpo_zero=True,
             store=self.capabilities.store_name,
+            durability_witness=(
+                f"blob:{self.primary.environment}",
+                f"blob:{self.secondary.environment}",
+            ),
         )
 
     async def claim_batch(self, *, limit: int) -> list[ClaimedEvent]:
