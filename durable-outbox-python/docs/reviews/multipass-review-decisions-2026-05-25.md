@@ -1398,3 +1398,38 @@ verification evidence.
   `uv run ruff format --check .` -> 51 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 49: Public Contract Docstrings
+
+### Findings Accepted
+
+- **Q-P1-2:** public protocols and dataclasses had signatures but lacked
+  docstrings that stated the durable outbox contract in code.
+
+### Fixes Implemented
+
+- Added class docstrings for the public event, receipt, claim, publish result,
+  capabilities, retry, dispatch summary, cleanup policy, and settings types.
+- Added method docstrings to `DurableOutboxStore` covering idempotent `put`,
+  bounded claiming, claim release on retryable failure, terminal failure,
+  failover replay candidates, cleanup freeze/resume, cleanup, repair, and
+  manual replay semantics.
+- Added a `MessageSink.publish()` contract docstring.
+- Added a packaging/docs regression test that asserts the public contracts keep
+  docstrings.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_packaging_docs.py::test_public_contracts_have_docstrings -q`
+  -> failed because `DurableOutboxStore.put` had no docstring.
+- Focused green run:
+  `uv run pytest tests/test_packaging_docs.py::test_public_contracts_have_docstrings -q`
+  -> 1 passed
+- Package/docs and full gates:
+  `uv run pytest tests/test_packaging_docs.py -q` -> 10 passed;
+  `uv run pytest -q` -> 210 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 51 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.

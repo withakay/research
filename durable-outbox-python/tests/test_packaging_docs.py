@@ -1,3 +1,4 @@
+import inspect
 import tomllib
 from importlib import import_module
 from pathlib import Path
@@ -86,6 +87,53 @@ def test_top_level_package_exports_obvious_public_api() -> None:
         assert hasattr(package, name)
     assert package.__version__ == pyproject["project"]["version"]
     assert "from durable_outbox import OutboxDispatcher, OutboxEvent" in readme
+
+
+def test_public_contracts_have_docstrings() -> None:
+    from durable_outbox.config.settings import OutboxSettings
+    from durable_outbox.core.capabilities import OutboxCapabilities
+    from durable_outbox.core.cleanup import CleanupPolicy
+    from durable_outbox.core.dispatcher import DispatchSummary
+    from durable_outbox.core.model import (
+        AcceptedReceipt,
+        ClaimedEvent,
+        OutboxEvent,
+        PublishResult,
+    )
+    from durable_outbox.core.retry import RetryPolicy
+    from durable_outbox.core.sink import MessageSink
+    from durable_outbox.core.store import DurableOutboxStore
+
+    for public_type in (
+        AcceptedReceipt,
+        ClaimedEvent,
+        CleanupPolicy,
+        DispatchSummary,
+        DurableOutboxStore,
+        MessageSink,
+        OutboxCapabilities,
+        OutboxEvent,
+        OutboxSettings,
+        PublishResult,
+        RetryPolicy,
+    ):
+        assert inspect.getdoc(public_type)
+
+    for method_name in (
+        "put",
+        "claim_batch",
+        "mark_sent",
+        "mark_pending_after_retryable_failure",
+        "mark_failed",
+        "failover_replay_candidates",
+        "freeze_cleanup",
+        "resume_cleanup",
+        "cleanup_sent",
+        "repair_failed_to_pending",
+        "replay_event",
+    ):
+        assert inspect.getdoc(getattr(DurableOutboxStore, method_name))
+    assert inspect.getdoc(MessageSink.publish)
 
 
 def test_dependabot_tracks_uv_lockfiles_for_durable_outbox_packages() -> None:

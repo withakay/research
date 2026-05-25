@@ -12,13 +12,21 @@ from durable_outbox.core.model import (
 
 
 class DurableOutboxStore(Protocol):
+    """Persistence contract for accepted, claimed, replayed, and cleaned events."""
+
     capabilities: OutboxCapabilities
 
-    async def put(self, event: OutboxEvent) -> AcceptedReceipt: ...
+    async def put(self, event: OutboxEvent) -> AcceptedReceipt:
+        """Persist `event` idempotently by `event_id` or reject incompatible duplicates."""
+        ...
 
-    async def claim_batch(self, *, limit: int) -> list[ClaimedEvent]: ...
+    async def claim_batch(self, *, limit: int) -> list[ClaimedEvent]:
+        """Claim at most `limit` eligible events and move them to `IN_FLIGHT`."""
+        ...
 
-    async def mark_sent(self, claimed: ClaimedEvent, result: PublishResult) -> None: ...
+    async def mark_sent(self, claimed: ClaimedEvent, result: PublishResult) -> None:
+        """Mark a currently claimed event as `SENT` after sink acknowledgement."""
+        ...
 
     async def mark_pending_after_retryable_failure(
         self,
@@ -27,7 +35,9 @@ class DurableOutboxStore(Protocol):
         error_type: str,
         error_message: str,
         next_attempt_at: datetime,
-    ) -> None: ...
+    ) -> None:
+        """Release a failed claim back to `PENDING` for a future retry attempt."""
+        ...
 
     async def mark_failed(
         self,
@@ -35,21 +45,35 @@ class DurableOutboxStore(Protocol):
         *,
         error_type: str,
         error_message: str,
-    ) -> None: ...
+    ) -> None:
+        """Move a claimed event to terminal `FAILED` after deterministic sink failure."""
+        ...
 
     async def failover_replay_candidates(
         self,
         *,
         failover_started_at: datetime,
         limit: int,
-    ) -> list[ClaimedEvent]: ...
+    ) -> list[ClaimedEvent]:
+        """Claim accepted replay candidates that remain TTL-valid for failover."""
+        ...
 
-    async def freeze_cleanup(self, *, reason: str) -> None: ...
+    async def freeze_cleanup(self, *, reason: str) -> None:
+        """Prevent sent-event cleanup while failover or operator review is active."""
+        ...
 
-    async def resume_cleanup(self) -> None: ...
+    async def resume_cleanup(self) -> None:
+        """Resume normal cleanup after a previous `freeze_cleanup` call."""
+        ...
 
-    async def cleanup_sent(self, *, now: datetime, safety_margin: timedelta) -> int: ...
+    async def cleanup_sent(self, *, now: datetime, safety_margin: timedelta) -> int:
+        """Delete expired `SENT` events older than `safety_margin` and return the count."""
+        ...
 
-    async def repair_failed_to_pending(self, *, event_id: str) -> AdminActionStatus: ...
+    async def repair_failed_to_pending(self, *, event_id: str) -> AdminActionStatus:
+        """Reset an existing `FAILED` event to `PENDING` for operator-driven repair."""
+        ...
 
-    async def replay_event(self, *, event_id: str) -> AdminActionStatus: ...
+    async def replay_event(self, *, event_id: str) -> AdminActionStatus:
+        """Reset an existing event to `PENDING` for explicit manual replay."""
+        ...

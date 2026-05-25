@@ -5,6 +5,8 @@ from random import Random, random
 
 @dataclass(frozen=True, slots=True)
 class RetryPolicy:
+    """Exponential retry schedule used after retryable publish failures."""
+
     initial_delay: timedelta = timedelta(seconds=1)
     max_delay: timedelta = timedelta(minutes=5)
     multiplier: float = 2.0

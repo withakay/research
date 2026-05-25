@@ -4,6 +4,8 @@ from datetime import timedelta
 
 @dataclass(frozen=True, slots=True)
 class OutboxSettings:
+    """Host-level defaults for dispatcher and cleanup wiring."""
+
     environment: str = "local"
     dispatcher_limit: int = 100
     claim_timeout: timedelta = timedelta(minutes=5)

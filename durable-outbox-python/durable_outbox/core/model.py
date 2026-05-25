@@ -37,6 +37,8 @@ class PublishingMode(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class OutboxEvent:
+    """Immutable envelope persisted by stores and delivered by sinks."""
+
     event_id: str
     topic: str
     payload: bytes
@@ -120,6 +122,8 @@ def _require_aware_datetime(value: datetime, *, field_name: str) -> None:
 
 @dataclass(frozen=True, slots=True)
 class AcceptedReceipt:
+    """Acknowledgement that a store accepted an event at its durability boundary."""
+
     event_id: str
     accepted_at: datetime
     rpo_zero: bool
@@ -129,6 +133,8 @@ class AcceptedReceipt:
 
 @dataclass(frozen=True, slots=True)
 class ClaimedEvent:
+    """Event plus ownership token returned by store claim operations."""
+
     event: OutboxEvent
     claim_token: str
     attempt_count: int = 1
@@ -137,6 +143,8 @@ class ClaimedEvent:
 
 @dataclass(frozen=True, slots=True)
 class PublishResult:
+    """Sink acknowledgement details recorded when an event is marked sent."""
+
     partition: int | None
     offset: int | None
     published_at: datetime

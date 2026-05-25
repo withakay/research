@@ -3,6 +3,8 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class OutboxCapabilities:
+    """Static capabilities and limits advertised by a store adapter."""
+
     store_name: str
     rpo_zero_for_accepted_events: bool
     supports_ordering: bool

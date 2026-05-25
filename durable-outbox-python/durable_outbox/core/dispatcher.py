@@ -17,6 +17,8 @@ UUID_PATTERN = re.compile(r"\b[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{1
 
 @dataclass(frozen=True, slots=True)
 class DispatchSummary:
+    """Counts of event outcomes from a single dispatcher pass."""
+
     claimed: int = 0
     sent: int = 0
     retried: int = 0

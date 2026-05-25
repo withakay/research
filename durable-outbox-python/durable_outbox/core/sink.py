@@ -4,4 +4,8 @@ from durable_outbox.core.model import OutboxEvent, PublishResult
 
 
 class MessageSink(Protocol):
-    async def publish(self, event: OutboxEvent) -> PublishResult: ...
+    """Delivery contract for publishing one outbox event to an external sink."""
+
+    async def publish(self, event: OutboxEvent) -> PublishResult:
+        """Publish `event` once and return broker acknowledgement metadata."""
+        ...
