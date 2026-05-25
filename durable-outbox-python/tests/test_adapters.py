@@ -84,6 +84,17 @@ class ConflictOnceSqlClient(InMemorySqlOutboxClient):
         return await super().replace(record, expected_version=expected_version)
 
 
+class FailingDeleteBlobClient(InMemoryBlobClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.fail_deletes = False
+
+    async def delete_blob(self, name: str, *, if_match: str | None = None) -> bool:
+        if self.fail_deletes and name.startswith("outbox/v1/events/"):
+            raise RuntimeError("secondary cleanup failed")
+        return await super().delete_blob(name, if_match=if_match)
+
+
 def test_store_package_exports_are_importable() -> None:
     from durable_outbox import stores
 
@@ -353,6 +364,33 @@ async def test_dual_region_blob_prepared_records_are_hidden_from_claims() -> Non
     store.records = store.primary.records
 
     assert await store.claim_batch(limit=10) == []
+
+
+@pytest.mark.asyncio
+async def test_dual_region_cleanup_preserves_active_when_standby_delete_fails() -> None:
+    primary_client = InMemoryBlobClient()
+    secondary_client = FailingDeleteBlobClient()
+    store = DualRegionBlobOutboxStore(
+        primary_client=primary_client,
+        secondary_client=secondary_client,
+    )
+    event = make_event("cleanup-secondary-failure")
+    await store.put(event)
+    claimed = (await store.claim_batch(limit=1))[0]
+    await store.mark_sent(
+        claimed,
+        PublishResult(partition=1, offset=2, published_at=datetime.now(UTC)),
+    )
+
+    secondary_client.fail_deletes = True
+    with pytest.raises(RuntimeError, match="secondary cleanup failed"):
+        await store.cleanup_sent(
+            now=datetime.now(UTC) + timedelta(hours=1),
+            safety_margin=timedelta(seconds=0),
+        )
+
+    assert event.event_id in store.primary.records
+    assert event.event_id in store.secondary.records
 
 
 @pytest.mark.asyncio

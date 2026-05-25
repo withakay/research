@@ -448,3 +448,26 @@ verification evidence.
 - Focused green run:
   `uv run pytest tests/test_adapters.py::test_cleanup_freeze_survives_backend_reopen tests/test_adapters.py::test_memory_cleanup_freeze_can_use_shared_state -q`
   -> 4 passed
+
+## Batch 16: Dual-Region Cleanup Delete Ordering
+
+### Findings Accepted
+
+- **A-NEW-P1-3:** dual-region cleanup deleted the active region before the
+  standby region, so a standby delete failure could leave the active copy
+  already removed and make failover recovery weaker.
+
+### Fixes Implemented
+
+- Changed dual-region cleanup to delete expired sent records from the standby
+  region first, then the active region.
+- Added a regression test that injects a standby delete failure and verifies the
+  active copy remains available.
+
+### Verification
+
+- Focused red test showed active records were deleted before a standby cleanup
+  failure surfaced.
+- Focused green run:
+  `uv run pytest tests/test_adapters.py::test_dual_region_cleanup_preserves_active_when_standby_delete_fails tests/test_adapters.py::test_provider_claim_retry_sent_failed_replay_and_cleanup_freeze -q`
+  -> 4 passed

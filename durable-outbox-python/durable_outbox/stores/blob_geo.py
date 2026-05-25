@@ -819,8 +819,8 @@ class DualRegionBlobOutboxStore:
     async def cleanup_sent(self, *, now: datetime, safety_margin: timedelta) -> int:
         if self.cleanup_frozen:
             return 0
-        deleted = await self._active.cleanup_sent(now=now, safety_margin=safety_margin)
         await self._standby.cleanup_sent(now=now, safety_margin=safety_margin)
+        deleted = await self._active.cleanup_sent(now=now, safety_margin=safety_margin)
         return deleted
 
     async def repair_failed_to_pending(self, *, event_id: str) -> bool:
