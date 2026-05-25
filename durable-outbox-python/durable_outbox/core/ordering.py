@@ -71,11 +71,18 @@ def validate_ordered_event(event: OutboxEvent) -> None:
         raise ValidationError("ordered events require ordering_key")
 
 
+def ordering_scope(event: OutboxEvent) -> str | None:
+    key = event.effective_ordering_key
+    if key is None:
+        return None
+    return f"v1\0{event.topic}\0{key}"
+
+
 def one_per_ordering_key(claims: Iterable[ClaimedEvent]) -> list[ClaimedEvent]:
     selected: list[ClaimedEvent] = []
     seen: set[str] = set()
     for claim in claims:
-        key = claim.event.effective_ordering_key
+        key = ordering_scope(claim.event)
         if key is None:
             selected.append(claim)
             continue

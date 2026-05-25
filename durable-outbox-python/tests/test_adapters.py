@@ -6,7 +6,7 @@ import pytest
 
 from durable_outbox.core import ConfigurationError, ValidationError
 from durable_outbox.core.errors import DuplicateEventConflictError, RetryableStoreError
-from durable_outbox.core.model import PublishResult
+from durable_outbox.core.model import OutboxStatus, PublishResult
 from durable_outbox.stores.blob_geo import (
     BlobOutboxStore,
     DualRegionBlobOutboxStore,
@@ -17,6 +17,7 @@ from durable_outbox.stores.blob_geo import (
 )
 from durable_outbox.stores.cosmos import (
     CosmosConfiguration,
+    CosmosStoredEvent,
     CosmosStrongOutboxStore,
     InMemoryCosmosOutboxClient,
 )
@@ -29,6 +30,7 @@ from durable_outbox.stores.sql import (
     AzureSqlSyncOutboxStore,
     InMemorySqlOutboxClient,
     SqlAlwaysOnOutboxStore,
+    SqlStoredEvent,
 )
 from durable_outbox.testing import FakeOutboxStore
 from durable_outbox.testing.provider_contract import make_event
@@ -392,6 +394,74 @@ async def test_provider_claim_retry_sent_failed_replay_and_cleanup_freeze(
 
     assert deleted == 0
     assert store.cleanup_frozen is True
+
+
+@pytest.mark.parametrize(
+    ("store", "record_getter"),
+    [
+        (
+            CosmosStrongOutboxStore(
+                CosmosConfiguration(consistency="Strong", regions=("westus", "eastus"))
+            ),
+            lambda store, event_id: store.client.get(event_id),
+        ),
+        (
+            AzureSqlSyncOutboxStore(),
+            lambda store, event_id: store.client.get(event_id),
+        ),
+        (
+            SqlAlwaysOnOutboxStore(),
+            lambda store, event_id: store.client.get(event_id),
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_provider_repair_failed_to_pending_clears_retry_state(
+    store: Any,
+    record_getter: Any,
+) -> None:
+    event = make_event("repair-reset")
+    await store.put(event)
+    claimed = (await store.claim_batch(limit=1))[0]
+    await store.mark_pending_after_retryable_failure(
+        claimed,
+        error_type="Retryable",
+        error_message="try again",
+        next_attempt_at=datetime.now(UTC) + timedelta(minutes=5),
+    )
+    retry_claim = (
+        await store.failover_replay_candidates(
+            failover_started_at=datetime.now(UTC),
+            limit=1,
+        )
+    )[0]
+    await store.mark_failed(
+        retry_claim,
+        error_type="Fatal",
+        error_message="stop",
+    )
+
+    await store.repair_failed_to_pending(event_id=event.event_id)
+
+    record: CosmosStoredEvent | SqlStoredEvent | None = await record_getter(
+        store, event.event_id
+    )
+    assert record is not None
+    assert record.status is OutboxStatus.PENDING
+    assert record.failed_at is None
+    assert record.attempt_count == 0
+    assert record.last_error_type is None
+    assert record.last_error is None
+    assert record.next_attempt_at is None
+    assert record.claim_token is None
+    assert record.claimed_at is None
+
+
+@pytest.mark.asyncio
+async def test_memory_repair_unknown_event_is_noop() -> None:
+    store = FakeOutboxStore()
+
+    await store.repair_failed_to_pending(event_id="missing")
 
 
 def test_sql_schema_contains_required_indexes() -> None:

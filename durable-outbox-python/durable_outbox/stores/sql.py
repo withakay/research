@@ -17,6 +17,7 @@ from durable_outbox.core.model import (
     OutboxStatus,
     PublishResult,
 )
+from durable_outbox.core.ordering import ordering_scope
 from durable_outbox.core.time import Clock, SystemClock
 from durable_outbox.core.validation import enforce_payload_size, require_positive_limit
 
@@ -225,8 +226,8 @@ class _SqlOutboxStoreBase:
                 break
             if not self._eligible_for_claim(record, now):
                 continue
-            ordering_key = record.event.effective_ordering_key
-            if ordering_key is not None and ordering_key in locked_keys:
+            scoped_key = ordering_scope(record.event)
+            if scoped_key is not None and scoped_key in locked_keys:
                 continue
             token = str(uuid4())
             record.status = OutboxStatus.IN_FLIGHT
@@ -240,8 +241,8 @@ class _SqlOutboxStoreBase:
                 )
             except ClaimConflictError:
                 continue
-            if ordering_key is not None:
-                locked_keys.add(ordering_key)
+            if scoped_key is not None:
+                locked_keys.add(scoped_key)
             claimed.append(
                 ClaimedEvent(
                     event=record.event,
@@ -363,6 +364,12 @@ class _SqlOutboxStoreBase:
             return
         record.status = OutboxStatus.PENDING
         record.failed_at = None
+        record.attempt_count = 0
+        record.last_error_type = None
+        record.last_error = None
+        record.next_attempt_at = None
+        record.claim_token = None
+        record.claimed_at = None
         await self.client.replace(record, expected_version=record.version)
 
     async def _after_put_acceptance_boundary(self) -> None:
@@ -384,7 +391,7 @@ class _SqlOutboxStoreBase:
     async def _in_flight_ordering_keys(self, now: datetime) -> set[str]:
         locked: set[str] = set()
         for record in await self.client.list_records():
-            key = record.event.effective_ordering_key
+            key = ordering_scope(record.event)
             if key is None:
                 continue
             if record.status is not OutboxStatus.IN_FLIGHT:

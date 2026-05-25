@@ -1,5 +1,6 @@
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 
@@ -15,6 +16,8 @@ from durable_outbox.stores.blob_geo import (
     BlobOutboxStore,
     ordering_lock_blob_name,
 )
+from durable_outbox.stores.cosmos import CosmosConfiguration, CosmosStrongOutboxStore
+from durable_outbox.stores.sql import AzureSqlSyncOutboxStore, SqlAlwaysOnOutboxStore
 from durable_outbox.testing import FakeOutboxStore, FakeSink
 from durable_outbox.testing.provider_contract import make_event
 
@@ -240,6 +243,37 @@ async def test_blob_ordering_lock_scope_includes_topic() -> None:
     assert ordering_lock_blob_name("prod", "topic-a", "shared") != (
         ordering_lock_blob_name("prod", "topic-b", "shared")
     )
+
+
+@pytest.mark.parametrize(
+    "store",
+    [
+        FakeOutboxStore(),
+        CosmosStrongOutboxStore(
+            CosmosConfiguration(consistency="Strong", regions=("westus", "eastus"))
+        ),
+        AzureSqlSyncOutboxStore(),
+        SqlAlwaysOnOutboxStore(),
+    ],
+)
+@pytest.mark.asyncio
+async def test_ordering_scope_includes_topic_for_all_ordered_stores(store: Any) -> None:
+    first = replace(
+        make_event("first", ordering_key="shared"),
+        publishing_mode=PublishingMode.ORDERED,
+        topic="topic-a",
+    )
+    second = replace(
+        make_event("second", ordering_key="shared"),
+        publishing_mode=PublishingMode.ORDERED,
+        topic="topic-b",
+    )
+    await store.put(first)
+    await store.put(second)
+
+    claimed = await store.claim_batch(limit=10)
+
+    assert {claim.event.event_id for claim in claimed} == {"first", "second"}
 
 
 @pytest.mark.asyncio

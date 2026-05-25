@@ -6,6 +6,9 @@ from types import MappingProxyType
 
 from durable_outbox.core.errors import ValidationError
 
+MAX_HEADER_COUNT = 64
+MAX_HEADER_VALUE_BYTES = 8192
+
 
 class OutboxStatus(StrEnum):
     PENDING = "PENDING"
@@ -59,12 +62,20 @@ class OutboxEvent:
 
 
 def _freeze_headers(headers: Mapping[str, bytes]) -> Mapping[str, bytes]:
+    if len(headers) > MAX_HEADER_COUNT:
+        raise ValidationError(
+            f"headers cannot contain more than {MAX_HEADER_COUNT} entries"
+        )
     frozen: dict[str, bytes] = {}
     for name, value in headers.items():
         if not name:
             raise ValidationError("header names cannot be empty")
         if not isinstance(value, bytes):
             raise ValidationError("header values must be bytes")
+        if len(value) > MAX_HEADER_VALUE_BYTES:
+            raise ValidationError(
+                f"header {name!r} exceeds {MAX_HEADER_VALUE_BYTES} bytes"
+            )
         frozen[name] = value
     return MappingProxyType(frozen)
 

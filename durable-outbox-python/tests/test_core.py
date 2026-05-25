@@ -5,11 +5,13 @@ from typing import cast
 import pytest
 
 from durable_outbox.core import (
+    ClaimConflictError,
     NonRetryablePublishError,
     OutboxDispatcher,
     OutboxEvent,
     OutboxStatus,
     PublishingMode,
+    RetryableStoreError,
     RetryPolicy,
     ValidationError,
 )
@@ -81,6 +83,41 @@ def test_event_rejects_naive_datetimes() -> None:
         )
 
 
+def test_event_rejects_too_many_headers() -> None:
+    now = datetime.now(UTC)
+
+    with pytest.raises(ValidationError, match="headers"):
+        OutboxEvent(
+            event_id="event-1",
+            topic="topic",
+            payload=b"{}",
+            key=None,
+            headers={f"x-{index}": b"value" for index in range(65)},
+            created_at=now,
+            expires_at=now + timedelta(minutes=1),
+        )
+
+
+def test_event_rejects_oversized_header_value() -> None:
+    now = datetime.now(UTC)
+
+    with pytest.raises(ValidationError, match="header"):
+        OutboxEvent(
+            event_id="event-1",
+            topic="topic",
+            payload=b"{}",
+            key=None,
+            headers={"x-large": b"x" * 8193},
+            created_at=now,
+            expires_at=now + timedelta(minutes=1),
+        )
+
+
+def test_public_error_exports_are_available_from_core_package() -> None:
+    assert ClaimConflictError.__name__ == "ClaimConflictError"
+    assert RetryableStoreError.__name__ == "RetryableStoreError"
+
+
 @pytest.mark.asyncio
 async def test_basic_provider_contract_passes_for_fake_store() -> None:
     await run_basic_provider_contract(FakeOutboxStore)
@@ -117,6 +154,14 @@ async def test_claim_batch_rejects_non_positive_limit() -> None:
 
     with pytest.raises(ValidationError, match="limit"):
         await store.claim_batch(limit=0)
+
+
+@pytest.mark.asyncio
+async def test_claim_batch_rejects_excessive_limit() -> None:
+    store = FakeOutboxStore()
+
+    with pytest.raises(ValidationError, match="limit"):
+        await store.claim_batch(limit=1001)
 
 
 @pytest.mark.asyncio

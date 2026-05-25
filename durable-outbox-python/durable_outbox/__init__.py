@@ -1,5 +1,15 @@
 from durable_outbox.core.capabilities import OutboxCapabilities
-from durable_outbox.core.dispatcher import OutboxDispatcher
+from durable_outbox.core.dispatcher import DispatchSummary, OutboxDispatcher
+from durable_outbox.core.errors import (
+    ClaimConflictError,
+    ConfigurationError,
+    DuplicateEventConflictError,
+    DurableOutboxError,
+    NonRetryablePublishError,
+    RetryablePublishError,
+    RetryableStoreError,
+    ValidationError,
+)
 from durable_outbox.core.model import (
     AcceptedReceipt,
     ClaimedEvent,
@@ -12,12 +22,21 @@ from durable_outbox.core.store import DurableOutboxStore
 
 __all__ = [
     "AcceptedReceipt",
+    "ClaimConflictError",
     "ClaimedEvent",
+    "ConfigurationError",
+    "DispatchSummary",
+    "DuplicateEventConflictError",
+    "DurableOutboxError",
     "DurableOutboxStore",
+    "NonRetryablePublishError",
     "OutboxCapabilities",
     "OutboxDispatcher",
     "OutboxEvent",
     "OutboxStatus",
     "PublishResult",
     "PublishingMode",
+    "RetryablePublishError",
+    "RetryableStoreError",
+    "ValidationError",
 ]

@@ -34,7 +34,7 @@ dev = [
     "ty>=0.0.25",
 ]
 
-[tool.pytest]
+[tool.pytest.ini_options]
 minversion = "9.0"
 addopts = [
     "--strict-config",

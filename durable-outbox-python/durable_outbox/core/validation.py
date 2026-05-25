@@ -4,6 +4,8 @@ from durable_outbox.core.capabilities import OutboxCapabilities
 from durable_outbox.core.errors import ValidationError
 from durable_outbox.core.model import OutboxEvent
 
+MAX_CLAIM_BATCH_LIMIT = 1000
+
 
 def require_aware_datetime(value: datetime, *, field_name: str) -> None:
     if value.tzinfo is None or value.utcoffset() is None:
@@ -13,6 +15,10 @@ def require_aware_datetime(value: datetime, *, field_name: str) -> None:
 def require_positive_limit(limit: int, *, field_name: str = "limit") -> None:
     if limit < 1:
         raise ValidationError(f"{field_name} must be positive")
+    if limit > MAX_CLAIM_BATCH_LIMIT:
+        raise ValidationError(
+            f"{field_name} must be less than or equal to {MAX_CLAIM_BATCH_LIMIT}"
+        )
 
 
 def enforce_payload_size(

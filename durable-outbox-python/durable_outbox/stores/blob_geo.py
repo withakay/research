@@ -25,6 +25,7 @@ from durable_outbox.core.ordering import (
     InMemoryOrderingLockBackend,
     OrderingLockBackend,
     OrderingLockLease,
+    ordering_scope,
 )
 from durable_outbox.core.time import Clock, SystemClock
 from durable_outbox.core.validation import enforce_payload_size, require_positive_limit
@@ -343,6 +344,12 @@ class BlobOutboxStore:
             return
         record.status = OutboxStatus.PENDING
         record.failed_at = None
+        record.attempt_count = 0
+        record.last_error_type = None
+        record.last_error = None
+        record.next_attempt_at = None
+        record.claim_token = None
+        record.claimed_at = None
         await self._save_record(record)
 
     async def _put_prepared(self, event: OutboxEvent) -> None:
@@ -675,10 +682,7 @@ def _record_metadata(record: StoredEvent, *, environment: str) -> Mapping[str, s
 
 
 def _ordering_scope(event: OutboxEvent) -> str | None:
-    ordering_key = event.effective_ordering_key
-    if ordering_key is None:
-        return None
-    return f"{event.topic}\0{ordering_key}"
+    return ordering_scope(event)
 
 
 def _copy_blob(blob: BlobObject) -> BlobObject:
