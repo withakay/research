@@ -1411,7 +1411,452 @@ Each row below maps a finding cluster to a self-contained work packet sized for 
 
 ---
 
-## 9. What was NOT reviewed
+## 9. Addendum — Architecture & Security retry passes (2026-05-25)
+
+The Architecture and Security subagents stalled on first attempt; their reports above were written inline by the orchestrator. They were re-dispatched with a tighter scope ("find what was missed") and both completed. The new findings below are **additive** — they do not overlap with sections 3 (architecture) or 4 (security) above.
+
+**Retry verdict (both agents)**: The original §3 and §4 P0s were independently confirmed. The Security retry would upgrade S-P1-2 (unfiltered Kafka headers) to P0 on the grounds that header passthrough is the most realistic credential-leak path. Otherwise, all existing findings stand.
+
+### 9.1 New architecture findings
+
+#### [A-NEW-P0-1] Dual-region failover replay is blind to PREPARED-only events; the secondary's accepted copy is silently lost on disaster
+
+**Where**: `stores/blob_geo.py:528-540` (`put` ordering), `:579-588` (`failover_replay_candidates` reads only `self.primary`), `:283-284` (PREPARED-only records filtered in `BlobOutboxStore.failover_replay_candidates`), `:613-623` (`repair_prepared` — only callable per event_id).
+
+**Problem**: `put()` performs `prepare(primary) → prepare(secondary) → accept(primary) → accept(secondary)`. If the process or primary region fails between steps 2 and 3, both regions hold a PREPARED-only record (`accepted=False`). The caller has already received an error and may have moved on; the event is in storage but invisible. After a real disaster the operator runs failover replay against this store — but `DualRegionBlobOutboxStore.failover_replay_candidates` delegates to `self.primary.failover_replay_candidates`, which excludes `accepted=False` records (`:283-284`). The secondary copy, even when fully prepared, is also never queried. There is no `list_prepared_event_ids()` so `repair_prepared` cannot be driven from operations.
+
+**Impact**: P0 silent acceptance loss on the *exact* failure mode dual-region writes exist to defend against. The proposal §6.4 says failover replay must cover "all accepted events where `expires_at >= failover_started_at`"; the implementation drops every event the dual-write phase didn't reach `accept` on. The proposal's "Main safety rule: Dispatchers only process accepted=true" (§15.1) becomes a footgun without a PREPARED-repair sweep at startup.
+
+**Recommendation**:
+1. On `DualRegionBlobOutboxStore` startup (or as part of `freeze_cleanup` failover entry), perform a one-shot `await self._reconcile_prepared()` that lists both regions' event blobs, finds every event with `accepted=False` in either region, and calls `repair_prepared(event_id)` (or marks the event `FAILED` after a retention window, recording in audit).
+2. Add a public `async def list_prepared_event_ids(self) -> Sequence[str]` so the operator can drive repair from the admin surface.
+3. In `failover_replay_candidates`, after consulting the primary, scan the **secondary** for `accepted=True` records the primary lacks (e.g. primary failure between step 3 and step 4) and replay from secondary state. Composes with the role-swap work ([A-P0-2]).
+4. Test: stage events through `_prepare(primary)` only, then `_prepare(secondary)` only, then `_prepare(primary)` + `_prepare(secondary)`, and assert that a failover replay either reports them as recoverable candidates after reconcile or fails fast (never silently 0).
+
+**Independence**: Composes with [A-P0-2] (role swap) and [A-P0-3] (replay reliability). Should ship in the same PR as [A-P0-2].
+
+---
+
+#### [A-NEW-P0-2] `AdminService.manual_replay` calls `admin_actions.replay_event`, but no store implements `replay_event` — admin replay is dead code on every adapter
+
+**Where**: `operations.py:62-66` (protocol declares `replay_event`), `:182-197` (`AdminService.manual_replay` calls it); zero implementations across `stores/*.py`. Only the test doubles in `tests/test_operations.py:36` and `tests/test_kafka_operations.py:127` provide it.
+
+**Problem**: `OutboxAdminActions.replay_event` is a documented capability — the audit action `manual_replay` is a `Literal` member (`:37`), and `AdminService.manual_replay` is wired through `outbox_admin_actions_total{action="manual_replay"}`. But none of `MemoryOutboxStore`, `BlobOutboxStore`, `DualRegionBlobOutboxStore`, `CosmosStrongOutboxStore`, `AzureSqlSyncOutboxStore`, `SqlAlwaysOnOutboxStore` implements `replay_event`. A user wiring `AdminService(admin_actions=my_blob_store, …)` only gets `repair_failed_to_pending`; calling `manual_replay(event_id=...)` would `AttributeError` at runtime. [A-P1-3] notes the protocol gap on `cleanup_sent`/`repair_failed_to_pending` but doesn't catch this — `replay_event` is the inverse problem (the protocol has it, the implementations don't).
+
+**Impact**: P0 functional gap on a privileged operational path. The aim list item "admin replay" is not delivered. Worse, the test harness mocks make the surface look complete.
+
+**Recommendation**: Pick one of two paths and commit.
+- **Path A (recommended)**: define `replay_event` on `DurableOutboxStore` with semantics "fetch the event for `event_id`, set status back to `PENDING`, clear `claim_token`, `claimed_at`, `last_error*`; reset `next_attempt_at=None`; do not change `attempt_count`". Implement on every adapter (`stores/*.py`). The Blob version is a small extension of `repair_failed_to_pending` allowing any status (including `SENT`).
+- **Path B**: drop `replay_event` from `OutboxAdminActions`, rename `AdminService.manual_replay` to `AdminService.repair_failed`, and remove the `"manual_replay"` audit literal. Document that replay-of-SENT is handled exclusively via `FailoverReplayer`.
+
+**Independence**: Independent. Affects API surface — should land before any 0.2.0 release.
+
+---
+
+#### [A-NEW-P1-1] `repair_failed_to_pending` does not reset `attempt_count`, `last_error*`, or `next_attempt_at`
+
+**Where**: `stores/memory.py:216-221`, `stores/blob_geo.py:340-346`, `stores/cosmos.py:329-335`, `stores/sql.py:360-366`.
+
+**Problem**: All four implementations set only `status = PENDING` and `failed_at = None`. They do not clear `attempt_count` (so the next retry uses the existing exponential backoff exponent — an event that hit `FAILED` after 7 attempts will wait 5 minutes before its first re-publish), `last_error_type`/`last_error` (surfaces in `AdminEventMetadata` and gauges, misleading dashboards), or `next_attempt_at`.
+
+**Impact**: P1 operability. Repair-and-retry is meant to be the recovery path for poison-pill investigations; in practice it produces opaque behaviour ("I repaired it but it didn't try for 5 minutes" + "it still shows the old error in the admin UI").
+
+**Recommendation**: In every adapter's `repair_failed_to_pending`, set:
+```python
+record.status = OutboxStatus.PENDING
+record.failed_at = None
+record.attempt_count = 0
+record.last_error_type = None
+record.last_error = None
+record.next_attempt_at = None
+record.claim_token = None
+record.claimed_at = None
+```
+Add a parametrised provider-contract test `test_repair_failed_to_pending_clears_retry_state` covering all adapters.
+
+**Independence**: Independent. Composes with [A-NEW-P0-2] which may consolidate this code into `replay_event`.
+
+---
+
+#### [A-NEW-P1-2] `repair_failed_to_pending` on SQL/Cosmos has unhandled CAS conflict
+
+**Where**: `stores/cosmos.py:335`, `stores/sql.py:366`. Compare with the claim path (`cosmos.py:205-211`, `sql.py:237-242`) which correctly catches `ClaimConflictError`.
+
+**Problem**: `repair_failed_to_pending` does `await self.client.replace(record, expected_version=record.version)`. If anything (cleanup tick, concurrent operator) bumps the row's version between `get` and `replace`, the call raises `ClaimConflictError` — which in `AdminService.repair_failed` propagates as an unhandled exception, returning a 500 to the operator with no audit trail and no `outbox_admin_actions_total` increment.
+
+**Impact**: P1 operator endpoint flakiness; partial action goes unaudited.
+
+**Recommendation**: Add a `_cas_update` helper that retries up to 3 times on `ClaimConflictError`:
+```python
+async def _cas_update(self, event_id, mutate, *, attempts=3) -> bool:
+    for _ in range(attempts):
+        record = await self.client.get(event_id)
+        if record is None: return False
+        mutate(record)
+        try:
+            await self.client.replace(record, expected_version=record.version)
+            return True
+        except ClaimConflictError:
+            continue
+    raise RetryableStoreError("repair lost too many CAS races")
+```
+Use from `repair_failed_to_pending`, `mark_sent`, `mark_failed`, `mark_pending_after_retryable_failure` to standardise CAS semantics.
+
+**Independence**: Independent.
+
+---
+
+#### [A-NEW-P1-3] `DualRegionBlobOutboxStore.cleanup_sent` swallows secondary errors and reports primary-only count
+
+**Where**: `stores/blob_geo.py:602-607`.
+
+**Problem**:
+```python
+async def cleanup_sent(self, *, now, safety_margin) -> int:
+    if self.cleanup_frozen: return 0
+    deleted = await self.primary.cleanup_sent(...)
+    await self.secondary.cleanup_sent(...)   # ← discarded count, no error handling
+    return deleted
+```
+Three issues: (1) Dual-store freeze flag and per-region freeze flags can diverge if `primary.freeze_cleanup` is called directly. (2) Secondary deletion failures are silently swallowed — if primary deletes blob A but secondary call raises on blob A, regions diverge in a way that [A-NEW-P0-1] then mishandles after disaster. (3) Reported `deleted` count is primary-only.
+
+**Impact**: P1. Mirror drift over time; failover replay sees fewer SENT records on post-failover active region.
+
+**Recommendation**:
+1. Gather both regions' deletes in parallel: `primary_count, secondary_count = await asyncio.gather(...)`. Return a `CleanupSummary(primary=..., secondary=...)`.
+2. Queue failed secondary deletes for retry (`_pending_secondary_deletes: set[str]`). Emit `outbox_mirror_cleanup_failures_total{region="secondary"}`.
+3. Single source of truth for freeze (persisted per [A-P1-1]).
+
+**Independence**: Composes with [A-P1-1] and [A-P2-2].
+
+---
+
+#### [A-NEW-P1-4] `MemoryOutboxStore.repair_failed_to_pending` raises `KeyError` for unknown event_id
+
+**Where**: `stores/memory.py:216-221`.
+
+**Problem**: Uses `self.records[event_id]` (KeyError on missing) while Blob/Cosmos/SQL all return silently if the record is `None`. `AdminService.repair_failed` (`operations.py:165-180`) doesn't catch the difference.
+
+**Impact**: P1 contract divergence. Memory is the canonical reference implementation; subtle inconsistencies propagate.
+
+**Recommendation**:
+```python
+async def repair_failed_to_pending(self, *, event_id: str) -> None:
+    record = self.records.get(event_id)
+    if record is None or record.status is not OutboxStatus.FAILED:
+        return
+    record.status = OutboxStatus.PENDING
+    record.failed_at = None
+```
+Add parametrised provider-contract test `test_repair_unknown_event_is_no_op`. Composes with [A-NEW-P1-1].
+
+**Independence**: Independent.
+
+---
+
+#### [A-NEW-P1-5] `AcceptedReceipt.rpo_zero` is per-store-static, not per-event
+
+**Where**: `core/model.py:78-83`, `stores/blob_geo.py:535-540`, `stores/sql.py:189-194`, `stores/cosmos.py:169-174`.
+
+**Problem**: The receipt's `rpo_zero` is hard-coded from the capability declaration. There's no place in the data model to express "RPO=0 was *intended* but not certain for this particular event," and `rpo_zero` is duplicative of `store` + capability lookup. A reader writing `if receipt.rpo_zero:` then doing an action depending on durability has no way to validate the receipt wasn't fabricated.
+
+**Impact**: P1 design integrity. The `AcceptedReceipt` is the boundary at which the caller gets to depend on the RPO=0 contract; today it's a copy of static config.
+
+**Recommendation**: Either (a) remove `rpo_zero` from `AcceptedReceipt` (callers reference `store.capabilities.rpo_zero_for_accepted_events` once at startup), or (b) make `rpo_zero` a *per-put assertion*: add a structured `durability_witness: tuple[str, ...]` field listing the durability boundaries achieved (e.g. `("primary-westus", "secondary-eastus")` for dual-Blob; `("primary", "secondary-1")` for AlwaysOn). The witness is auditable; the static `bool` is not.
+
+**Independence**: Independent. Schema-additive (add `durability_witness: tuple[str, ...] = ()`) so non-breaking.
+
+---
+
+#### [A-NEW-P1-6] In-flight ordering scope omits topic AND uses no separator — collision risk with topic names
+
+**Where**: `stores/memory.py:238-252`, `stores/cosmos.py:367-381`, `stores/sql.py:384-398`. Blob (`stores/blob_geo.py:446-460`) correctly scopes by `_ordering_scope(record.event)`.
+
+**Problem**: Strict super-set of [A-P1-2]. Three adapters (memory, cosmos, sql) store the raw `effective_ordering_key` as the set member without the topic prefix — *and* the Blob version's separator (`\0`) is not used elsewhere. The `value` stored in the set is a user-supplied string with no version prefix; a future rename to include topic would have to migrate semantics.
+
+**Impact**: P1 — expands [A-P1-2] from "throughput regression" to "potential lock collision".
+
+**Recommendation**: Adopt the existing review's `core/ordering.py` helper, but require the helper return a value with an embedded null byte and a version prefix: `f"v1\0{event.topic}\0{key}"`, so future renames are safe to evolve. Document the helper signature in the proposal's §18.
+
+**Independence**: Strict super-set of [A-P1-2].
+
+---
+
+#### [A-NEW-P1-7] `FailoverReplayer` re-publishes SENT events without per-replay-cluster idempotency awareness
+
+**Where**: `core/failover.py:18-31`, `stores/*.py` `failover_replay_candidates` blocks, Kafka sink config at `sinks/kafka.py:55-72`.
+
+**Problem**: The Kafka sink declares `enable.idempotence=true`, which gives *producer-instance-scoped* idempotence (PID + sequence on a single broker cluster). After failover, the new producer has a fresh PID — Kafka idempotence will *not* dedupe; consumers must dedupe by `event_id` header. The library injects the header (`kafka.py:165-168`) but there is no test gate, no doc warning, and no consumer-side helper. The library should at minimum surface a Kafka **transactional** mode option (`transactional.id`) for replay-on-same-cluster scenarios; proposal §17 doesn't mention it.
+
+**Impact**: P1 — the "consumers dedupe" contract is documented but not enforced or testable.
+
+**Recommendation**:
+1. Add `transactional_id: str | None = None` to `KafkaProducerConfig`. When set, wrap each `replay_once`'s publishes in `init_transactions`/`begin_transaction`/`commit_transaction`. Document the trade-off.
+2. Log at `WARNING` the first time `FailoverReplayer.replay_once` publishes a `SENT` event: "Replaying event_id=X (status=SENT). Consumers must dedupe by event_id header."
+3. Provide a small consumer-side helper module `durable_outbox.consumer.dedupe` that hashes `(topic, event_id)` and skips repeats.
+
+**Independence**: Independent. Depends on [A-P0-3] for the loop-error fix being in place first.
+
+---
+
+#### [A-NEW-P2-1] `BlobOutboxStore._accept_prepared` overwrites `accepted_at` on every call, breaking acceptance-time monotonicity after repair
+
+**Where**: `stores/blob_geo.py:358-367`.
+
+**Problem**: `_accept_prepared` unconditionally sets `accepted_at = self.clock.utcnow()`. If invoked from `repair_prepared` long after the original prepare, the recorded acceptance time becomes the repair time. Combined with [Q-P2-1] (silent now() substitution), the original creation/acceptance window is hard to reconstruct after a repair.
+
+**Impact**: P2 observability/forensics; affects `outbox_oldest_pending_age_seconds` and age-based alerting after a partial-write repair.
+
+**Recommendation**: Mirror the `or now` idiom from `BlobOutboxStore.put` in `_accept_prepared`. If the goal is to record *when accept was achieved*, add a distinct field `accepted_at_durable: datetime | None` and keep `accepted_at` as "first-prepare time".
+
+**Independence**: Independent. Pairs with [Q-P2-1].
+
+---
+
+#### [A-NEW-P2-2] `_ensure_compatible_duplicate` error message lacks field hint — operators waste time diagnosing duplicate conflicts
+
+**Where**: `stores/blob_geo.py:418-424`, `_event_fingerprint` at `:817-823`.
+
+**Problem**: The error message says "incompatible content" without saying which field diverged. Operators get no hint whether the producer is buggy (re-using event_ids) or the schema is evolving. Compare `MemoryOutboxStore._compatible_event` (`memory.py:255-266`) which lists fields explicitly and could trivially yield a field-by-field diff.
+
+**Impact**: P2 operability. Duplicate conflicts are a common production diagnostic event; the current message wastes 5-20 minutes of investigation each time.
+
+**Recommendation**:
+```python
+def _ensure_compatible_duplicate(self, record, event):
+    diff = _first_field_difference(record.event, event)
+    if diff is not None:
+        field_name, stored, incoming = diff
+        raise DuplicateEventConflictError(
+            f"event_id {event.event_id!r} already exists with incompatible {field_name!r}: "
+            f"stored={_redact(stored)} incoming={_redact(incoming)}"
+        )
+```
+Where `_redact` truncates bytes/strings to 32 chars to avoid logging payloads. Apply across all four adapters.
+
+**Independence**: Independent. Composes with [P-P1-3] — that fix can drop the fingerprint approach entirely in favour of field-by-field comparison.
+
+---
+
+#### [A-NEW-P2-3] RPO=0 contract is under-exercised by tests — would not catch silent skip of secondary write
+
+**Where**: `tests/test_adapters.py:121-129`, `tests/test_failover_ordering_cleanup.py` (no dual-region failover replay test).
+
+**Problem**: The single test that asserts the RPO=0 contract on dual-Blob reads the in-memory mirrors of both regions. There's no test that: (1) crashes after `_accept(primary)` and before `_accept(secondary)` and asserts recovery; (2) asserts `put()` raises if `_accept(secondary)` raises; (3) asserts `failover_replay_candidates` returns the event when only the secondary holds it; (4) asserts `receipt.rpo_zero is True` *only* when both regions confirmed.
+
+**Impact**: P2. A regression in the dual-write fan-out would slip through.
+
+**Recommendation**: Add the four tests above to `tests/test_adapters.py`. Provide a `FaultInjectionBlobClient(BlobClientProtocol)` in `durable_outbox.testing` that fails the Nth call, and expose `make_dual_region_store_with_faulty_secondary(fail_on="accept")`. Composes with [Q-P2-2] (contract harness expansion).
+
+**Independence**: Independent. Composes with [Q-P2-2].
+
+---
+
+#### [A-NEW-NIT-1] `DualRegionBlobOutboxStore.put` returns the primary's `accepted_at` only
+
+**Where**: `stores/blob_geo.py:528-540`.
+
+**Problem**: For a fresh `put`, primary and secondary `accepted_at` differ by however long the secondary's accept took. The receipt reports the primary's, but the *correct* "RPO=0 was achieved at time T" is `max(primary.accepted_at, secondary.accepted_at)`.
+
+**Recommendation**: After both `_accept` calls, set `receipt.accepted_at = max(primary.accepted_at, secondary.accepted_at)`.
+
+**Independence**: Independent.
+
+---
+
+### 9.2 New security findings
+
+#### [S-NEW-P1-1] Prometheus exposition injection via unsanitised `topic` metric label
+
+**Where**: `core/dispatcher.py:42, 51-55, 68-72, 78-82, 85-87` (every `self.metrics.increment(..., topic=event.topic, ...)`); `operations.py:262-263` (`_escape_prometheus_label_value` escapes `\`, `\n`, `"` but not `\r`, `\f`, `\v`, NUL).
+
+**Vulnerability**: `OutboxEvent.topic` is validated only as non-empty. Any caller can submit `topic="orders\rfake_metric{} 999999\n"`. When the `CollectingMetricsAdapter` renders to Prometheus, `_escape_prometheus_label_value` does not escape `\r`, so the rendered line becomes:
+```
+outbox_publish_attempts_total{topic="orders<CR>fake_metric{} 999999<LF>"} 1
+```
+A Prometheus scraper accepts `\r` followed by a fresh metric line, allowing the attacker to inject arbitrary fake samples (`up 1`, `outbox_events_failed_total 0`) into operator dashboards/alerts. The same attacker gets unbounded **metric cardinality** explosion — every distinct topic creates a new key, never evicted.
+
+**Impact**: Integrity of operator-facing metrics (silent suppression of real alerts). Availability under cardinality blow-up. Exploitable by any caller with `OutboxStore.put()` access.
+
+**Recommendation**:
+1. Tighten escape function to cover all C0 controls:
+```python
+def _escape_prometheus_label_value(value: str) -> str:
+    out = value.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r").replace('"', '\\"')
+    return "".join(ch if ch.isprintable() or ch == " " else f"\\x{ord(ch):02x}" for ch in out)
+```
+2. Add a strict topic regex to `OutboxEvent.__post_init__` (Kafka-compatible: `^[A-Za-z0-9._-]{1,249}$`), raising `ValidationError` otherwise.
+3. Add an optional `allowed_label_values` deny/allow-list to `MetricsAdapter` for label hardening.
+
+**Independence**: Independent. The escape fix is local; the topic regex composes with [S-P2-1] header bounds.
+
+---
+
+#### [S-NEW-P1-2] Unbounded `error_message` from `str(exc)` — pyodbc write failure stalls IN_FLIGHT events forever
+
+**Where**: `core/dispatcher.py:65` (`error_message=str(exc)`); `stores/sql.py:52` (schema `NVARCHAR(1024)`); `stores/cosmos.py:249-263`; `stores/blob_geo.py:245-263`.
+
+**Vulnerability**: A 1500-character Kafka error message overflows `NVARCHAR(1024)`. pyodbc raises `DataError` → bubbles out of `mark_pending_after_retryable_failure` → dispatcher catches nothing → event stays `IN_FLIGHT` until `claim_timeout`. The same broker keeps returning the same long message, so every claim re-fails identically. Self-amplifying poison-pill DoS. For Cosmos, per-document size headroom shrinks; eventually all replaces rejected. For Blob, full record re-encoded per save means cost paid every CAS cycle.
+
+**Impact**: Availability — pipeline-wide stall via single bad event class. Integrity — original error truncated silently with no metric.
+
+**Recommendation**:
+1. Truncate in `dispatcher.py` before the store call:
+```python
+_MAX_ERROR_MESSAGE_BYTES = 512
+def _truncate_error(exc: BaseException) -> str:
+    message = str(exc)
+    encoded = message.encode("utf-8", errors="replace")
+    if len(encoded) <= _MAX_ERROR_MESSAGE_BYTES:
+        return message
+    return encoded[: _MAX_ERROR_MESSAGE_BYTES - 1].decode("utf-8", errors="ignore") + "…"
+```
+2. Add `outbox_store_update_failures_total{error_type=...}` increment around the `mark_*` calls so a stuck-IN_FLIGHT pattern is observable.
+3. SQL: relax to `NVARCHAR(2048)` to give headroom; document the truncation.
+
+**Independence**: Independent. Composes with [S-P1-1] (PLAINTEXT allows attacker-controlled error messages).
+
+---
+
+#### [S-NEW-P1-3] `claim_token` exposure surface needs hardening — currently safe but one PR away from leakage
+
+**Where**: `stores/blob_geo.py:412, 415`; `stores/cosmos.py:346`; `stores/sql.py:374`; `stores/memory.py:226`; `core/dispatcher.py:65`.
+
+**Vulnerability**: `ClaimConflictError("claim token does not match current owner")` is benign today, but `dispatcher.py:65` does `error_message=str(exc)` for the outer `Exception` block. If a future store implementation includes the `claim_token` in the conflict message (a common diagnostic temptation), that token would be persisted into `last_error` on the very record whose claim it identifies — surfaced in `AdminEventMetadata`. A leaked claim_token enables a different dispatcher to bypass `ClaimConflictError` and mutate the IN_FLIGHT record.
+
+**Impact**: Integrity. Preventive — not exploitable today, trivially introducible later.
+
+**Recommendation**:
+1. Add CI gate `tests/test_security.py::test_claim_token_never_in_error_message` asserting no `ValueError`/`ClaimConflictError`/`RetryableStoreError` message contains the token.
+2. Use `hmac.compare_digest(record.claim_token or "", claimed.claim_token)` in every `_claimed_record` instead of `!=` for defence-in-depth against timing side-channels.
+3. In `dispatcher.py`, strip UUID-looking substrings from `error_message` before persisting: `re.sub(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}", "<uuid>", message)`.
+
+**Independence**: Independent.
+
+---
+
+#### [S-NEW-P2-1] Azure blob metadata header injection via `topic`/`environment` — producer-induced permanent stall
+
+**Where**: `stores/blob_geo.py:652-666` (`blob_metadata`), called from every `_save_record` / `_write_new_record`.
+
+**Vulnerability**: `blob_metadata` writes raw `event_id`, `topic`, `environment` strings into Azure metadata, which the SDK serialises as HTTP headers `x-ms-meta-<key>: <value>` subject to RFC 7230 grammar. A producer can submit `event_id="x\rPOISON"` or `topic="orders\r\n..."`; the Azure SDK then raises `ValueError` from inside `_validate_metadata_request_headers`, which the dispatcher catches and re-stores the error message — the event cycles indefinitely. Defence-in-depth for the same root cause as [S-NEW-P1-1].
+
+**Impact**: Availability — producer-induced permanent stall.
+
+**Recommendation**: Add `enforce_metadata_safe(value: str)` in `core/validation.py` rejecting any control character (`<0x20`, `0x7F`, non-ASCII) for `event_id`, `topic`, and any operator-supplied string written to backend metadata; call from `OutboxEvent.__post_init__` and from `BlobOutboxStore.__init__` for `environment`.
+
+**Independence**: Composes with [S-NEW-P1-1] (same root cause; fix once).
+
+---
+
+#### [S-NEW-P2-2] `_decode_record` accepts secondary-region blob content without re-validating fingerprint — asymmetric-credential injection
+
+**Where**: `stores/blob_geo.py:629-638, 733-751`.
+
+**Vulnerability**: `DualRegionBlobOutboxStore.repair_prepared` falls back to `secondary_record` if primary is missing. `_load_record` blindly trusts decoded JSON. An attacker with write access to **only** the secondary container (realistic split-credential scenario: primary access-protected, secondary RA-GRS-exposed) can pre-poison a secondary record. During failover/repair, the poisoned event is re-prepared into the primary as if it originated there. `event_fingerprint` is written into metadata but never verified on read.
+
+**Impact**: Integrity. A secondary-only attacker can inject events during DR exercises. The asymmetric-credential model is exactly the case the dual-region design caters for.
+
+**Recommendation**:
+1. In `_load_record`, after `_decode_record`, recompute `_event_fingerprint(record.event)` and compare against `blob.metadata.get("event_fingerprint")`. Raise `BlobIntegrityError(NonRetryablePublishError)` on mismatch.
+2. Replace the unkeyed `_event_fingerprint` with an HMAC over a `BlobOutboxStore(integrity_key: bytes | None = None)` — combines with [S-P2-3] for one fix covering both mechanisms.
+
+**Independence**: Composes with [S-P2-3].
+
+---
+
+#### [S-NEW-P2-3] Dependency floors permit transitive-CVE territory if lock file is bypassed
+
+**Where**: `pyproject.toml:26` — `azure-storage-blob>=12.23.0`, `azure-cosmos>=4.7.0`, `aiohttp>=3.13.0`, `pyodbc>=5.2.0`, `confluent-kafka>=2.6.0`.
+
+**Vulnerability**: `uv.lock` currently resolves to safe versions (`12.29.0` for azure-storage-blob, etc.), but the floors permit `azure-storage-blob==12.23.0` → `azure-core>=1.30.0` → potential `cryptography<43.0.1` resolution paths flagged in late-2025 disclosure cycles (CVE-2024-12797 / Raccoon-style padding-oracle, fixed in `cryptography==44.0.1`). Best-effort finding; risk realised only for users installing without honouring the lock.
+
+**Impact**: Confidentiality, capped severity because lock pins safe versions.
+
+**Recommendation**:
+1. Raise floors to align with the resolved lock: `azure-storage-blob>=12.29.0`, `azure-cosmos>=4.15.0`, `aiohttp>=3.13.5`, `pyodbc>=5.3.0`, `confluent-kafka>=2.14.0`.
+2. Add `dependabot.yml` to drive floors forward.
+3. Add `pip-audit` to CI when CI exists.
+
+**Independence**: Independent.
+
+---
+
+#### [S-NEW-P3-1] `_decode_event` silently substitutes `datetime.now(UTC)` — creates zombie events that bypass TTL and cleanup
+
+**Where**: `stores/blob_geo.py:783-784`.
+
+**Vulnerability**: This is **the security framing of [Q-P2-1]** — but the security impact wasn't characterised. A corrupted blob with `"created_at": null` and `"expires_at": null` is silently rehabilitated by substituting current time, which makes:
+- `failover_replay_candidates`' `record.event.expires_at < failover_started_at` always false → event **always replayed**.
+- Cleanup TTL guard `now > record.event.expires_at + safety_margin` becomes `now > now + 5min` → false → event **never cleaned up**.
+
+Net effect of a storage-tier writer setting `expires_at = null`: persistent zombie events that bypass both TTL and cleanup.
+
+**Impact**: Integrity (zombie events) + availability (cleanup never reclaims). Defence-in-depth; requires storage write access.
+
+**Recommendation**: Same fix as [Q-P2-1] — raise `RetryableStoreError` on missing timestamps. Adding this as a separate finding to emphasise the security framing.
+
+**Independence**: Identical pattern to [Q-P2-1].
+
+---
+
+#### [S-NEW-NIT-1] `AdminService._record_action` increments success metric before audit write completes
+
+**Where**: `operations.py:215-231`.
+
+**Vulnerability**: `self.metrics.increment("outbox_admin_actions_total", action=action, result=result)` runs before `await self.audit_sink.record(...)`. If the audit write fails (disk full in `JsonlAuditSink`), the metric already reads "success". Observability records claim audit happened when it didn't. Compounded by [S-P1-3] (audit blocks the loop) — a long audit write that times out leaves a counted-but-unaudited admin action.
+
+**Impact**: Audit integrity. Operationally meaningful for compliance scenarios where "every replay must be audited" is an invariant.
+
+**Recommendation**: Move the `self.metrics.increment` call to *after* `await self.audit_sink.record(...)`, and emit a separate `outbox_admin_audit_failures_total` counter inside an `except` block around the audit write.
+
+**Independence**: Independent.
+
+---
+
+### 9.3 Updated task-packet manifest (incorporating addendum)
+
+Add to §8:
+
+| Packet | Findings | Files touched | Effort | Branch |
+|---|---|---|---|---|
+| **PKT-20** Dual-region PREPARED reconciliation + admin replay | A-NEW-P0-1, A-NEW-P0-2 | `stores/blob_geo.py`, all `stores/*.py`, `operations.py`, `tests/test_adapters.py` | M | `feat/a-new-p0-1-prepared-reconcile` |
+| **PKT-21** Repair semantics + CAS retry helper | A-NEW-P1-1, A-NEW-P1-2, A-NEW-P1-4 | all `stores/*.py` | S | `fix/a-new-p1-1-repair-semantics` |
+| **PKT-22** Dual-region cleanup robustness | A-NEW-P1-3 | `stores/blob_geo.py`, `tests/` | S | `fix/a-new-p1-3-dual-cleanup` |
+| **PKT-23** Receipt durability witness | A-NEW-P1-5 | `core/model.py`, all `stores/*.py` `put()`, docs | S | `feat/a-new-p1-5-durability-witness` |
+| **PKT-24** Ordering scope helper (super-set of A-P1-2) | A-NEW-P1-6 | `core/ordering.py`, all `stores/*.py` `_in_flight_ordering_keys` | S | `feat/a-new-p1-6-ordering-scope` (supersedes PKT-02 ordering portion) |
+| **PKT-25** Kafka transactional replay mode | A-NEW-P1-7 | `sinks/kafka.py`, `core/failover.py`, new `consumer/dedupe.py`, docs | M | `feat/a-new-p1-7-replay-transactions` |
+| **PKT-26** Diagnostic improvements (accepted_at, dup-conflict messages) | A-NEW-P2-1, A-NEW-P2-2, A-NEW-NIT-1 | `stores/blob_geo.py`, all stores' `_ensure_compatible_duplicate` | S | `chore/a-new-p2-diagnostics` |
+| **PKT-27** RPO=0 contract test expansion | A-NEW-P2-3 | `durable_outbox/testing/`, `tests/test_adapters.py` | M | `test/a-new-p2-3-rpo-contract-coverage` |
+| **PKT-28** Prometheus + metadata sanitisation (compose with topic regex) | S-NEW-P1-1, S-NEW-P2-1 | `operations.py`, `core/model.py`, `core/validation.py` | S | `security/s-new-p1-1-prometheus-sanitise` |
+| **PKT-29** Error-message size cap + observability | S-NEW-P1-2 | `core/dispatcher.py`, `stores/sql.py` schema | S | `fix/s-new-p1-2-error-truncation` |
+| **PKT-30** Claim token CI gate + constant-time comparison | S-NEW-P1-3 | new `tests/test_security.py`, all `_claimed_record` impls | S | `security/s-new-p1-3-claim-token-hardening` |
+| **PKT-31** Integrity-keyed fingerprint on Blob | S-NEW-P2-2 | `stores/blob_geo.py` (composes with S-P2-3) | S | `security/s-new-p2-2-blob-integrity-key` |
+| **PKT-32** Dependency floor bump + dependabot | S-NEW-P2-3 | `pyproject.toml`, new `.github/dependabot.yml` | XS | `chore/s-new-p2-3-dep-floors` |
+| **PKT-33** Audit-then-metric ordering | S-NEW-NIT-1 | `operations.py` | XS | `fix/s-new-nit-1-audit-order` |
+
+**Sequencing additions**:
+- PKT-20 (PREPARED reconcile) should land in the same PR window as PKT-01 (dual-region role swap) and PKT-02 (failover reliability).
+- PKT-24 (ordering scope helper) **supersedes** the ordering portion of PKT-02 in §8.
+- PKT-28 and PKT-29 are quick wins — recommend landing first to shrink the security surface before any 0.2.0 release.
+
+### 9.4 Recount
+
+After addendum, the full finding tally is:
+
+| Dimension | P0 | P1 | P2 | P3 | NIT | Total |
+|---|---:|---:|---:|---:|---:|---:|
+| Architecture (incl. retry) | 7 | 11 | 6 | 1 | 2 | 27 |
+| Security (incl. retry) | 1 | 6 | 6 | 4 | 2 | 19 |
+| Performance | 5 | 6 | 5 | 2 | 1 | 19 |
+| Code quality | 2 | 5 | 6 | 5 | 2 | 20 |
+| **Total** | **15** | **28** | **23** | **12** | **7** | **85** |
+
+The library has substantial real-world readiness work ahead. The P0s cluster in two themes: **(a) the dual-region failover story is partially implemented — role-swap, PREPARED reconciliation, admin replay, freeze persistence are all missing**, and **(b) the SQL and Cosmos adapters are protocol-only — no production-ready backend client ships**. None of the P0s is a deep design flaw; all are bounded engineering work that fits into the parallel-agent packet structure in §8 + §9.3.
+
+---
+
+## 10. What was NOT reviewed (consolidated)
 
 - **`durable_outbox/testing/fake_store.py`** and **`fake_sink.py`** — light read only.
 - **`integration/aspire/**`** C#/Aspire scaffolding — out of scope for the Python package review.
