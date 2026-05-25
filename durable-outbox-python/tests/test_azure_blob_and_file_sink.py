@@ -9,8 +9,9 @@ from typing import Any
 import pytest
 
 from durable_outbox.core import ConfigurationError
+from durable_outbox.core.errors import RetryableStoreError
 from durable_outbox.sinks.file import FileSink
-from durable_outbox.stores.azure_blob import AzureBlobClient
+from durable_outbox.stores.azure_blob import MAX_BLOB_DOWNLOAD_BYTES, AzureBlobClient
 from durable_outbox.stores.blob_geo import BlobObject
 from durable_outbox.testing.provider_contract import make_event
 
@@ -19,6 +20,7 @@ from durable_outbox.testing.provider_contract import make_event
 class BlobProperties:
     metadata: Mapping[str, str]
     etag: str
+    size: int
 
 
 class Download:
@@ -42,7 +44,11 @@ class Blob:
     async def get_blob_properties(self) -> BlobProperties:
         self.container.property_reads += 1
         blob = self.container.blobs[self.name]
-        return BlobProperties(metadata=blob.metadata, etag=blob.etag)
+        return BlobProperties(
+            metadata=blob.metadata,
+            etag=blob.etag,
+            size=self.container.reported_sizes.get(self.name, len(blob.content)),
+        )
 
     async def download_blob(self) -> Download:
         self.container.downloads += 1
@@ -80,6 +86,7 @@ class Container:
         self.created = False
         self.property_reads = 0
         self.downloads = 0
+        self.reported_sizes: dict[str, int] = {}
 
     async def create_container(self) -> None:
         self.created = True
@@ -134,6 +141,23 @@ async def test_azure_blob_client_put_uses_upload_response_without_readback() -> 
         etag='"1"',
     )
     assert container.property_reads == 0
+    assert container.downloads == 0
+
+
+@pytest.mark.asyncio
+async def test_azure_blob_client_rejects_oversized_blob_before_download() -> None:
+    container = Container()
+    client = AzureBlobClient(container)
+    written = await client.put_blob(
+        "outbox/v1/events/large.json",
+        b"payload",
+        {"event_id": "large"},
+    )
+    container.reported_sizes[written.name] = MAX_BLOB_DOWNLOAD_BYTES + 1
+
+    with pytest.raises(RetryableStoreError, match="download"):
+        await client.get_blob(written.name)
+
     assert container.downloads == 0
 
 

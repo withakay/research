@@ -1001,3 +1001,36 @@ verification evidence.
   `uv run ruff format --check .` -> 51 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 37: Azure Blob Download Size Bound
+
+### Findings Accepted
+
+- **S-P2-2:** `AzureBlobClient.get_blob()` fetched properties and then called
+  `download.readall()` with no content-size guard, so a corrupt or unexpected
+  blob could force an unbounded in-memory read.
+
+### Fixes Implemented
+
+- Added `MAX_BLOB_DOWNLOAD_BYTES`, currently 16 MiB, at the Azure Blob client
+  boundary.
+- Checked the advertised `size` or `content_length` property before starting
+  the download.
+- Added a post-read length check as a fallback for clients that do not expose a
+  usable size property.
+- Added a regression test proving oversized advertised blobs fail before
+  `download_blob()`/`readall()` is invoked.
+
+### Verification
+
+- Focused red run first failed at collection because no max-size constant or
+  implementation existed.
+- Focused green run:
+  `uv run pytest tests/test_azure_blob_and_file_sink.py::test_azure_blob_client_rejects_oversized_blob_before_download -q`
+  -> 1 passed
+- Full package gates:
+  `uv run pytest -q` -> 190 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 51 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.

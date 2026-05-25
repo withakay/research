@@ -2,7 +2,7 @@ from collections.abc import Mapping
 from importlib import import_module
 from typing import Any, cast
 
-from durable_outbox.core.errors import ConfigurationError
+from durable_outbox.core.errors import ConfigurationError, RetryableStoreError
 from durable_outbox.stores.blob_geo import (
     BlobObject,
     BlobPreconditionFailedError,
@@ -11,6 +11,7 @@ from durable_outbox.stores.blob_geo import (
 _AZURE_EXTRA_MESSAGE = (
     "Azure Blob support requires the azure extra: install durable-outbox[azure]"
 )
+MAX_BLOB_DOWNLOAD_BYTES = 16 * 1024 * 1024
 
 
 class AzureBlobClient:
@@ -55,8 +56,14 @@ class AzureBlobClient:
         blob_client = self.container_client.get_blob_client(name)
         try:
             properties = await blob_client.get_blob_properties()
+            _enforce_blob_download_size(properties)
             download = await blob_client.download_blob()
             content = await download.readall()
+            if len(content) > MAX_BLOB_DOWNLOAD_BYTES:
+                raise RetryableStoreError(
+                    "blob download exceeds max_blob_download_bytes="
+                    f"{MAX_BLOB_DOWNLOAD_BYTES}"
+                )
         except Exception as exc:
             if _is_azure_error(exc, {"ResourceNotFoundError"}):
                 return None
@@ -164,6 +171,22 @@ def _upload_response_etag(response: object) -> str:
     if isinstance(etag, str):
         return etag
     raise BlobPreconditionFailedError("uploaded blob response missing etag")
+
+
+def _enforce_blob_download_size(properties: object) -> None:
+    size = _blob_content_size(properties)
+    if size is not None and size > MAX_BLOB_DOWNLOAD_BYTES:
+        raise RetryableStoreError(
+            f"blob download exceeds max_blob_download_bytes={MAX_BLOB_DOWNLOAD_BYTES}"
+        )
+
+
+def _blob_content_size(properties: object) -> int | None:
+    for attribute in ("size", "content_length"):
+        size = getattr(properties, attribute, None)
+        if isinstance(size, int):
+            return size
+    return None
 
 
 def _is_azure_error(exc: Exception, names: set[str]) -> bool:
