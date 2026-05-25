@@ -660,3 +660,23 @@ verification evidence.
 - Focused green run:
   `uv run pytest tests/test_security.py tests/test_adapters.py::test_blob_metadata_preserves_envelope_fields -q`
   -> 8 passed
+
+## Batch 25: Admin Metadata Helper Cleanup
+
+### Findings Accepted
+
+- **A-NIT-1:** `AdminEventMetadata.as_pending()` existed only to support local
+  test doubles and was not part of the production admin surface.
+
+### Fixes Implemented
+
+- Removed `AdminEventMetadata.as_pending()`.
+- Updated operation and Kafka admin test doubles to use explicit
+  `dataclasses.replace(...)` calls so test-only state transitions stay local to
+  tests.
+
+### Verification
+
+- Focused green run:
+  `uv run pytest tests/test_operations.py tests/test_kafka_operations.py -q`
+  -> 22 passed

@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from threading import get_ident
 
@@ -123,7 +123,9 @@ class ProtocolAdminAdapter:
     async def repair_failed_to_pending(self, *, event_id: str) -> bool:
         self.repaired_event_ids.append(event_id)
         self.events = [
-            event.as_pending() if event.event_id == event_id else event
+            replace(event, status=OutboxStatus.PENDING, last_error_type=None)
+            if event.event_id == event_id
+            else event
             for event in self.events
         ]
         return True

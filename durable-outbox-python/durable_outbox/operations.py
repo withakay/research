@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Literal, Protocol
@@ -29,9 +29,6 @@ class AdminEventMetadata:
     expires_at: datetime
     attempt_count: int
     last_error_type: str | None = None
-
-    def as_pending(self) -> AdminEventMetadata:
-        return replace(self, status=OutboxStatus.PENDING, last_error_type=None)
 
 
 AuditAction = Literal["repair_failed", "manual_replay"]
