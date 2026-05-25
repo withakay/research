@@ -9,6 +9,8 @@ from durable_outbox.core.errors import ValidationError
 from durable_outbox.core.validation import enforce_metadata_safe
 
 MAX_HEADER_COUNT = 64
+MAX_HEADER_NAME_BYTES = 256
+MAX_HEADER_TOTAL_BYTES = 64 * 1024
 MAX_HEADER_VALUE_BYTES = 8192
 TOPIC_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,249}$")
 BLOCKED_HEADER_PREFIXES = (
@@ -81,9 +83,15 @@ def _freeze_headers(headers: Mapping[str, bytes]) -> Mapping[str, bytes]:
             f"headers cannot contain more than {MAX_HEADER_COUNT} entries"
         )
     frozen: dict[str, bytes] = {}
+    total_bytes = 0
     for name, value in headers.items():
         if not name:
             raise ValidationError("header names cannot be empty")
+        name_bytes = len(name.encode("utf-8"))
+        if name_bytes > MAX_HEADER_NAME_BYTES:
+            raise ValidationError(
+                f"header name {name!r} exceeds {MAX_HEADER_NAME_BYTES} bytes"
+            )
         lowered = name.lower()
         if any(lowered.startswith(prefix) for prefix in BLOCKED_HEADER_PREFIXES):
             raise ValidationError(f"header name {name!r} is blocked")
@@ -92,6 +100,11 @@ def _freeze_headers(headers: Mapping[str, bytes]) -> Mapping[str, bytes]:
         if len(value) > MAX_HEADER_VALUE_BYTES:
             raise ValidationError(
                 f"header {name!r} exceeds {MAX_HEADER_VALUE_BYTES} bytes"
+            )
+        total_bytes += name_bytes + len(value)
+        if total_bytes > MAX_HEADER_TOTAL_BYTES:
+            raise ValidationError(
+                f"headers cannot exceed {MAX_HEADER_TOTAL_BYTES} total bytes"
             )
         frozen[name] = value
     return MappingProxyType(frozen)

@@ -207,6 +207,36 @@ def test_event_rejects_oversized_header_value() -> None:
         )
 
 
+def test_event_rejects_oversized_header_name() -> None:
+    now = datetime.now(UTC)
+
+    with pytest.raises(ValidationError, match="header name"):
+        OutboxEvent(
+            event_id="event-1",
+            topic="topic",
+            payload=b"{}",
+            key=None,
+            headers={"x" * 257: b"value"},
+            created_at=now,
+            expires_at=now + timedelta(minutes=1),
+        )
+
+
+def test_event_rejects_oversized_header_total() -> None:
+    now = datetime.now(UTC)
+
+    with pytest.raises(ValidationError, match="total bytes"):
+        OutboxEvent(
+            event_id="event-1",
+            topic="topic",
+            payload=b"{}",
+            key=None,
+            headers={f"x-{index}": b"x" * 2048 for index in range(33)},
+            created_at=now,
+            expires_at=now + timedelta(minutes=1),
+        )
+
+
 def test_public_error_exports_are_available_from_core_package() -> None:
     assert ClaimConflictError.__name__ == "ClaimConflictError"
     assert RetryableStoreError.__name__ == "RetryableStoreError"

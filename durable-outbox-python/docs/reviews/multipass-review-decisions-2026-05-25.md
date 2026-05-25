@@ -1034,3 +1034,31 @@ verification evidence.
   `uv run ruff format --check .` -> 51 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 38: Header Aggregate Bounds
+
+### Findings Accepted
+
+- **S-P2-1:** header count and per-value size limits were already present, but
+  header names and aggregate header bytes were not bounded explicitly.
+
+### Fixes Implemented
+
+- Added `MAX_HEADER_NAME_BYTES = 256`.
+- Added `MAX_HEADER_TOTAL_BYTES = 64 * 1024`.
+- Enforced both bounds during `OutboxEvent` header freezing before the mapping
+  is exposed as immutable.
+- Added focused tests for oversized header names, aggregate header bytes, and
+  the existing per-value bound.
+
+### Verification
+
+- Focused green run:
+  `uv run pytest tests/test_core.py::test_event_rejects_oversized_header_name tests/test_core.py::test_event_rejects_oversized_header_total tests/test_core.py::test_event_rejects_oversized_header_value -q`
+  -> 3 passed
+- Full package gates:
+  `uv run pytest -q` -> 192 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 51 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
