@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from durable_outbox.core.model import OutboxStatus
@@ -92,6 +94,7 @@ class JsonlAuditSink:
 
 
 MetricKind = Literal["counter", "gauge"]
+type MetricKey = tuple[str, tuple[tuple[str, str], ...]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,25 +107,32 @@ class MetricSample:
 
 class CollectingMetricsAdapter:
     def __init__(self) -> None:
-        self._counters: dict[tuple[str, tuple[tuple[str, str], ...]], float] = {}
-        self._gauges: dict[tuple[str, tuple[tuple[str, str], ...]], float] = {}
+        self._counters: Counter[MetricKey] = Counter()
+        self._gauges: dict[MetricKey, float] = {}
+        self._lock = Lock()
 
     def increment(self, name: str, **labels: str) -> None:
         key = _metric_key(name, labels)
-        self._counters[key] = self._counters.get(key, 0.0) + 1.0
+        with self._lock:
+            self._counters[key] += 1
 
     def gauge(self, name: str, value: float, **labels: str) -> None:
-        self._gauges[_metric_key(name, labels)] = float(value)
+        key = _metric_key(name, labels)
+        with self._lock:
+            self._gauges[key] = float(value)
 
     def collect(self) -> tuple[MetricSample, ...]:
+        with self._lock:
+            counters = tuple(sorted(self._counters.items()))
+            gauges = tuple(sorted(self._gauges.items()))
         samples: list[MetricSample] = []
         samples.extend(
             MetricSample(name=name, kind="counter", value=value, labels=labels)
-            for (name, labels), value in sorted(self._counters.items())
+            for (name, labels), value in counters
         )
         samples.extend(
             MetricSample(name=name, kind="gauge", value=value, labels=labels)
-            for (name, labels), value in sorted(self._gauges.items())
+            for (name, labels), value in gauges
         )
         return tuple(samples)
 
@@ -267,7 +277,7 @@ def _append_jsonl_audit_line(path: Path, line: str, fsync: bool) -> None:
 def _metric_key(
     name: str,
     labels: dict[str, str],
-) -> tuple[str, tuple[tuple[str, str], ...]]:
+) -> MetricKey:
     return name, tuple(sorted(labels.items()))
 
 

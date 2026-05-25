@@ -1851,3 +1851,45 @@ verification evidence.
   `uv run ruff format --check .` -> 53 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 61: Thread-Safe In-Memory Metrics
+
+### Findings Accepted
+
+- **P-P1-5:** `CollectingMetricsAdapter` and `InMemoryMetrics` updated shared
+  dictionaries without synchronization, which becomes unsafe once dispatcher or
+  adapter code emits metrics from concurrent tasks or worker threads.
+
+### Fixes Implemented
+
+- Changed `CollectingMetricsAdapter` counters to `collections.Counter` and
+  protected counter/gauge mutation plus collection snapshots with a
+  `threading.Lock`.
+- Added the same lock protection to `InMemoryMetrics` counter and gauge
+  mutations while preserving its public `counts` and `gauges` attributes for
+  existing tests.
+- Kept the synchronous `MetricsAdapter` protocol unchanged so dispatcher,
+  failover, store, and operations callers do not need async metric plumbing.
+- Added a threaded regression test that exercises both metrics adapters from
+  eight worker threads and verifies exact aggregate counter totals.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_operations.py::test_metrics_adapters_keep_exact_threaded_counter_totals -q`
+  -> failed because `CollectingMetricsAdapter._counters` was dict-backed.
+- Focused green run:
+  `uv run pytest tests/test_operations.py::test_metrics_adapters_keep_exact_threaded_counter_totals -q`
+  -> 1 passed.
+- Focused lint/type/format:
+  `uv run ruff check durable_outbox/operations.py durable_outbox/telemetry/metrics.py tests/test_operations.py`
+  -> all checks passed;
+  `uv run ruff format --check durable_outbox/operations.py durable_outbox/telemetry/metrics.py tests/test_operations.py`
+  -> 3 files already formatted;
+  `uv run ty check` -> all checks passed.
+- Full package gates:
+  `uv run pytest -q` -> 225 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 53 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.

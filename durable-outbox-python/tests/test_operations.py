@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import threading
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -20,6 +22,7 @@ from durable_outbox.operations import (
     MetricSample,
     StatusSummary,
 )
+from durable_outbox.telemetry import InMemoryMetrics
 from durable_outbox.testing import FixedClock
 
 if TYPE_CHECKING:
@@ -294,6 +297,39 @@ def test_collecting_metrics_adapter_exports_prometheus_text() -> None:
         'result="success\\nnext\\x00hidden"} 1\n'
         "# TYPE outbox_events_pending_total gauge\n"
         "outbox_events_pending_total 2\n"
+    )
+
+
+def test_metrics_adapters_keep_exact_threaded_counter_totals() -> None:
+    collecting = CollectingMetricsAdapter()
+    in_memory = InMemoryMetrics()
+    increments_per_worker = 500
+    worker_count = 8
+
+    def increment_many() -> None:
+        for _ in range(increments_per_worker):
+            collecting.increment("outbox_publish_attempts_total", topic="orders")
+            in_memory.increment("outbox_publish_attempts_total", topic="orders")
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = [executor.submit(increment_many) for _ in range(worker_count)]
+        for future in futures:
+            future.result()
+
+    assert isinstance(collecting._counters, Counter)
+    expected = float(increments_per_worker * worker_count)
+    assert (
+        MetricSample(
+            name="outbox_publish_attempts_total",
+            kind="counter",
+            value=expected,
+            labels=(("topic", "orders"),),
+        )
+        in collecting.collect()
+    )
+    assert (
+        in_memory.counts[("outbox_publish_attempts_total", (("topic", "orders"),))]
+        == expected
     )
 
 
