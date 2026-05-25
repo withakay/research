@@ -45,6 +45,7 @@ from durable_outbox.telemetry.metrics import MetricsAdapter, NoopMetrics
 
 type BlobRegionName = Literal["primary", "secondary"]
 _LOGGER = logging.getLogger(__name__)
+MAX_BLOB_PAYLOAD_BYTES = 10 * 1024 * 1024
 
 
 def event_blob_name(event_id: str) -> str:
@@ -219,6 +220,7 @@ class BlobOutboxStore:
         supports_ordering=True,
         supports_failover_replay=True,
         supports_ttl_freeze=True,
+        max_payload_bytes=MAX_BLOB_PAYLOAD_BYTES,
         notes=("GRS/RA-GRS alone is not sufficient for RPO=0.",),
     )
 
@@ -266,6 +268,7 @@ class BlobOutboxStore:
             supports_ordering=True,
             supports_failover_replay=True,
             supports_ttl_freeze=True,
+            max_payload_bytes=MAX_BLOB_PAYLOAD_BYTES,
             notes=("GRS/RA-GRS alone is not sufficient for RPO=0.",),
         )
 
@@ -764,6 +767,7 @@ class DualRegionBlobOutboxStore:
             supports_ordering=True,
             supports_failover_replay=True,
             supports_ttl_freeze=True,
+            max_payload_bytes=MAX_BLOB_PAYLOAD_BYTES,
             notes=(
                 "RPO=0 is achieved by application-level dual writes.",
                 "Azure GRS/RA-GRS alone is not sufficient for RPO=0.",

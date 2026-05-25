@@ -44,6 +44,11 @@ deployment-secret `fingerprint_key` to `BlobOutboxStore` or
 `DualRegionBlobOutboxStore`; keyed mode stores an HMAC-SHA256 instead and all
 readers of the same container must use the same key.
 
+Blob stores set `max_payload_bytes` to 10 MiB. This keeps JSON/base64 encoding,
+fingerprint calculation, and Blob readback below the adapter's defensive memory
+budget. Larger messages should use a claim-check payload stored outside the
+outbox record.
+
 ## Cosmos
 
 Cosmos RPO=0 requires strong consistency, more than one region, and single-write configuration. Multi-write and session-consistency modes can still be useful, but they must not declare `rpo_zero_for_accepted_events=True` in certified mode.

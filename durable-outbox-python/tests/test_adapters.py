@@ -16,6 +16,7 @@ from durable_outbox.core.errors import (
 from durable_outbox.core.model import OutboxStatus, PublishResult
 from durable_outbox.core.store import DurableOutboxStore
 from durable_outbox.stores.blob_geo import (
+    MAX_BLOB_PAYLOAD_BYTES,
     BlobOutboxStore,
     DualRegionBlobOutboxStore,
     InMemoryBlobClient,
@@ -337,6 +338,18 @@ async def test_blob_put_rejects_incompatible_duplicate() -> None:
 
     with pytest.raises(DuplicateEventConflictError, match="topic"):
         await store.put(incompatible)
+
+
+@pytest.mark.asyncio
+async def test_blob_store_rejects_payloads_above_fingerprint_budget() -> None:
+    store = BlobOutboxStore.for_testing()
+    event = replace(
+        make_event("oversized-blob-payload"),
+        payload=b"x" * (MAX_BLOB_PAYLOAD_BYTES + 1),
+    )
+
+    with pytest.raises(ValidationError, match="max_payload_bytes"):
+        await store.put(event)
 
 
 @pytest.mark.asyncio

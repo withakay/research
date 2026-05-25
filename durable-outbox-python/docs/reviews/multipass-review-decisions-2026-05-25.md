@@ -1503,3 +1503,39 @@ verification evidence.
   `uv run ruff format --check .` -> 52 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 52: Blob Payload Fingerprint Budget
+
+### Findings Accepted
+
+- **S-P3-3:** Blob event fingerprinting re-serializes and base64-encodes the
+  payload, so adversarially large payloads needed an adapter-level cap.
+
+### Fixes Implemented
+
+- Added `MAX_BLOB_PAYLOAD_BYTES = 10 MiB` and advertised it through Blob and
+  dual-region Blob `OutboxCapabilities.max_payload_bytes`.
+- Reused the existing `enforce_payload_size()` store boundary so oversized Blob
+  events fail with `ValidationError` before JSON encoding, fingerprinting, or
+  backend writes.
+- Documented the Blob `max_payload_bytes` limit and claim-check guidance in
+  `docs/providers.md`.
+- Added focused tests for Blob payload rejection and provider documentation.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_adapters.py::test_blob_store_rejects_payloads_above_fingerprint_budget tests/test_packaging_docs.py::test_provider_docs_cover_rpo_zero_modes -q`
+  -> failed because `MAX_BLOB_PAYLOAD_BYTES` did not exist and docs did not
+  mention `max_payload_bytes`.
+- Focused green run:
+  `uv run pytest tests/test_adapters.py::test_blob_store_rejects_payloads_above_fingerprint_budget tests/test_packaging_docs.py::test_provider_docs_cover_rpo_zero_modes -q`
+  -> 2 passed
+- Adapter/docs and package gates:
+  `uv run pytest tests/test_adapters.py tests/test_packaging_docs.py -q` -> 115 passed;
+  `uv run pytest -q` -> 213 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed after applying one import-order
+  fix with `uv run ruff check . --fix`;
+  `uv run ruff format --check .` -> 52 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
