@@ -73,3 +73,22 @@ uv run ruff format --check .
 uv run ty check
 uv build
 ```
+
+## Integration Tests
+
+The optional Aspire suite starts Azurite, Kafka, and the Python integration
+tests as one local topology. It requires the Aspire CLI plus a local container
+runtime such as Podman.
+
+```bash
+cd integration/aspire
+aspire run --apphost DurableOutbox.Integration.AppHost/DurableOutbox.Integration.AppHost.csproj
+```
+
+The integration tests can also run against manually managed services:
+
+```bash
+export DURABLE_OUTBOX_AZURITE_CONNECTION_STRING="UseDevelopmentStorage=true"
+export DURABLE_OUTBOX_KAFKA_BOOTSTRAP_SERVERS="localhost:9092"
+uv run --extra azure --extra kafka pytest -m integration tests/integration
+```

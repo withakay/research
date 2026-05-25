@@ -14,6 +14,10 @@ Blob RPO=0 requires application-level dual writes:
 
 Azure Storage GRS, RA-GRS, GZRS, or RA-GZRS alone is asynchronous replication and is not an RPO=0 acceptance boundary.
 
+`AzureBlobClient` adapts Azure Blob Storage, including Azurite, to the
+`BlobOutboxStore` protocol. The optional Aspire integration suite starts
+Azurite for local Blob coverage and Kafka for real broker coverage.
+
 ## Cosmos
 
 Cosmos RPO=0 requires strong consistency, more than one region, and single-write configuration. Multi-write and session-consistency modes can still be useful, but they must not declare `rpo_zero_for_accepted_events=True` in certified mode.
@@ -22,3 +26,10 @@ Cosmos RPO=0 requires strong consistency, more than one region, and single-write
 
 Azure SQL RPO=0 requires committing the outbox row and then completing `sp_wait_for_database_copy_sync` against the active secondary before returning success. SQL Server Always On RPO=0 requires synchronous commit with the required synchronized secondaries configured.
 
+## Kafka
+
+The Kafka sink enforces certified producer defaults such as `acks=all` and
+idempotence. For local integration tests that should not publish to Kafka,
+`FileSink` writes the same event envelope to a JSONL file and returns
+Kafka-like partition/offset metadata. This gives deterministic dispatch
+coverage while the Aspire suite can still exercise a real Kafka broker.

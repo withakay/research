@@ -1,0 +1,5 @@
+{
+  "appHost": {
+    "path": "DurableOutbox.Integration.AppHost/DurableOutbox.Integration.AppHost.csproj"
+  }
+}

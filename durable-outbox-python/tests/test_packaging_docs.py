@@ -11,6 +11,7 @@ def test_readme_documents_configured_extras_and_verification_commands() -> None:
     for extra in pyproject["project"]["optional-dependencies"]:
         assert f"durable-outbox[{extra}]" in readme
     assert "uv run pytest" in readme
+    assert "aspire run --apphost DurableOutbox.Integration.AppHost" in readme
     assert "uv run ruff check ." in readme
     assert "uv run ty check" in readme
     assert "uv build" in readme

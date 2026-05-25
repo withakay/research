@@ -23,7 +23,7 @@ dependencies = []
 
 [project.optional-dependencies]
 kafka = ["confluent-kafka>=2.6.0"]
-azure = ["azure-storage-blob>=12.23.0", "azure-cosmos>=4.7.0"]
+azure = ["aiohttp>=3.13.0", "azure-storage-blob>=12.23.0", "azure-cosmos>=4.7.0"]
 sql = ["pyodbc>=5.2.0"]
 
 [dependency-groups]
