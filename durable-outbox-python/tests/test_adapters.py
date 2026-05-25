@@ -18,6 +18,7 @@ from durable_outbox.stores.blob_geo import (
     BlobOutboxStore,
     DualRegionBlobOutboxStore,
     InMemoryBlobClient,
+    _decode_record,
     _encode_record,
     blob_metadata,
     event_blob_name,
@@ -28,7 +29,11 @@ from durable_outbox.stores.cosmos import (
     CosmosStrongOutboxStore,
     InMemoryCosmosOutboxClient,
 )
-from durable_outbox.stores.memory import CleanupFreezeState, MemoryOutboxStore
+from durable_outbox.stores.memory import (
+    CleanupFreezeState,
+    MemoryOutboxStore,
+    StoredEvent,
+)
 from durable_outbox.stores.sql import (
     SQL_ORDERED_INDEX_NAME,
     SQL_PENDING_INDEX_NAME,
@@ -299,6 +304,42 @@ async def test_blob_decode_requires_created_and_expires_timestamps() -> None:
 
     with pytest.raises(RetryableStoreError, match="created_at"):
         await store._load_record(event.event_id)
+
+
+@pytest.mark.parametrize(
+    ("field_path", "value", "match"),
+    [
+        (("accepted",), "false", "accepted"),
+        (("claim_token",), 123, "claim_token"),
+        (("attempt_count",), True, "attempt_count"),
+        (("event", "headers", "x-bad"), 123, "headers"),
+        (("publish_result", "metadata", "partition"), 1, "metadata"),
+    ],
+)
+def test_blob_decode_rejects_invalid_field_types(
+    field_path: tuple[str, ...],
+    value: Any,
+    match: str,
+) -> None:
+    event = make_event("invalid-field")
+    stored = StoredEvent(
+        event=event,
+        status=OutboxStatus.SENT,
+        publish_result=PublishResult(
+            partition=1,
+            offset=2,
+            published_at=datetime.now(UTC),
+            metadata={"partition": "0"},
+        ),
+    )
+    encoded = json.loads(_encode_record(stored))
+    target = encoded
+    for field in field_path[:-1]:
+        target = target[field]
+    target[field_path[-1]] = value
+
+    with pytest.raises(RetryableStoreError, match=match):
+        _decode_record(json.dumps(encoded).encode())
 
 
 @pytest.mark.asyncio

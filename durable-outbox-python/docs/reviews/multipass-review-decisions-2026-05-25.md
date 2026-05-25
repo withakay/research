@@ -1063,6 +1063,40 @@ verification evidence.
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
 
+## Batch 40: Strict Blob Record Decode Types
+
+### Findings Accepted
+
+- **S-P3-1:** Blob record decoding still accepted or coerced invalid JSON field
+  types, including string booleans, boolean attempt counts, non-string claim
+  tokens, non-string header values, and non-string publish-result metadata.
+
+### Fixes Implemented
+
+- Added field-specific Blob decode helpers for required/optional strings,
+  integers, booleans, mappings, timestamps, status values, publishing modes,
+  base64 byte fields, headers, and publish-result metadata.
+- Converted low-level bad-base64 and malformed timestamp errors into
+  `RetryableStoreError` with the affected field name.
+- Stopped silently coercing corrupt JSON scalar values with `str(...)`,
+  `int(...)`, `bool(...)`, or `dict(...)`.
+- Added representative decode regression tests for invalid record, event, and
+  publish-result field types.
+
+### Verification
+
+- Focused red run showed all five invalid-type cases were accepted or leaked a
+  lower-level base64 error before implementation.
+- Focused green run:
+  `uv run pytest tests/test_adapters.py::test_blob_decode_rejects_invalid_field_types tests/test_adapters.py::test_blob_decode_requires_created_and_expires_timestamps -q`
+  -> 6 passed
+- Full package gates:
+  `uv run pytest -q` -> 197 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 51 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
+
 ## Batch 39: Dual-Region Mirror Observability
 
 ### Findings Accepted

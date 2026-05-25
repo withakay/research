@@ -1,4 +1,5 @@
 import base64
+import binascii
 import json
 import logging
 from collections.abc import Iterable, Mapping
@@ -1107,20 +1108,23 @@ def _decode_record(content: bytes) -> StoredEvent:
     data = json.loads(content.decode("utf-8"))
     if not isinstance(data, dict):
         raise RetryableStoreError("invalid blob record")
+    record: Mapping[str, Any] = data
     return StoredEvent(
-        event=_decode_event(data["event"]),
-        status=OutboxStatus(data["status"]),
-        accepted=bool(data["accepted"]),
-        accepted_at=_decode_datetime(data["accepted_at"]),
-        attempt_count=int(data["attempt_count"]),
-        claim_token=data["claim_token"],
-        claimed_at=_decode_datetime(data["claimed_at"]),
-        next_attempt_at=_decode_datetime(data["next_attempt_at"]),
-        sent_at=_decode_datetime(data["sent_at"]),
-        publish_result=_decode_publish_result(data["publish_result"]),
-        failed_at=_decode_datetime(data["failed_at"]),
-        last_error_type=data["last_error_type"],
-        last_error=data["last_error"],
+        event=_decode_event(_mapping_field(record, "event")),
+        status=_status_field(record, "status"),
+        accepted=_bool_field(record, "accepted"),
+        accepted_at=_optional_datetime_field(record, "accepted_at"),
+        attempt_count=_int_field(record, "attempt_count"),
+        claim_token=_optional_str_field(record, "claim_token"),
+        claimed_at=_optional_datetime_field(record, "claimed_at"),
+        next_attempt_at=_optional_datetime_field(record, "next_attempt_at"),
+        sent_at=_optional_datetime_field(record, "sent_at"),
+        publish_result=_decode_publish_result(
+            _optional_mapping_field(record, "publish_result")
+        ),
+        failed_at=_optional_datetime_field(record, "failed_at"),
+        last_error_type=_optional_str_field(record, "last_error_type"),
+        last_error=_optional_str_field(record, "last_error"),
     )
 
 
@@ -1144,24 +1148,21 @@ def _encode_event(event: OutboxEvent) -> dict[str, Any]:
 
 
 def _decode_event(data: Mapping[str, Any]) -> OutboxEvent:
-    created_at = _require_datetime(data["created_at"], field_name="created_at")
-    expires_at = _require_datetime(data["expires_at"], field_name="expires_at")
+    created_at = _required_datetime_field(data, "created_at")
+    expires_at = _required_datetime_field(data, "expires_at")
     return OutboxEvent(
-        event_id=str(data["event_id"]),
-        topic=str(data["topic"]),
-        payload=_decode_bytes(str(data["payload"])),
-        key=_decode_optional_bytes(data["key"]),
-        headers={
-            str(name): _decode_bytes(str(value))
-            for name, value in dict(data["headers"]).items()
-        },
+        event_id=_str_field(data, "event_id"),
+        topic=_str_field(data, "topic"),
+        payload=_decode_bytes_field(data, "payload"),
+        key=_decode_optional_bytes_field(data, "key"),
+        headers=_decode_headers(_mapping_field(data, "headers")),
         created_at=created_at,
         expires_at=expires_at,
-        ordering_key=data["ordering_key"],
-        ordering_sequence=data["ordering_sequence"],
-        publishing_mode=PublishingMode(data["publishing_mode"]),
-        schema_id=data["schema_id"],
-        schema_version=data["schema_version"],
+        ordering_key=_optional_str_field(data, "ordering_key"),
+        ordering_sequence=_optional_int_field(data, "ordering_sequence"),
+        publishing_mode=_publishing_mode_field(data, "publishing_mode"),
+        schema_id=_optional_str_field(data, "schema_id"),
+        schema_version=_optional_str_field(data, "schema_version"),
     )
 
 
@@ -1179,14 +1180,12 @@ def _encode_publish_result(result: PublishResult | None) -> dict[str, Any] | Non
 def _decode_publish_result(data: Mapping[str, Any] | None) -> PublishResult | None:
     if data is None:
         return None
-    published_at = _require_datetime(data["published_at"], field_name="published_at")
+    published_at = _required_datetime_field(data, "published_at")
     return PublishResult(
-        partition=data["partition"],
-        offset=data["offset"],
+        partition=_optional_int_field(data, "partition"),
+        offset=_optional_int_field(data, "offset"),
         published_at=published_at,
-        metadata={
-            str(key): str(value) for key, value in dict(data["metadata"]).items()
-        },
+        metadata=_str_mapping_field(data, "metadata"),
     )
 
 
@@ -1208,17 +1207,29 @@ def _encode_datetime(value: datetime | None) -> str | None:
 def _decode_datetime(value: Any) -> datetime | None:
     if value is None:
         return None
-    decoded = datetime.fromisoformat(str(value))
+    if not isinstance(value, str):
+        raise RetryableStoreError("blob record datetime value must be a string")
+    try:
+        decoded = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise RetryableStoreError("blob record datetime value is invalid") from exc
     if decoded.tzinfo is None:
         return decoded.replace(tzinfo=UTC)
     return decoded
 
 
-def _require_datetime(value: Any, *, field_name: str) -> datetime:
-    decoded = _decode_datetime(value)
+def _required_datetime_field(data: Mapping[str, Any], field_name: str) -> datetime:
+    decoded = _decode_datetime(_field(data, field_name))
     if decoded is None:
         raise RetryableStoreError(f"blob record missing required {field_name}")
     return decoded
+
+
+def _optional_datetime_field(
+    data: Mapping[str, Any],
+    field_name: str,
+) -> datetime | None:
+    return _decode_datetime(_field(data, field_name))
 
 
 def _encode_bytes(value: bytes) -> str:
@@ -1231,14 +1242,127 @@ def _encode_optional_bytes(value: bytes | None) -> str | None:
     return _encode_bytes(value)
 
 
-def _decode_bytes(value: str) -> bytes:
-    return base64.b64decode(value.encode("ascii"))
+def _decode_bytes_field(data: Mapping[str, Any], field_name: str) -> bytes:
+    value = _str_field(data, field_name)
+    try:
+        return base64.b64decode(value.encode("ascii"), validate=True)
+    except (binascii.Error, UnicodeEncodeError) as exc:
+        raise RetryableStoreError(f"blob record invalid {field_name}") from exc
 
 
-def _decode_optional_bytes(value: Any) -> bytes | None:
+def _decode_optional_bytes_field(
+    data: Mapping[str, Any],
+    field_name: str,
+) -> bytes | None:
+    if _field(data, field_name) is None:
+        return None
+    return _decode_bytes_field(data, field_name)
+
+
+def _decode_headers(data: Mapping[str, Any]) -> dict[str, bytes]:
+    headers: dict[str, bytes] = {}
+    for name, value in data.items():
+        if not isinstance(name, str) or not isinstance(value, str):
+            raise RetryableStoreError("blob record invalid headers")
+        try:
+            headers[name] = base64.b64decode(value.encode("ascii"), validate=True)
+        except (binascii.Error, UnicodeEncodeError) as exc:
+            raise RetryableStoreError("blob record invalid headers") from exc
+    return headers
+
+
+def _str_mapping_field(data: Mapping[str, Any], field_name: str) -> dict[str, str]:
+    mapping = _mapping_field(data, field_name)
+    values: dict[str, str] = {}
+    for key, value in mapping.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            raise RetryableStoreError(f"blob record invalid {field_name}")
+        values[key] = value
+    return values
+
+
+def _status_field(data: Mapping[str, Any], field_name: str) -> OutboxStatus:
+    value = _str_field(data, field_name)
+    try:
+        return OutboxStatus(value)
+    except ValueError as exc:
+        raise RetryableStoreError(f"blob record invalid {field_name}") from exc
+
+
+def _publishing_mode_field(
+    data: Mapping[str, Any],
+    field_name: str,
+) -> PublishingMode:
+    value = _str_field(data, field_name)
+    try:
+        return PublishingMode(value)
+    except ValueError as exc:
+        raise RetryableStoreError(f"blob record invalid {field_name}") from exc
+
+
+def _mapping_field(data: Mapping[str, Any], field_name: str) -> Mapping[str, Any]:
+    value = _field(data, field_name)
+    if not isinstance(value, Mapping):
+        raise RetryableStoreError(f"blob record invalid {field_name}")
+    return value
+
+
+def _optional_mapping_field(
+    data: Mapping[str, Any],
+    field_name: str,
+) -> Mapping[str, Any] | None:
+    value = _field(data, field_name)
     if value is None:
         return None
-    return _decode_bytes(str(value))
+    if not isinstance(value, Mapping):
+        raise RetryableStoreError(f"blob record invalid {field_name}")
+    return value
+
+
+def _str_field(data: Mapping[str, Any], field_name: str) -> str:
+    value = _field(data, field_name)
+    if not isinstance(value, str):
+        raise RetryableStoreError(f"blob record invalid {field_name}")
+    return value
+
+
+def _optional_str_field(data: Mapping[str, Any], field_name: str) -> str | None:
+    value = _field(data, field_name)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise RetryableStoreError(f"blob record invalid {field_name}")
+    return value
+
+
+def _bool_field(data: Mapping[str, Any], field_name: str) -> bool:
+    value = _field(data, field_name)
+    if not isinstance(value, bool):
+        raise RetryableStoreError(f"blob record invalid {field_name}")
+    return value
+
+
+def _int_field(data: Mapping[str, Any], field_name: str) -> int:
+    value = _field(data, field_name)
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise RetryableStoreError(f"blob record invalid {field_name}")
+    return value
+
+
+def _optional_int_field(data: Mapping[str, Any], field_name: str) -> int | None:
+    value = _field(data, field_name)
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise RetryableStoreError(f"blob record invalid {field_name}")
+    return value
+
+
+def _field(data: Mapping[str, Any], field_name: str) -> Any:
+    try:
+        return data[field_name]
+    except KeyError as exc:
+        raise RetryableStoreError(f"blob record missing required {field_name}") from exc
 
 
 def _epoch_ms(value: datetime) -> int:
