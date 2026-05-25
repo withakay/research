@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from importlib import import_module
 from time import monotonic
-from typing import Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from durable_outbox.core.errors import (
     ConfigurationError,
@@ -12,6 +12,11 @@ from durable_outbox.core.errors import (
     RetryablePublishError,
 )
 from durable_outbox.core.model import OutboxEvent, PublishingMode, PublishResult
+
+if TYPE_CHECKING:
+    from confluent_kafka import Producer as ConfluentProducer
+else:
+    ConfluentProducer = Any
 
 type DeliveryCallback = Callable[[object, object], None]
 type KafkaProducerFactory = Callable[[dict[str, object]], KafkaProducerLike]
@@ -222,5 +227,5 @@ def _confluent_producer_factory(config: dict[str, object]) -> KafkaProducerLike:
         raise ConfigurationError(
             "Kafka sink requires the kafka extra: install durable-outbox[kafka]"
         ) from exc
-    producer_cls: Any = module.Producer
+    producer_cls = cast(type[ConfluentProducer], module.Producer)
     return cast(KafkaProducerLike, producer_cls(config))

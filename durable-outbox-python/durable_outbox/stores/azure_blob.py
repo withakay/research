@@ -1,6 +1,6 @@
 from collections.abc import Mapping
 from importlib import import_module
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from durable_outbox.core.errors import ConfigurationError, RetryableStoreError
 from durable_outbox.stores.blob_geo import (
@@ -14,10 +14,26 @@ _AZURE_EXTRA_MESSAGE = (
 MAX_BLOB_DOWNLOAD_BYTES = 16 * 1024 * 1024
 
 
+class AzureContainerClientLike(Protocol):
+    async def create_container(self) -> None: ...
+
+    def get_blob_client(self, name: str) -> Any: ...
+
+    def list_blobs(self, *, name_starts_with: str) -> Any: ...
+
+
+if TYPE_CHECKING:
+    from azure.storage.blob.aio import ContainerClient as AzureSdkContainerClient
+
+    type AzureContainerClient = AzureContainerClientLike | AzureSdkContainerClient
+else:
+    AzureContainerClient = AzureContainerClientLike
+
+
 class AzureBlobClient:
     """Blob client adapter backed by Azure Blob Storage or Azurite."""
 
-    def __init__(self, container_client: Any) -> None:
+    def __init__(self, container_client: AzureContainerClient) -> None:
         self.container_client = container_client
 
     @classmethod
@@ -58,7 +74,7 @@ class AzureBlobClient:
             properties = await blob_client.get_blob_properties()
             _enforce_blob_download_size(properties)
             download = await blob_client.download_blob()
-            content = await download.readall()
+            content = _downloaded_blob_content(await download.readall())
             if len(content) > MAX_BLOB_DOWNLOAD_BYTES:
                 raise RetryableStoreError(
                     "blob download exceeds max_blob_download_bytes="
@@ -70,7 +86,7 @@ class AzureBlobClient:
             raise
         return BlobObject(
             name=name,
-            content=bytes(content),
+            content=content,
             metadata=dict(cast(Mapping[str, str], properties.metadata or {})),
             etag=str(properties.etag),
         )
@@ -187,6 +203,14 @@ def _blob_content_size(properties: object) -> int | None:
         if isinstance(size, int):
             return size
     return None
+
+
+def _downloaded_blob_content(content: object) -> bytes:
+    if isinstance(content, bytes):
+        return content
+    if isinstance(content, bytearray | memoryview):
+        return bytes(content)
+    raise RetryableStoreError("blob download content must be bytes")
 
 
 def _is_azure_error(exc: Exception, names: set[str]) -> bool:

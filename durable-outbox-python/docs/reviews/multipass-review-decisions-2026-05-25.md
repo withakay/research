@@ -1161,3 +1161,35 @@ verification evidence.
   `uv run ruff format --check .` -> 51 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 42: Optional SDK Typing Gates
+
+### Findings Accepted
+
+- **Q-P1-5:** Azure and Kafka adapters still used broad `Any` around optional
+  SDK integration points, making strict type checking less useful near provider
+  boundaries.
+
+### Fixes Implemented
+
+- Added `TYPE_CHECKING` imports for Azure Blob `ContainerClient` and
+  `confluent_kafka.Producer` so optional SDK names are visible to type checkers
+  without runtime imports.
+- Added a structural Azure container-client protocol so tests and custom
+  container clients remain supported without weakening runtime dependency
+  boundaries.
+- Tightened Kafka producer factory casting to the optional SDK producer type.
+- Added a typed bytes guard for Azure download content, converting non-bytes
+  SDK responses into `RetryableStoreError`.
+
+### Verification
+
+- Focused green run:
+  `uv run pytest tests/test_azure_blob_and_file_sink.py tests/test_kafka_operations.py -q`
+  -> 23 passed
+- Full package gates:
+  `uv run pytest -q` -> 202 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 51 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
