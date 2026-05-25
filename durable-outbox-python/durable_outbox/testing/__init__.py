@@ -1,3 +1,4 @@
+from durable_outbox.testing.clock import FixedClock
 from durable_outbox.testing.failure_injection import FailingSink, FailingStore
 from durable_outbox.testing.fake_sink import FakeSink
 from durable_outbox.testing.fake_store import FakeOutboxStore
@@ -12,6 +13,7 @@ __all__ = [
     "FailingStore",
     "FakeOutboxStore",
     "FakeSink",
+    "FixedClock",
     "ProviderContract",
     "run_basic_provider_contract",
     "run_provider_contract",

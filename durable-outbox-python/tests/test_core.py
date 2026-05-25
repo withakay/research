@@ -23,7 +23,7 @@ from durable_outbox.core import (
 from durable_outbox.core.errors import DuplicateEventConflictError
 from durable_outbox.stores.blob_geo import BlobOutboxStore
 from durable_outbox.telemetry import InMemoryMetrics
-from durable_outbox.testing import FailingSink, FakeOutboxStore, FakeSink
+from durable_outbox.testing import FailingSink, FakeOutboxStore, FakeSink, FixedClock
 from durable_outbox.testing.failure_injection import FailingStore
 from durable_outbox.testing.provider_contract import (
     ProviderContract,
@@ -31,14 +31,6 @@ from durable_outbox.testing.provider_contract import (
     run_basic_provider_contract,
     run_provider_contract,
 )
-
-
-class FixedClock:
-    def __init__(self, now: datetime) -> None:
-        self.now = now
-
-    def utcnow(self) -> datetime:
-        return self.now
 
 
 class ConcurrentSink(FakeSink):

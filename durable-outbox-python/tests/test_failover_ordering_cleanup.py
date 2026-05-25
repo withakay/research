@@ -22,7 +22,7 @@ from durable_outbox.stores.blob_geo import (
 from durable_outbox.stores.cosmos import CosmosConfiguration, CosmosStrongOutboxStore
 from durable_outbox.stores.sql import AzureSqlSyncOutboxStore, SqlAlwaysOnOutboxStore
 from durable_outbox.telemetry import InMemoryMetrics
-from durable_outbox.testing import FakeOutboxStore, FakeSink
+from durable_outbox.testing import FakeOutboxStore, FakeSink, FixedClock
 from durable_outbox.testing.provider_contract import make_event
 
 
@@ -36,14 +36,6 @@ class SelectivelyFailingSink(FakeSink):
         if event.event_id == "failing-replay":
             raise RuntimeError(f"publish failed for {event.event_id}")
         return await super().publish(event)
-
-
-class FixedClock:
-    def __init__(self, now: datetime) -> None:
-        self.now = now
-
-    def utcnow(self) -> datetime:
-        return self.now
 
 
 def test_failover_replayer_requires_rpo_zero_by_default() -> None:

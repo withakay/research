@@ -46,16 +46,8 @@ from durable_outbox.stores.sql import (
     SqlAlwaysOnOutboxStore,
 )
 from durable_outbox.telemetry import InMemoryMetrics
-from durable_outbox.testing import FakeOutboxStore
+from durable_outbox.testing import FakeOutboxStore, FixedClock
 from durable_outbox.testing.provider_contract import make_event
-
-
-class FixedClock:
-    def __init__(self, now: datetime) -> None:
-        self.now = now
-
-    def utcnow(self) -> datetime:
-        return self.now
 
 
 class InterruptingClock(FixedClock):

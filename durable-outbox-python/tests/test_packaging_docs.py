@@ -136,6 +136,12 @@ def test_public_contracts_have_docstrings() -> None:
     assert inspect.getdoc(MessageSink.publish)
 
 
+def test_fixed_clock_testing_helper_is_centralized() -> None:
+    for path in (PROJECT_ROOT / "tests").glob("test_*.py"):
+        assert "\nclass FixedClock" not in path.read_text()
+    assert (PROJECT_ROOT / "durable_outbox" / "testing" / "clock.py").is_file()
+
+
 def test_dependabot_tracks_uv_lockfiles_for_durable_outbox_packages() -> None:
     dependabot = (REPO_ROOT / ".github" / "dependabot.yml").read_text()
 

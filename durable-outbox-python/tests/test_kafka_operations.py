@@ -21,6 +21,7 @@ from durable_outbox.operations import (
 )
 from durable_outbox.sinks.kafka import KafkaProducerConfig, KafkaSink
 from durable_outbox.telemetry import InMemoryMetrics
+from durable_outbox.testing import FixedClock
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,14 +143,6 @@ class CollectingAuditSink:
 
     async def record(self, record: AuditRecord) -> None:
         self.records.append(record)
-
-
-class FixedClock:
-    def __init__(self, now: datetime) -> None:
-        self.now = now
-
-    def utcnow(self) -> datetime:
-        return self.now
 
 
 def make_event(

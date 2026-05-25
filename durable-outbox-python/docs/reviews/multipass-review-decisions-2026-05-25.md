@@ -1433,3 +1433,35 @@ verification evidence.
   `uv run ruff format --check .` -> 51 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 50: Shared Fixed Test Clock
+
+### Findings Accepted
+
+- **Q-NIT-2:** `FixedClock` was duplicated across several test modules.
+
+### Fixes Implemented
+
+- Added `durable_outbox.testing.FixedClock` as the shared test clock helper.
+- Replaced local `FixedClock` classes in core, adapter, Kafka, operations, and
+  failover/ordering tests.
+- Added a packaging/docs guard that fails if test modules reintroduce local
+  `FixedClock` classes.
+
+### Verification
+
+- Focused grep:
+  `rg -n "class FixedClock|FixedClock\\(" tests durable_outbox/testing`
+  -> only the shared class definition and call sites remain.
+- Focused test run:
+  `uv run pytest tests/test_core.py tests/test_adapters.py tests/test_kafka_operations.py tests/test_operations.py tests/test_failover_ordering_cleanup.py -q`
+  -> 182 passed
+- Centralization guard:
+  `uv run pytest tests/test_packaging_docs.py::test_fixed_clock_testing_helper_is_centralized -q`
+  -> 1 passed
+- Full package gates:
+  `uv run pytest -q` -> 211 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 52 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.

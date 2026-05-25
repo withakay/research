@@ -18,6 +18,7 @@ from durable_outbox.operations import (
     MetricSample,
     StatusSummary,
 )
+from durable_outbox.testing import FixedClock
 
 
 @dataclass(slots=True)
@@ -47,14 +48,6 @@ class FailingAuditSink:
     async def record(self, record: AuditRecord) -> None:
         _ = record
         raise RuntimeError("audit unavailable")
-
-
-class FixedClock:
-    def __init__(self, now: datetime) -> None:
-        self.now = now
-
-    def utcnow(self) -> datetime:
-        return self.now
 
 
 def make_metadata(
