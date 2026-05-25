@@ -945,3 +945,31 @@ verification evidence.
   `uv build` -> source distribution and wheel built successfully.
 - Wheel inspection:
   `uv run python - ...` -> `durable_outbox/py.typed` present in the built wheel.
+
+## Batch 35: Cosmos Bucket Hashing
+
+### Findings Accepted
+
+- **Q-P3-2:** Cosmos unordered partition selection converted an entire SHA-256
+  hex digest to an integer just to take a modulo bucket.
+
+### Fixes Implemented
+
+- Added `_hash_bucket()` that converts the first eight digest bytes with
+  `int.from_bytes(..., "big")`.
+- Kept ordered partition keys on the existing full hash string so existing
+  ordered key names remain stable.
+- Added a deterministic test that locks the unordered bucket for a known event
+  ID.
+
+### Verification
+
+- Focused green run:
+  `uv run pytest tests/test_adapters.py::test_cosmos_unordered_partition_key_uses_stable_bucket tests/test_adapters.py::test_cosmos_partition_key_colocates_ordered_events -q`
+  -> 2 passed
+- Full package gates:
+  `uv run pytest -q` -> 189 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 51 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.

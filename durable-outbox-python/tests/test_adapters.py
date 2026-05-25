@@ -615,6 +615,19 @@ def test_cosmos_partition_key_colocates_ordered_events() -> None:
     assert store.partition_key_for(event).startswith(f"{event.topic}#")
 
 
+def test_cosmos_unordered_partition_key_uses_stable_bucket() -> None:
+    store = CosmosStrongOutboxStore.for_testing(
+        CosmosConfiguration(
+            consistency="Strong",
+            regions=("westus", "eastus"),
+            unordered_buckets=16,
+        )
+    )
+    event = make_event("event-1")
+
+    assert store.partition_key_for(event) == f"{event.topic}#9"
+
+
 @pytest.mark.asyncio
 async def test_cosmos_records_partition_keys_in_client() -> None:
     client = InMemoryCosmosOutboxClient()

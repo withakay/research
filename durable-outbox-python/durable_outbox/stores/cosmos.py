@@ -401,7 +401,7 @@ class CosmosStrongOutboxStore:
     def partition_key_for(self, event: OutboxEvent) -> str:
         if event.publishing_mode is PublishingMode.ORDERED and event.ordering_key:
             return f"{event.topic}#{_hash(event.ordering_key)}"
-        bucket = int(_hash(event.event_id), 16) % self.config.unordered_buckets
+        bucket = _hash_bucket(event.event_id, buckets=self.config.unordered_buckets)
         return f"{event.topic}#{bucket}"
 
     async def _claimed_record(self, claimed: ClaimedEvent) -> CosmosStoredEvent:
@@ -491,6 +491,11 @@ class CosmosStrongOutboxStore:
 
 def _hash(value: str) -> str:
     return sha256(value.encode("utf-8")).hexdigest()
+
+
+def _hash_bucket(value: str, *, buckets: int) -> int:
+    digest = sha256(value.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big") % buckets
 
 
 def _mark_sent_if_claimed(
