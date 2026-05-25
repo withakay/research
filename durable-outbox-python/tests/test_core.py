@@ -196,6 +196,113 @@ async def test_dispatcher_returns_retryable_failure_to_pending() -> None:
 
 
 @pytest.mark.asyncio
+async def test_dispatcher_truncates_retryable_error_message_before_store_update() -> (
+    None
+):
+    store = FakeOutboxStore()
+    event = make_event()
+    await store.put(event)
+    metrics = InMemoryMetrics()
+    long_error = "broker unavailable: " + ("x" * 1500)
+
+    summary = await OutboxDispatcher(
+        store,
+        FailingSink(errors=[TimeoutError(long_error)]),
+        metrics=metrics,
+    ).run_once(limit=10)
+
+    record = store.records[event.event_id]
+    assert summary.retried == 1
+    assert record.last_error is not None
+    assert len(record.last_error.encode()) <= 512
+    assert record.last_error.endswith("...[truncated]")
+    assert (
+        metrics.counts[
+            (
+                "outbox_error_messages_truncated_total",
+                (
+                    ("error_type", "TimeoutError"),
+                    ("topic", event.topic),
+                ),
+            )
+        ]
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_observes_retry_state_update_failure() -> None:
+    inner = FakeOutboxStore()
+    event = make_event()
+    await inner.put(event)
+    store = FailingStore(
+        inner,
+        mark_retry_errors=[RuntimeError("retry update failed")],
+    )
+    metrics = InMemoryMetrics()
+
+    summary = await OutboxDispatcher(
+        store,
+        FailingSink(errors=[TimeoutError("broker timeout")]),
+        metrics=metrics,
+    ).run_once(limit=10)
+
+    record = inner.records[event.event_id]
+    assert summary.retried == 0
+    assert summary.store_update_failed == 1
+    assert record.status is OutboxStatus.IN_FLIGHT
+    assert (
+        metrics.counts[
+            (
+                "outbox_store_update_failures_total",
+                (
+                    ("error_type", "RuntimeError"),
+                    ("operation", "mark_pending_after_retryable_failure"),
+                    ("topic", event.topic),
+                ),
+            )
+        ]
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_observes_failed_state_update_failure() -> None:
+    inner = FakeOutboxStore()
+    event = make_event()
+    await inner.put(event)
+    store = FailingStore(
+        inner,
+        mark_failed_errors=[RuntimeError("failed update failed")],
+    )
+    metrics = InMemoryMetrics()
+
+    summary = await OutboxDispatcher(
+        store,
+        FailingSink(errors=[NonRetryablePublishError("unknown topic")]),
+        metrics=metrics,
+    ).run_once(limit=10)
+
+    record = inner.records[event.event_id]
+    assert summary.failed == 0
+    assert summary.store_update_failed == 1
+    assert record.status is OutboxStatus.IN_FLIGHT
+    assert (
+        metrics.counts[
+            (
+                "outbox_store_update_failures_total",
+                (
+                    ("error_type", "RuntimeError"),
+                    ("operation", "mark_failed"),
+                    ("topic", event.topic),
+                ),
+            )
+        ]
+        == 1
+    )
+
+
+@pytest.mark.asyncio
 async def test_dispatcher_uses_claim_attempt_count_for_retry_backoff() -> None:
     store = FakeOutboxStore()
     event = make_event()

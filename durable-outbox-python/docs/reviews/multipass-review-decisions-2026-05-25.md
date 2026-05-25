@@ -129,3 +129,36 @@ verification evidence.
 - `uv run pytest -q` -> 117 passed, 2 skipped
 - `uv run ruff check .`
 - `uv run ty check`
+
+## Batch 4: Error Message Bounds And Store-Update Observability
+
+### Findings Accepted
+
+- **S-NEW-P1-2:** dispatcher paths passed raw `str(exc)` into store
+  `last_error` fields, allowing long broker or driver messages to overflow SQL
+  storage and leave events stuck `IN_FLIGHT`.
+
+### Fixes Implemented
+
+- Added a 512-byte stored error-message cap in `OutboxDispatcher` before
+  retryable or non-retryable publish errors are written to stores.
+- Added `outbox_error_messages_truncated_total{topic,error_type}` when a stored
+  error message is shortened.
+- Wrapped `mark_pending_after_retryable_failure()` and `mark_failed()` store
+  updates so failures increment
+  `outbox_store_update_failures_total{topic,operation,error_type}` and are
+  reflected in `DispatchSummary.store_update_failed` instead of escaping the
+  dispatcher loop without observability.
+- Emitted the same generic store-update failure metric for post-ack
+  `mark_sent()` failures, preserving the existing specific
+  `outbox_mark_sent_failures_total` metric.
+- Increased the SQL DDL `last_error` column to `NVARCHAR(2048)` as headroom
+  above the application cap.
+
+### Verification
+
+- Focused red tests showed the long error was stored at 1520 bytes and retry/
+  failed-state failure injection was unsupported before implementation.
+- Focused green run:
+  `uv run pytest tests/test_core.py::test_dispatcher_truncates_retryable_error_message_before_store_update tests/test_core.py::test_dispatcher_observes_retry_state_update_failure tests/test_core.py::test_dispatcher_observes_failed_state_update_failure tests/test_core.py::test_dispatcher_does_not_mark_pending_after_post_ack_store_failure -q`
+  -> 4 passed

@@ -614,6 +614,7 @@ def test_sql_schema_contains_required_indexes() -> None:
     assert SQL_PENDING_INDEX_NAME in SQL_SCHEMA
     assert SQL_REPLAY_INDEX_NAME in SQL_SCHEMA
     assert SQL_ORDERED_INDEX_NAME in SQL_SCHEMA
+    assert "last_error          NVARCHAR(2048) NULL" in SQL_SCHEMA
 
 
 @pytest.mark.asyncio

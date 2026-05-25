@@ -42,11 +42,15 @@ class FailingStore:
         *,
         put_errors: Iterable[Exception] = (),
         claim_errors: Iterable[Exception] = (),
+        mark_retry_errors: Iterable[Exception] = (),
+        mark_failed_errors: Iterable[Exception] = (),
         mark_sent_errors: Iterable[Exception] = (),
     ) -> None:
         self._store = store
         self._put_errors = list(put_errors)
         self._claim_errors = list(claim_errors)
+        self._mark_retry_errors = list(mark_retry_errors)
+        self._mark_failed_errors = list(mark_failed_errors)
         self._mark_sent_errors = list(mark_sent_errors)
         self.capabilities = store.capabilities
 
@@ -73,6 +77,8 @@ class FailingStore:
         error_message: str,
         next_attempt_at: datetime,
     ) -> None:
+        if self._mark_retry_errors:
+            raise self._mark_retry_errors.pop(0)
         await self._store.mark_pending_after_retryable_failure(
             claimed,
             error_type=error_type,
@@ -87,6 +93,8 @@ class FailingStore:
         error_type: str,
         error_message: str,
     ) -> None:
+        if self._mark_failed_errors:
+            raise self._mark_failed_errors.pop(0)
         await self._store.mark_failed(
             claimed,
             error_type=error_type,

@@ -50,7 +50,7 @@ CREATE TABLE {SQL_TABLE_NAME} (
     kafka_offset        BIGINT NULL,
     failed_at_utc       DATETIME2 NULL,
     last_error_type     NVARCHAR(256) NULL,
-    last_error          NVARCHAR(1024) NULL,
+    last_error          NVARCHAR(2048) NULL,
     row_version         ROWVERSION NOT NULL
 );
 
