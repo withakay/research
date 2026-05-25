@@ -38,11 +38,13 @@ class SelectivelyFailingSink(FakeSink):
 
 def test_failover_replayer_requires_rpo_zero_by_default() -> None:
     with pytest.raises(ConfigurationError, match="RPO=0"):
-        FailoverReplayer(BlobOutboxStore(), FakeSink())
+        FailoverReplayer(BlobOutboxStore.for_testing(), FakeSink())
 
 
 def test_failover_replayer_can_opt_out_of_rpo_zero_validation() -> None:
-    replayer = FailoverReplayer(BlobOutboxStore(), FakeSink(), require_rpo_zero=False)
+    replayer = FailoverReplayer(
+        BlobOutboxStore.for_testing(), FakeSink(), require_rpo_zero=False
+    )
 
     assert replayer.store.capabilities.rpo_zero_for_accepted_events is False
 
@@ -239,7 +241,7 @@ async def test_in_memory_ordering_lock_backend_expires_stale_leases() -> None:
 
 @pytest.mark.asyncio
 async def test_blob_ordering_releases_lock_after_successful_publish() -> None:
-    store = BlobOutboxStore(environment="prod")
+    store = BlobOutboxStore.for_testing(environment="prod")
     first = replace(
         make_event("first", ordering_key="customer-1"),
         publishing_mode=PublishingMode.ORDERED,
@@ -264,7 +266,7 @@ async def test_blob_ordering_releases_lock_after_successful_publish() -> None:
 
 @pytest.mark.asyncio
 async def test_blob_ordering_lock_scope_includes_topic() -> None:
-    store = BlobOutboxStore(environment="prod")
+    store = BlobOutboxStore.for_testing(environment="prod")
     first = replace(
         make_event("first", ordering_key="shared"),
         publishing_mode=PublishingMode.ORDERED,
@@ -290,11 +292,11 @@ async def test_blob_ordering_lock_scope_includes_topic() -> None:
     "store",
     [
         FakeOutboxStore(),
-        CosmosStrongOutboxStore(
+        CosmosStrongOutboxStore.for_testing(
             CosmosConfiguration(consistency="Strong", regions=("westus", "eastus"))
         ),
-        AzureSqlSyncOutboxStore(),
-        SqlAlwaysOnOutboxStore(),
+        AzureSqlSyncOutboxStore.for_testing(),
+        SqlAlwaysOnOutboxStore.for_testing(),
     ],
 )
 @pytest.mark.asyncio
@@ -319,7 +321,7 @@ async def test_ordering_scope_includes_topic_for_all_ordered_stores(store: Any) 
 
 @pytest.mark.asyncio
 async def test_blob_ordering_recovers_stale_lock_after_lease_expiry() -> None:
-    store = BlobOutboxStore(
+    store = BlobOutboxStore.for_testing(
         environment="prod",
         claim_timeout=timedelta(seconds=1),
         ordering_lock_lease_duration=timedelta(seconds=0),

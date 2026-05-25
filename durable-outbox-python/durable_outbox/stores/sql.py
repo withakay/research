@@ -7,6 +7,7 @@ from uuid import uuid4
 from durable_outbox.core.capabilities import OutboxCapabilities
 from durable_outbox.core.errors import (
     ClaimConflictError,
+    ConfigurationError,
     DuplicateEventConflictError,
     RetryableStoreError,
 )
@@ -169,7 +170,12 @@ class _SqlOutboxStoreBase:
         claim_timeout: timedelta = timedelta(minutes=5),
         clock: Clock | None = None,
     ) -> None:
-        self.client = client or InMemorySqlOutboxClient()
+        if client is None:
+            raise ConfigurationError(
+                "SQL outbox stores require an explicit SQL client; "
+                "use the adapter for_testing() factory for in-memory tests"
+            )
+        self.client = client
         self.claim_timeout = claim_timeout
         self.clock = clock or SystemClock()
         self.cleanup_frozen = False
@@ -513,24 +519,41 @@ class AzureSqlSyncOutboxStore(_SqlOutboxStoreBase):
         config: AzureSqlSyncConfiguration | None = None,
         *,
         client: SqlOutboxClient | None = None,
+        store_name: str = "AzureSqlSyncOutboxStore",
         claim_timeout: timedelta = timedelta(minutes=5),
         clock: Clock | None = None,
     ) -> None:
         self.config = config or AzureSqlSyncConfiguration()
-        default_client = InMemorySqlOutboxClient(
-            sync_wait_succeeds=self.config.sync_wait_succeeds
-        )
         super().__init__(
-            client=client or default_client,
+            client=client,
             claim_timeout=claim_timeout,
             clock=clock,
         )
         self.capabilities = OutboxCapabilities(
-            store_name="AzureSqlSyncOutboxStore",
+            store_name=store_name,
             rpo_zero_for_accepted_events=True,
             supports_ordering=True,
             supports_failover_replay=True,
             supports_ttl_freeze=True,
+        )
+
+    @classmethod
+    def for_testing(
+        cls,
+        config: AzureSqlSyncConfiguration | None = None,
+        *,
+        claim_timeout: timedelta = timedelta(minutes=5),
+        clock: Clock | None = None,
+    ) -> AzureSqlSyncOutboxStore:
+        config = config or AzureSqlSyncConfiguration()
+        return cls(
+            config,
+            client=InMemorySqlOutboxClient(
+                sync_wait_succeeds=config.sync_wait_succeeds
+            ),
+            store_name="InMemoryAzureSqlSyncOutboxStore",
+            claim_timeout=claim_timeout,
+            clock=clock,
         )
 
     async def wait_for_database_copy_sync(self) -> None:
@@ -546,6 +569,7 @@ class SqlAlwaysOnOutboxStore(_SqlOutboxStoreBase):
         *,
         required_synchronized_secondaries: int = 1,
         client: SqlOutboxClient | None = None,
+        store_name: str = "SqlAlwaysOnOutboxStore",
         claim_timeout: timedelta = timedelta(minutes=5),
         clock: Clock | None = None,
     ) -> None:
@@ -555,11 +579,30 @@ class SqlAlwaysOnOutboxStore(_SqlOutboxStoreBase):
         super().__init__(client=client, claim_timeout=claim_timeout, clock=clock)
         self.required_synchronized_secondaries = required_synchronized_secondaries
         self.capabilities = OutboxCapabilities(
-            store_name="SqlAlwaysOnOutboxStore",
+            store_name=store_name,
             rpo_zero_for_accepted_events=True,
             supports_ordering=True,
             supports_failover_replay=True,
             supports_ttl_freeze=True,
+        )
+
+    @classmethod
+    def for_testing(
+        cls,
+        *,
+        required_synchronized_secondaries: int = 1,
+        synchronized_secondaries: int = 1,
+        claim_timeout: timedelta = timedelta(minutes=5),
+        clock: Clock | None = None,
+    ) -> SqlAlwaysOnOutboxStore:
+        return cls(
+            required_synchronized_secondaries=required_synchronized_secondaries,
+            client=InMemorySqlOutboxClient(
+                synchronized_secondaries=synchronized_secondaries
+            ),
+            store_name="InMemorySqlAlwaysOnOutboxStore",
+            claim_timeout=claim_timeout,
+            clock=clock,
         )
 
     async def _after_put_acceptance_boundary(self) -> None:

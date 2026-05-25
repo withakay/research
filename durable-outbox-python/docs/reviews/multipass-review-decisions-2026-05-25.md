@@ -372,3 +372,27 @@ verification evidence.
 - Focused green run:
   `uv run pytest tests/test_operations.py::test_jsonl_audit_sink_runs_fsync_off_event_loop_thread tests/test_operations.py::test_jsonl_audit_sink_appends_fsynced_records -q`
   -> 2 passed
+
+## Batch 13: Explicit Production Adapter Clients
+
+### Findings Accepted
+
+- **A-P0-5:** production adapter constructors silently defaulted to process-local
+  in-memory clients while reporting production-looking capability names.
+
+### Fixes Implemented
+
+- Changed Blob, dual-region Blob, Cosmos, Azure SQL sync, and SQL Always On
+  production constructors to require explicit client objects.
+- Added `.for_testing()` factories for each adapter to preserve concise tests
+  and clearly name in-memory capabilities with `InMemory*` store names.
+- Updated test call sites to use `.for_testing()` when they intentionally use
+  in-memory clients, leaving explicit-client tests unchanged.
+
+### Verification
+
+- Focused red tests showed constructors accepted missing clients and no
+  `.for_testing()` factories existed before implementation.
+- Focused green run:
+  `uv run pytest tests/test_adapters.py tests/test_failover_ordering_cleanup.py tests/test_core.py -q`
+  -> 110 passed

@@ -127,6 +127,7 @@ class CosmosStrongOutboxStore:
         config: CosmosConfiguration,
         *,
         client: CosmosOutboxClient | None = None,
+        store_name: str = "CosmosStrongOutboxStore",
         claim_timeout: timedelta = timedelta(minutes=5),
         clock: Clock | None = None,
     ) -> None:
@@ -137,19 +138,40 @@ class CosmosStrongOutboxStore:
                 "Cosmos certified RPO=0 mode requires strong consistency, "
                 "more than one region, and single-write configuration"
             )
+        if client is None:
+            raise ConfigurationError(
+                "CosmosStrongOutboxStore requires an explicit Cosmos client; "
+                "use CosmosStrongOutboxStore.for_testing() for in-memory tests"
+            )
         self.config = config
-        self.client = client or InMemoryCosmosOutboxClient()
+        self.client = client
         self.claim_timeout = claim_timeout
         self.clock = clock or SystemClock()
         self.cleanup_frozen = False
         self.cleanup_freeze_reason: str | None = None
         self.capabilities = OutboxCapabilities(
-            store_name="CosmosStrongOutboxStore",
+            store_name=store_name,
             rpo_zero_for_accepted_events=config.is_rpo_zero,
             supports_ordering=True,
             supports_failover_replay=True,
             supports_ttl_freeze=True,
             max_payload_bytes=2 * 1024 * 1024,
+        )
+
+    @classmethod
+    def for_testing(
+        cls,
+        config: CosmosConfiguration,
+        *,
+        claim_timeout: timedelta = timedelta(minutes=5),
+        clock: Clock | None = None,
+    ) -> CosmosStrongOutboxStore:
+        return cls(
+            config,
+            client=InMemoryCosmosOutboxClient(),
+            store_name="InMemoryCosmosStrongOutboxStore",
+            claim_timeout=claim_timeout,
+            clock=clock,
         )
 
     async def put(self, event: OutboxEvent) -> AcceptedReceipt:

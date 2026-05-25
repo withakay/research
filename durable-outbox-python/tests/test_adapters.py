@@ -96,6 +96,35 @@ def test_store_protocol_includes_admin_and_cleanup_contracts() -> None:
     assert hasattr(DurableOutboxStore, "replay_event")
 
 
+def test_production_adapters_require_explicit_clients() -> None:
+    with pytest.raises(ConfigurationError, match="for_testing"):
+        BlobOutboxStore()
+    with pytest.raises(ConfigurationError, match="for_testing"):
+        DualRegionBlobOutboxStore()
+    with pytest.raises(ConfigurationError, match="for_testing"):
+        CosmosStrongOutboxStore(
+            CosmosConfiguration(consistency="Strong", regions=("westus", "eastus"))
+        )
+    with pytest.raises(ConfigurationError, match="for_testing"):
+        AzureSqlSyncOutboxStore()
+    with pytest.raises(ConfigurationError, match="for_testing"):
+        SqlAlwaysOnOutboxStore()
+
+
+def test_for_testing_adapters_use_non_production_store_names() -> None:
+    stores = [
+        BlobOutboxStore.for_testing(),
+        DualRegionBlobOutboxStore.for_testing(),
+        CosmosStrongOutboxStore.for_testing(
+            CosmosConfiguration(consistency="Strong", regions=("westus", "eastus"))
+        ),
+        AzureSqlSyncOutboxStore.for_testing(),
+        SqlAlwaysOnOutboxStore.for_testing(),
+    ]
+
+    assert all(store.capabilities.store_name.startswith("InMemory") for store in stores)
+
+
 def test_blob_names_are_deterministic_and_do_not_embed_raw_event_id() -> None:
     first = event_blob_name("event/with/slash")
     second = event_blob_name("event/with/slash")
@@ -126,7 +155,7 @@ def test_ordering_lock_name_is_deterministic() -> None:
 
 @pytest.mark.asyncio
 async def test_blob_put_is_idempotent_for_compatible_duplicate() -> None:
-    store = BlobOutboxStore()
+    store = BlobOutboxStore.for_testing()
     event = make_event("same-event")
 
     first = await store.put(event)
@@ -138,7 +167,7 @@ async def test_blob_put_is_idempotent_for_compatible_duplicate() -> None:
 
 @pytest.mark.asyncio
 async def test_blob_put_rejects_incompatible_duplicate() -> None:
-    store = BlobOutboxStore()
+    store = BlobOutboxStore.for_testing()
     event = make_event("same-event")
     incompatible = replace(event, topic="other-topic")
     await store.put(event)
@@ -207,7 +236,7 @@ async def test_blob_claim_is_single_winner_with_shared_client() -> None:
 
 @pytest.mark.asyncio
 async def test_dual_region_blob_accepts_only_after_both_regions() -> None:
-    store = DualRegionBlobOutboxStore()
+    store = DualRegionBlobOutboxStore.for_testing()
     event = make_event()
 
     receipt = await store.put(event)
@@ -219,7 +248,7 @@ async def test_dual_region_blob_accepts_only_after_both_regions() -> None:
 
 @pytest.mark.asyncio
 async def test_dual_region_blob_can_promote_secondary_for_dispatch() -> None:
-    store = DualRegionBlobOutboxStore()
+    store = DualRegionBlobOutboxStore.for_testing()
     event = make_event("secondary-active")
     await store.put(event)
 
@@ -237,7 +266,7 @@ async def test_dual_region_blob_can_promote_secondary_for_dispatch() -> None:
 
 @pytest.mark.asyncio
 async def test_dual_region_blob_failover_replay_uses_active_secondary() -> None:
-    store = DualRegionBlobOutboxStore()
+    store = DualRegionBlobOutboxStore.for_testing()
     event = make_event("secondary-replay")
     await store._prepare(store.secondary, event)
     await store._accept(store.secondary, event)
@@ -255,7 +284,7 @@ async def test_dual_region_blob_failover_replay_uses_active_secondary() -> None:
 async def test_dual_region_blob_reconciles_prepared_records_before_failover_replay() -> (
     None
 ):
-    store = DualRegionBlobOutboxStore()
+    store = DualRegionBlobOutboxStore.for_testing()
     event = make_event("prepared-replay")
     await store._prepare(store.primary, event)
     await store._prepare(store.secondary, event)
@@ -274,7 +303,7 @@ async def test_dual_region_blob_reconciles_prepared_records_before_failover_repl
 
 @pytest.mark.asyncio
 async def test_dual_region_blob_repair_copies_missing_region() -> None:
-    store = DualRegionBlobOutboxStore()
+    store = DualRegionBlobOutboxStore.for_testing()
     event = make_event()
     await store._prepare(store.primary, event)
     await store._accept(store.primary, event)
@@ -298,7 +327,7 @@ async def test_dual_region_blob_repairs_partial_write_matrix(
     primary_accepted: bool,
     secondary_accepted: bool | None,
 ) -> None:
-    store = DualRegionBlobOutboxStore()
+    store = DualRegionBlobOutboxStore.for_testing()
     event = make_event()
     await store._prepare(store.primary, event)
     if primary_accepted:
@@ -317,7 +346,7 @@ async def test_dual_region_blob_repairs_partial_write_matrix(
 
 @pytest.mark.asyncio
 async def test_dual_region_blob_prepared_records_are_hidden_from_claims() -> None:
-    store = DualRegionBlobOutboxStore()
+    store = DualRegionBlobOutboxStore.for_testing()
     event = make_event()
     await store._prepare(store.primary, event)
     store.records = store.primary.records
@@ -329,7 +358,7 @@ async def test_dual_region_blob_prepared_records_are_hidden_from_claims() -> Non
 async def test_blob_store_uses_injected_clock_for_lifecycle_timestamps() -> None:
     occurred_at = datetime(2026, 5, 22, 9, 30, tzinfo=UTC)
     clock = FixedClock(occurred_at)
-    store = BlobOutboxStore(clock=clock)
+    store = BlobOutboxStore.for_testing(clock=clock)
     event = make_event("clocked")
 
     receipt = await store.put(event)
@@ -366,7 +395,7 @@ def test_cosmos_and_sql_adapters_do_not_inherit_test_store() -> None:
 
 
 def test_cosmos_partition_key_colocates_ordered_events() -> None:
-    store = CosmosStrongOutboxStore(
+    store = CosmosStrongOutboxStore.for_testing(
         CosmosConfiguration(consistency="Strong", regions=("westus", "eastus"))
     )
     event = make_event("event-1", ordering_key="customer-1")
@@ -393,11 +422,11 @@ async def test_cosmos_records_partition_keys_in_client() -> None:
 @pytest.mark.parametrize(
     "store",
     [
-        CosmosStrongOutboxStore(
+        CosmosStrongOutboxStore.for_testing(
             CosmosConfiguration(consistency="Strong", regions=("westus", "eastus"))
         ),
-        AzureSqlSyncOutboxStore(),
-        SqlAlwaysOnOutboxStore(),
+        AzureSqlSyncOutboxStore.for_testing(),
+        SqlAlwaysOnOutboxStore.for_testing(),
     ],
 )
 @pytest.mark.asyncio
@@ -414,11 +443,11 @@ async def test_provider_put_is_idempotent_for_compatible_duplicate(store: Any) -
 @pytest.mark.parametrize(
     "store",
     [
-        CosmosStrongOutboxStore(
+        CosmosStrongOutboxStore.for_testing(
             CosmosConfiguration(consistency="Strong", regions=("westus", "eastus"))
         ),
-        AzureSqlSyncOutboxStore(),
-        SqlAlwaysOnOutboxStore(),
+        AzureSqlSyncOutboxStore.for_testing(),
+        SqlAlwaysOnOutboxStore.for_testing(),
     ],
 )
 @pytest.mark.asyncio
@@ -433,7 +462,7 @@ async def test_provider_put_rejects_incompatible_duplicate(store: Any) -> None:
 
 @pytest.mark.asyncio
 async def test_cosmos_enforces_declared_payload_limit() -> None:
-    store = CosmosStrongOutboxStore(
+    store = CosmosStrongOutboxStore.for_testing(
         CosmosConfiguration(consistency="Strong", regions=("westus", "eastus"))
     )
     event = replace(make_event("oversized"), payload=b"x" * (2 * 1024 * 1024 + 1))
@@ -485,11 +514,11 @@ async def test_sql_claim_is_single_winner_with_shared_client_snapshots() -> None
 @pytest.mark.parametrize(
     "store",
     [
-        CosmosStrongOutboxStore(
+        CosmosStrongOutboxStore.for_testing(
             CosmosConfiguration(consistency="Strong", regions=("westus", "eastus"))
         ),
-        AzureSqlSyncOutboxStore(),
-        SqlAlwaysOnOutboxStore(),
+        AzureSqlSyncOutboxStore.for_testing(),
+        SqlAlwaysOnOutboxStore.for_testing(),
     ],
 )
 @pytest.mark.asyncio
@@ -545,25 +574,25 @@ async def test_provider_claim_retry_sent_failed_replay_and_cleanup_freeze(
             lambda store, event_id: store.records.get(event_id),
         ),
         (
-            BlobOutboxStore(),
+            BlobOutboxStore.for_testing(),
             lambda store, event_id: store.records.get(event_id),
         ),
         (
-            DualRegionBlobOutboxStore(),
+            DualRegionBlobOutboxStore.for_testing(),
             lambda store, event_id: store.primary.records.get(event_id),
         ),
         (
-            CosmosStrongOutboxStore(
+            CosmosStrongOutboxStore.for_testing(
                 CosmosConfiguration(consistency="Strong", regions=("westus", "eastus"))
             ),
             lambda store, event_id: store.client.get(event_id),
         ),
         (
-            AzureSqlSyncOutboxStore(),
+            AzureSqlSyncOutboxStore.for_testing(),
             lambda store, event_id: store.client.get(event_id),
         ),
         (
-            SqlAlwaysOnOutboxStore(),
+            SqlAlwaysOnOutboxStore.for_testing(),
             lambda store, event_id: store.client.get(event_id),
         ),
     ],
@@ -617,25 +646,25 @@ async def test_provider_repair_failed_to_pending_clears_retry_state(
             lambda store, event_id: store.records.get(event_id),
         ),
         (
-            BlobOutboxStore(),
+            BlobOutboxStore.for_testing(),
             lambda store, event_id: store.records.get(event_id),
         ),
         (
-            DualRegionBlobOutboxStore(),
+            DualRegionBlobOutboxStore.for_testing(),
             lambda store, event_id: store.primary.records.get(event_id),
         ),
         (
-            CosmosStrongOutboxStore(
+            CosmosStrongOutboxStore.for_testing(
                 CosmosConfiguration(consistency="Strong", regions=("westus", "eastus"))
             ),
             lambda store, event_id: store.client.get(event_id),
         ),
         (
-            AzureSqlSyncOutboxStore(),
+            AzureSqlSyncOutboxStore.for_testing(),
             lambda store, event_id: store.client.get(event_id),
         ),
         (
-            SqlAlwaysOnOutboxStore(),
+            SqlAlwaysOnOutboxStore.for_testing(),
             lambda store, event_id: store.client.get(event_id),
         ),
     ],
@@ -754,13 +783,13 @@ async def test_sql_and_cosmos_mark_sent_retry_cas_conflict(
     "store",
     [
         FakeOutboxStore(),
-        BlobOutboxStore(),
-        DualRegionBlobOutboxStore(),
-        CosmosStrongOutboxStore(
+        BlobOutboxStore.for_testing(),
+        DualRegionBlobOutboxStore.for_testing(),
+        CosmosStrongOutboxStore.for_testing(
             CosmosConfiguration(consistency="Strong", regions=("westus", "eastus"))
         ),
-        AzureSqlSyncOutboxStore(),
-        SqlAlwaysOnOutboxStore(),
+        AzureSqlSyncOutboxStore.for_testing(),
+        SqlAlwaysOnOutboxStore.for_testing(),
     ],
 )
 @pytest.mark.asyncio
@@ -787,7 +816,9 @@ def test_sql_schema_contains_required_indexes() -> None:
 
 @pytest.mark.asyncio
 async def test_azure_sql_sync_wait_timeout_is_retryable() -> None:
-    store = AzureSqlSyncOutboxStore(AzureSqlSyncConfiguration(sync_wait_succeeds=False))
+    store = AzureSqlSyncOutboxStore.for_testing(
+        AzureSqlSyncConfiguration(sync_wait_succeeds=False)
+    )
 
     with pytest.raises(RetryableStoreError):
         await store.put(make_event())

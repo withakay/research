@@ -204,7 +204,9 @@ async def test_dispatcher_marks_sent_after_sink_ack() -> None:
 
 def test_dispatcher_can_require_rpo_zero_store() -> None:
     with pytest.raises(ConfigurationError, match="RPO=0"):
-        OutboxDispatcher(BlobOutboxStore(), FakeSink(), require_rpo_zero=True)
+        OutboxDispatcher(
+            BlobOutboxStore.for_testing(), FakeSink(), require_rpo_zero=True
+        )
 
 
 @pytest.mark.asyncio

@@ -10,6 +10,7 @@ from uuid import uuid4
 from durable_outbox.core.capabilities import OutboxCapabilities
 from durable_outbox.core.errors import (
     ClaimConflictError,
+    ConfigurationError,
     DuplicateEventConflictError,
     RetryableStoreError,
 )
@@ -141,12 +142,18 @@ class BlobOutboxStore:
         *,
         client: BlobClientProtocol | None = None,
         environment: str = "default",
+        store_name: str = "BlobOutboxStore",
         ordering_lock_backend: OrderingLockBackend | None = None,
         ordering_lock_lease_duration: timedelta = timedelta(minutes=5),
         claim_timeout: timedelta = timedelta(minutes=5),
         clock: Clock | None = None,
     ) -> None:
-        self.client = client or InMemoryBlobClient()
+        if client is None:
+            raise ConfigurationError(
+                "BlobOutboxStore requires an explicit blob client; "
+                "use BlobOutboxStore.for_testing() for in-memory tests"
+            )
+        self.client = client
         self.environment = environment
         self.ordering_lock_backend = (
             ordering_lock_backend or InMemoryOrderingLockBackend()
@@ -159,6 +166,34 @@ class BlobOutboxStore:
         self.records: dict[str, StoredEvent] = {}
         self._record_etags: dict[str, str] = {}
         self._ordering_leases_by_event_id: dict[str, OrderingLockLease] = {}
+        self.capabilities = OutboxCapabilities(
+            store_name=store_name,
+            rpo_zero_for_accepted_events=False,
+            supports_ordering=True,
+            supports_failover_replay=True,
+            supports_ttl_freeze=True,
+            notes=("GRS/RA-GRS alone is not sufficient for RPO=0.",),
+        )
+
+    @classmethod
+    def for_testing(
+        cls,
+        *,
+        environment: str = "test",
+        ordering_lock_backend: OrderingLockBackend | None = None,
+        ordering_lock_lease_duration: timedelta = timedelta(minutes=5),
+        claim_timeout: timedelta = timedelta(minutes=5),
+        clock: Clock | None = None,
+    ) -> BlobOutboxStore:
+        return cls(
+            client=InMemoryBlobClient(),
+            environment=environment,
+            store_name="InMemoryBlobOutboxStore",
+            ordering_lock_backend=ordering_lock_backend,
+            ordering_lock_lease_duration=ordering_lock_lease_duration,
+            claim_timeout=claim_timeout,
+            clock=clock,
+        )
 
     async def put(self, event: OutboxEvent) -> AcceptedReceipt:
         enforce_payload_size(event, self.capabilities)
@@ -538,6 +573,7 @@ class DualRegionBlobOutboxStore:
         primary_client: BlobClientProtocol | None = None,
         secondary_client: BlobClientProtocol | None = None,
         environment: str = "default",
+        store_name: str = "DualRegionBlobOutboxStore",
         active_region: BlobRegionName = "primary",
         claim_timeout: timedelta = timedelta(minutes=5),
         clock: Clock | None = None,
@@ -545,6 +581,12 @@ class DualRegionBlobOutboxStore:
         if active_region not in ("primary", "secondary"):
             msg = "active_region must be 'primary' or 'secondary'"
             raise ValueError(msg)
+        if primary_client is None or secondary_client is None:
+            raise ConfigurationError(
+                "DualRegionBlobOutboxStore requires explicit primary and secondary "
+                "blob clients; use DualRegionBlobOutboxStore.for_testing() for "
+                "in-memory tests"
+            )
         self.clock = clock or SystemClock()
         self.primary = BlobOutboxStore(
             client=primary_client,
@@ -562,6 +604,36 @@ class DualRegionBlobOutboxStore:
         self.records = self._active.records
         self.cleanup_frozen = False
         self.cleanup_freeze_reason: str | None = None
+        self.capabilities = OutboxCapabilities(
+            store_name=store_name,
+            rpo_zero_for_accepted_events=True,
+            supports_ordering=True,
+            supports_failover_replay=True,
+            supports_ttl_freeze=True,
+            notes=(
+                "RPO=0 is achieved by application-level dual writes.",
+                "Azure GRS/RA-GRS alone is not sufficient for RPO=0.",
+            ),
+        )
+
+    @classmethod
+    def for_testing(
+        cls,
+        *,
+        environment: str = "test",
+        active_region: BlobRegionName = "primary",
+        claim_timeout: timedelta = timedelta(minutes=5),
+        clock: Clock | None = None,
+    ) -> DualRegionBlobOutboxStore:
+        return cls(
+            primary_client=InMemoryBlobClient(),
+            secondary_client=InMemoryBlobClient(),
+            environment=environment,
+            store_name="InMemoryDualRegionBlobOutboxStore",
+            active_region=active_region,
+            claim_timeout=claim_timeout,
+            clock=clock,
+        )
 
     @property
     def _active(self) -> BlobOutboxStore:
