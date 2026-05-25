@@ -301,6 +301,25 @@ async def test_blob_decode_requires_created_and_expires_timestamps() -> None:
 
 
 @pytest.mark.asyncio
+async def test_blob_refresh_evicts_records_deleted_from_backend() -> None:
+    client = InMemoryBlobClient()
+    first = BlobOutboxStore(client=client)
+    second = BlobOutboxStore(client=client)
+    event = make_event("deleted-from-backend")
+    await first.put(event)
+    await second._refresh_records()
+    blob = await client.get_blob(event_blob_name(event.event_id))
+    assert blob is not None
+
+    deleted = await client.delete_blob(blob.name)
+    await second._refresh_records()
+
+    assert deleted is True
+    assert event.event_id not in second.records
+    assert event.event_id not in second._record_etags
+
+
+@pytest.mark.asyncio
 async def test_blob_claim_is_single_winner_with_shared_client() -> None:
     client = InMemoryBlobClient()
     first = BlobOutboxStore(client=client)

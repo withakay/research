@@ -818,3 +818,35 @@ verification evidence.
   `uv run ruff format --check .` -> 51 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 31: Blob Refresh Cache Eviction
+
+### Findings Accepted
+
+- **P-P2-5:** Blob `_refresh_records()` updated records that still existed in
+  storage but never evicted records deleted by cleanup or another process,
+  allowing long-lived store instances to grow stale local mirrors and ETag
+  caches.
+
+### Fixes Implemented
+
+- Tracked event IDs observed during a successful Blob listing refresh.
+- Removed local `records` and `_record_etags` entries that were absent from the
+  latest backend listing.
+- Added a red/green regression test that deletes a Blob object through a shared
+  client and verifies a reopened/refreshed store drops the stale local state.
+
+### Verification
+
+- Focused red run reproduced the stale-cache bug:
+  `uv run pytest tests/test_adapters.py::test_blob_refresh_evicts_records_deleted_from_backend -q`
+  -> failed before implementation.
+- Focused green run:
+  `uv run pytest tests/test_adapters.py::test_blob_refresh_evicts_records_deleted_from_backend -q`
+  -> 1 passed
+- Full package gates:
+  `uv run pytest -q` -> 185 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 51 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.

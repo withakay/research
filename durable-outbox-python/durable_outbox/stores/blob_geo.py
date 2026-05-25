@@ -554,14 +554,19 @@ class BlobOutboxStore:
 
     async def _refresh_records(self) -> None:
         blobs = await self.client.list_blobs(prefix="outbox/v1/events/")
+        seen_ids: set[str] = set()
         for blob in blobs:
             record = _decode_record(blob.content)
             expected_fingerprint = blob.metadata.get("event_fingerprint")
             if expected_fingerprint != _event_fingerprint(record.event):
                 raise RetryableStoreError("blob record fingerprint mismatch")
             event_id = record.event.event_id
+            seen_ids.add(event_id)
             self.records[event_id] = record
             self._record_etags[event_id] = blob.etag
+        for event_id in set(self.records) - seen_ids:
+            self.records.pop(event_id, None)
+            self._record_etags.pop(event_id, None)
 
     async def _write_new_record(self, record: StoredEvent) -> None:
         blob = await self.client.put_blob(
