@@ -6,6 +6,7 @@ from enum import StrEnum
 from types import MappingProxyType
 
 from durable_outbox.core.errors import ValidationError
+from durable_outbox.core.validation import enforce_metadata_safe
 
 MAX_HEADER_COUNT = 64
 MAX_HEADER_VALUE_BYTES = 8192
@@ -50,6 +51,7 @@ class OutboxEvent:
     def __post_init__(self) -> None:
         if not self.event_id:
             raise ValidationError("event_id is required")
+        enforce_metadata_safe(self.event_id, field_name="event_id")
         if not TOPIC_PATTERN.fullmatch(self.topic):
             raise ValidationError("topic must match ^[A-Za-z0-9._-]{1,249}$")
         if not isinstance(self.payload, bytes):

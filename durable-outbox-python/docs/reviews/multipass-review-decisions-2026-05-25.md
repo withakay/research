@@ -632,3 +632,31 @@ verification evidence.
 - Focused green run:
   `uv run pytest tests/test_adapters.py::test_dual_region_records_view_is_read_only_snapshot tests/test_adapters.py::test_dual_region_blob_prepared_records_are_hidden_from_claims tests/test_adapters.py::test_dual_region_blob_can_promote_secondary_for_dispatch -q`
   -> 3 passed
+
+## Batch 24: Blob Metadata Safety
+
+### Findings Accepted
+
+- **S-NEW-P2-1:** Blob metadata values included producer-controlled `event_id`
+  and operator-controlled environment strings without a backend metadata safety
+  check.
+- **S-NEW-P2-1 extension:** Blob cleanup freeze wrote the raw operator reason
+  into metadata even though the reason can be safely stored in the marker JSON
+  body.
+
+### Fixes Implemented
+
+- Added `enforce_metadata_safe()` for printable ASCII metadata values with a
+  length bound.
+- Applied metadata-safe validation to `OutboxEvent.event_id`, Blob store
+  environments, and Blob metadata generation.
+- Stopped writing cleanup freeze reasons to Blob metadata; `_cleanup_is_frozen`
+  now reads the reason from marker content and falls back safely for malformed
+  markers.
+
+### Verification
+
+- Focused red tests showed unsafe event IDs and Blob environments were accepted.
+- Focused green run:
+  `uv run pytest tests/test_security.py tests/test_adapters.py::test_blob_metadata_preserves_envelope_fields -q`
+  -> 8 passed

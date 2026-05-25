@@ -1,10 +1,29 @@
+from __future__ import annotations
+
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from durable_outbox.core.capabilities import OutboxCapabilities
 from durable_outbox.core.errors import ValidationError
-from durable_outbox.core.model import OutboxEvent
+
+if TYPE_CHECKING:
+    from durable_outbox.core.model import OutboxEvent
 
 MAX_CLAIM_BATCH_LIMIT = 1000
+MAX_METADATA_VALUE_CHARS = 1024
+
+
+def enforce_metadata_safe(value: str, *, field_name: str) -> None:
+    if len(value) > MAX_METADATA_VALUE_CHARS:
+        raise ValidationError(
+            f"{field_name} cannot exceed {MAX_METADATA_VALUE_CHARS} characters"
+        )
+    if not value.isascii() or any(
+        ord(character) < 0x20 or ord(character) == 0x7F for character in value
+    ):
+        raise ValidationError(
+            f"{field_name} must contain only printable ASCII metadata characters"
+        )
 
 
 def require_aware_datetime(value: datetime, *, field_name: str) -> None:

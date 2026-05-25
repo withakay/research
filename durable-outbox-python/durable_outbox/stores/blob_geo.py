@@ -30,7 +30,11 @@ from durable_outbox.core.ordering import (
     ordering_scope,
 )
 from durable_outbox.core.time import Clock, SystemClock
-from durable_outbox.core.validation import enforce_payload_size, require_positive_limit
+from durable_outbox.core.validation import (
+    enforce_metadata_safe,
+    enforce_payload_size,
+    require_positive_limit,
+)
 from durable_outbox.stores.memory import StoredEvent
 
 type BlobRegionName = Literal["primary", "secondary"]
@@ -213,6 +217,7 @@ class BlobOutboxStore:
                 "use BlobOutboxStore.for_testing() for in-memory tests"
             )
         self.client = client
+        enforce_metadata_safe(environment, field_name="environment")
         self.environment = environment
         self.ordering_lock_backend = ordering_lock_backend or BlobOrderingLockBackend(
             client
@@ -419,7 +424,7 @@ class BlobOutboxStore:
                 sort_keys=True,
                 separators=(",", ":"),
             ).encode("utf-8"),
-            {"reason": reason},
+            {"control": "cleanup-freeze"},
         )
         self.cleanup_frozen = True
         self.cleanup_freeze_reason = reason
@@ -472,7 +477,7 @@ class BlobOutboxStore:
             self.cleanup_freeze_reason = None
             return False
         self.cleanup_frozen = True
-        self.cleanup_freeze_reason = marker.metadata.get("reason") or "cleanup frozen"
+        self.cleanup_freeze_reason = _cleanup_freeze_reason(marker)
         return True
 
     async def replay_event(self, *, event_id: str) -> bool:
@@ -932,6 +937,9 @@ class DualRegionBlobOutboxStore:
 
 
 def blob_metadata(event: OutboxEvent, *, environment: str) -> Mapping[str, str]:
+    enforce_metadata_safe(event.event_id, field_name="event_id")
+    enforce_metadata_safe(event.topic, field_name="topic")
+    enforce_metadata_safe(environment, field_name="environment")
     values = {
         "accepted": "true",
         "status": "PENDING",
@@ -968,6 +976,17 @@ def _lock_is_expired(blob: BlobObject, *, now: datetime) -> bool:
     if expires_at is None:
         return False
     return expires_at <= now
+
+
+def _cleanup_freeze_reason(blob: BlobObject) -> str:
+    try:
+        data = json.loads(blob.content.decode("utf-8"))
+    except json.JSONDecodeError, UnicodeDecodeError:
+        return "cleanup frozen"
+    if not isinstance(data, dict):
+        return "cleanup frozen"
+    reason = data.get("reason")
+    return reason if isinstance(reason, str) and reason else "cleanup frozen"
 
 
 def _ordering_scope(event: OutboxEvent) -> str | None:
