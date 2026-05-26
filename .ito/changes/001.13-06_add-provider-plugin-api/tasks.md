@@ -1,6 +1,6 @@
 ## 1. Implementation
 - [x] 1.1 Add plugin factory protocols and loader functions to core.
-- [ ] 1.2 Add `available_stores()` and `available_sinks()` helpers.
+- [x] 1.2 Add `available_stores()` and `available_sinks()` helpers.
 - [ ] 1.3 Convert missing plugin, duplicate plugin, and invalid factory outcomes to `ConfigurationError`.
 - [ ] 1.4 Export the plugin API from `durable_outbox` or document its submodule import path.
 - [ ] 1.5 Document plugin package authoring and configuration examples.
