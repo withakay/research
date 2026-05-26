@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
-from typing import Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import pytest
 
@@ -17,10 +18,23 @@ from durable_outbox.stores.cosmos_azure import (
 )
 from durable_outbox.testing.provider_contract import make_event
 
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+
+class QueryCall(TypedDict):
+    query: str
+    parameters: list[dict[str, object]]
+    partition_key: str
+    max_item_count: int | None
+    kwargs: dict[str, object]
+
 
 class FakeContainer:
     def __init__(self) -> None:
         self.items: dict[tuple[str, str], dict[str, object]] = {}
+        self.query_results: dict[str, list[dict[str, object]]] = {}
+        self.queries: list[QueryCall] = []
         self.created: list[dict[str, object]] = []
         self.replaced: list[tuple[str, dict[str, object], dict[str, object]]] = []
         self.deleted: list[tuple[str, str]] = []
@@ -65,6 +79,31 @@ class FakeContainer:
     async def delete_item(self, *, item: str, partition_key: str) -> None:
         self.deleted.append((item, partition_key))
         self.items.pop((partition_key, item), None)
+
+    def query_items(
+        self,
+        query: str,
+        *,
+        parameters: list[dict[str, object]] | None = None,
+        partition_key: str,
+        max_item_count: int | None = None,
+        **kwargs: object,
+    ) -> AsyncIterator[dict[str, object]]:
+        self.queries.append(
+            {
+                "query": query,
+                "parameters": parameters or [],
+                "partition_key": partition_key,
+                "max_item_count": max_item_count,
+                "kwargs": kwargs,
+            }
+        )
+
+        async def results() -> AsyncIterator[dict[str, object]]:
+            for item in self.query_results.get(partition_key, []):
+                yield dict(item)
+
+        return results()
 
 
 class ResourceNotFoundError(Exception):
@@ -288,19 +327,210 @@ async def test_azure_cosmos_candidate_queries_remain_explicitly_unsupported() ->
 
     with pytest.raises(ConfigurationError, match="cross-partition"):
         await client.list_records()
-    with pytest.raises(ConfigurationError, match="partition-scoped"):
+
+
+@pytest.mark.asyncio
+async def test_azure_cosmos_claim_uses_partition_scoped_queries() -> None:
+    now = datetime(2026, 5, 26, 12, 0, tzinfo=UTC)
+    container = FakeContainer()
+    claimable = _record(
+        "claimable",
+        partition_key="durable.outbox.outputs#0",
+        created_at=now - timedelta(minutes=3),
+    )
+    fresh_blocker = _record(
+        "fresh-blocker",
+        partition_key="durable.outbox.outputs#1",
+        created_at=now - timedelta(minutes=2),
+        status=OutboxStatus.IN_FLIGHT,
+        claimed_at=now - timedelta(seconds=10),
+        ordering_key="customer-1",
+    )
+    container.query_results = {
+        "durable.outbox.outputs#0": [encode_cosmos_item(claimable) | {"_etag": '"1"'}],
+        "durable.outbox.outputs#1": [
+            encode_cosmos_item(fresh_blocker) | {"_etag": '"2"'}
+        ],
+    }
+    client = AzureCosmosOutboxClient(
+        container,
+        known_partition_keys=("durable.outbox.outputs#1", "durable.outbox.outputs#0"),
+    )
+
+    records = await client.claim_batch_pending(
+        limit=1,
+        now=now,
+        claim_timeout=timedelta(minutes=5),
+    )
+
+    assert [record.event.event_id for record in records] == [
+        "claimable",
+        "fresh-blocker",
+    ]
+    assert [query["partition_key"] for query in container.queries] == [
+        "durable.outbox.outputs#0",
+        "durable.outbox.outputs#1",
+    ]
+    assert all(
+        "enable_cross_partition_query" not in query["kwargs"]
+        for query in container.queries
+    )
+    assert "ORDER BY c.topic" in str(container.queries[0]["query"])
+    assert "@stale_claimed_before_epoch_ms" in {
+        item["name"] for item in container.queries[0]["parameters"]
+    }
+
+
+@pytest.mark.asyncio
+async def test_azure_cosmos_replay_uses_partition_scoped_queries() -> None:
+    now = datetime(2026, 5, 26, 12, 0, tzinfo=UTC)
+    first = _record(
+        "ordered-first",
+        partition_key="durable.outbox.outputs#ordered",
+        created_at=now - timedelta(minutes=3),
+        ordering_key="customer-1",
+        ordering_sequence=1,
+    )
+    second = _record(
+        "ordered-second",
+        partition_key="durable.outbox.outputs#ordered",
+        created_at=now - timedelta(minutes=2),
+        ordering_key="customer-1",
+        ordering_sequence=2,
+    )
+    expired = _record(
+        "expired",
+        partition_key="durable.outbox.outputs#ordered",
+        created_at=now - timedelta(minutes=4),
+        expires_at=now - timedelta(minutes=1),
+    )
+    container = FakeContainer()
+    container.query_results = {
+        "durable.outbox.outputs#ordered": [
+            encode_cosmos_item(expired) | {"_etag": '"1"'},
+            encode_cosmos_item(first) | {"_etag": '"2"'},
+            encode_cosmos_item(second) | {"_etag": '"3"'},
+        ],
+    }
+    client = AzureCosmosOutboxClient(
+        container,
+        known_partition_keys=("durable.outbox.outputs#ordered",),
+    )
+
+    records = await client.list_failover_replay_candidates(
+        failover_started_at=now,
+        limit=5,
+        exclude_event_ids={"already-seen"},
+    )
+
+    assert [record.event.event_id for record in records] == ["ordered-first"]
+    assert container.queries[0]["partition_key"] == "durable.outbox.outputs#ordered"
+    assert "expires_at_epoch_ms" in str(container.queries[0]["query"])
+    assert "@exclude_event_ids" in {
+        item["name"] for item in container.queries[0]["parameters"]
+    }
+
+
+@pytest.mark.asyncio
+async def test_azure_cosmos_cleanup_uses_partition_scoped_queries() -> None:
+    now = datetime(2026, 5, 26, 12, 0, tzinfo=UTC)
+    expired_sent = _record(
+        "expired-sent",
+        partition_key="durable.outbox.outputs#0",
+        status=OutboxStatus.SENT,
+        expires_at=now - timedelta(hours=2),
+    )
+    fresh_sent = _record(
+        "fresh-sent",
+        partition_key="durable.outbox.outputs#0",
+        status=OutboxStatus.SENT,
+        expires_at=now - timedelta(minutes=1),
+    )
+    container = FakeContainer()
+    container.query_results = {
+        "durable.outbox.outputs#0": [
+            encode_cosmos_item(fresh_sent) | {"_etag": '"1"'},
+            encode_cosmos_item(expired_sent) | {"_etag": '"2"'},
+        ],
+    }
+    client = AzureCosmosOutboxClient(
+        container,
+        known_partition_keys=("durable.outbox.outputs#0",),
+    )
+
+    records = await client.list_cleanup_candidates(
+        now=now,
+        safety_margin=timedelta(minutes=30),
+        limit=1,
+    )
+
+    assert [record.event.event_id for record in records] == ["expired-sent"]
+    assert container.queries[0]["partition_key"] == "durable.outbox.outputs#0"
+    assert "status = @sent_status" in str(container.queries[0]["query"])
+
+
+@pytest.mark.asyncio
+async def test_azure_cosmos_queries_return_empty_without_known_partitions() -> None:
+    container = FakeContainer()
+    client = AzureCosmosOutboxClient(container)
+
+    assert (
         await client.claim_batch_pending(
             limit=1,
             now=datetime.now(UTC),
             claim_timeout=timedelta(minutes=5),
         )
-    with pytest.raises(ConfigurationError, match="partition-scoped"):
+        == ()
+    )
+    assert (
         await client.list_failover_replay_candidates(
             failover_started_at=datetime.now(UTC),
             limit=1,
         )
-    with pytest.raises(ConfigurationError, match="partition-scoped"):
+        == ()
+    )
+    assert (
         await client.list_cleanup_candidates(
             now=datetime.now(UTC),
             safety_margin=timedelta(seconds=0),
         )
+        == ()
+    )
+    assert container.queries == []
+
+
+def _record(
+    event_id: str,
+    *,
+    partition_key: str,
+    created_at: datetime | None = None,
+    expires_at: datetime | None = None,
+    status: OutboxStatus = OutboxStatus.PENDING,
+    claimed_at: datetime | None = None,
+    ordering_key: str | None = None,
+    ordering_sequence: int | None = None,
+) -> CosmosStoredEvent:
+    now = created_at or (
+        expires_at - timedelta(hours=1)
+        if expires_at is not None
+        else datetime(2026, 5, 26, 12, 0, tzinfo=UTC)
+    )
+    event = replace(
+        make_event(event_id, ordering_key=ordering_key),
+        created_at=now,
+        expires_at=expires_at or now + timedelta(hours=1),
+        publishing_mode=(
+            PublishingMode.ORDERED
+            if ordering_key is not None
+            else PublishingMode.UNORDERED
+        ),
+        ordering_sequence=ordering_sequence,
+    )
+    return CosmosStoredEvent(
+        event=event,
+        partition_key=partition_key,
+        version=1,
+        etag='"1"',
+        status=status,
+        claimed_at=claimed_at,
+    )

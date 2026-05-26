@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import base64
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import AsyncIterable, Collection, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
 from typing import Any, Protocol, cast
 
+from durable_outbox.core.claim import claim_order_key, is_claimable_record
 from durable_outbox.core.errors import (
     ClaimConflictError,
     ConfigurationError,
     RetryableStoreError,
 )
 from durable_outbox.core.model import OutboxEvent, OutboxStatus, PublishingMode
+from durable_outbox.core.ordering import ordering_scope
 from durable_outbox.core.validation import require_positive_limit
 from durable_outbox.stores.cosmos import (
     CosmosConfiguration,
@@ -23,6 +25,45 @@ _AZURE_EXTRA_MESSAGE = (
 )
 _CONTROL_PARTITION_KEY = "__control__"
 _CLEANUP_FREEZE_ID = "cleanup-freeze"
+_CLAIM_CANDIDATES_QUERY = """
+SELECT * FROM c
+WHERE c.pk = @partition_key
+AND (
+    (c.status = @pending_status AND (
+        NOT IS_DEFINED(c.next_attempt_at_epoch_ms)
+        OR IS_NULL(c.next_attempt_at_epoch_ms)
+        OR c.next_attempt_at_epoch_ms <= @now_epoch_ms
+    ))
+    OR (c.status = @in_flight_status
+        AND IS_DEFINED(c.claimed_at_epoch_ms)
+        AND c.claimed_at_epoch_ms <= @stale_claimed_before_epoch_ms)
+    OR (c.status = @in_flight_status
+        AND IS_DEFINED(c.claimed_at_epoch_ms)
+        AND c.claimed_at_epoch_ms > @stale_claimed_before_epoch_ms
+        AND IS_DEFINED(c.ordering_key)
+        AND NOT IS_NULL(c.ordering_key))
+)
+ORDER BY c.topic, c.ordering_key, c.ordering_sequence, c.created_at_epoch_ms
+"""
+_CLEANUP_CANDIDATES_QUERY = """
+SELECT * FROM c
+WHERE c.pk = @partition_key
+AND c.status = @sent_status
+AND c.expires_at_epoch_ms < @expires_before_epoch_ms
+ORDER BY c.expires_at_epoch_ms
+"""
+_REPLAY_CANDIDATES_QUERY = """
+SELECT * FROM c
+WHERE c.pk = @partition_key
+AND c.status IN (@pending_status, @in_flight_status, @sent_status)
+AND c.expires_at_epoch_ms >= @failover_started_at_epoch_ms
+AND NOT ARRAY_CONTAINS(@exclude_event_ids, c.event_id)
+ORDER BY c.created_at_epoch_ms
+"""
+
+
+def _query_parameter(name: str, value: object) -> dict[str, object]:
+    return {"name": name, "value": value}
 
 
 class CosmosContainerLike(Protocol):
@@ -43,6 +84,15 @@ class CosmosContainerLike(Protocol):
 
     async def delete_item(self, *, item: str, partition_key: str) -> None: ...
 
+    def query_items(
+        self,
+        query: str,
+        *,
+        parameters: list[dict[str, object]] | None = None,
+        partition_key: str,
+        max_item_count: int | None = None,
+    ) -> AsyncIterable[Mapping[str, object]]: ...
+
 
 class CosmosAccountClientLike(Protocol):
     async def read_account(self) -> Mapping[str, object]: ...
@@ -54,8 +104,9 @@ class AzureCosmosOutboxClient:
     """Azure Cosmos point-operation client.
 
     This slice deliberately supports point insert/read/replace/delete and
-    account validation only. Partition-scoped claim, replay, and cleanup
-    candidate queries remain explicit future work.
+    account validation, and bounded candidate queries over known partitions.
+    Durable partition discovery and a fully certified Cosmos provider matrix
+    remain explicit future work.
     """
 
     def __init__(
@@ -63,10 +114,12 @@ class AzureCosmosOutboxClient:
         container: CosmosContainerLike,
         *,
         account_client: CosmosAccountClientLike | None = None,
+        known_partition_keys: Collection[str] = (),
     ) -> None:
         self.container = container
         self.account_client = account_client
         self.partition_keys_by_event_id: dict[str, str] = {}
+        self.known_partition_keys: set[str] = set(known_partition_keys)
 
     @classmethod
     def from_connection_string(
@@ -116,13 +169,13 @@ class AzureCosmosOutboxClient:
                 return None
             raise
         record = decode_cosmos_item(item)
-        self.partition_keys_by_event_id[record.event.event_id] = record.partition_key
+        self._remember_partition_key(record)
         return record
 
     async def insert(self, record: CosmosStoredEvent) -> CosmosStoredEvent:
         item = await self.container.create_item(encode_cosmos_item(record))
         stored = decode_cosmos_item(item)
-        self.partition_keys_by_event_id[stored.event.event_id] = stored.partition_key
+        self._remember_partition_key(stored)
         return stored
 
     async def replace(
@@ -147,13 +200,13 @@ class AzureCosmosOutboxClient:
                 raise ClaimConflictError("record etag precondition failed") from exc
             raise
         stored = decode_cosmos_item(item)
-        self.partition_keys_by_event_id[stored.event.event_id] = stored.partition_key
+        self._remember_partition_key(stored)
         return stored
 
     async def list_records(self) -> Sequence[CosmosStoredEvent]:
         raise ConfigurationError(
             "AzureCosmosOutboxClient does not support cross-partition list_records(); "
-            "partition-scoped Cosmos queries are not implemented"
+            "use known partition-scoped candidate queries instead"
         )
 
     async def claim_batch_pending(
@@ -163,11 +216,39 @@ class AzureCosmosOutboxClient:
         now: datetime,
         claim_timeout: timedelta,
     ) -> Sequence[CosmosStoredEvent]:
-        _ = now, claim_timeout
         require_positive_limit(limit)
-        raise ConfigurationError(
-            "AzureCosmosOutboxClient requires partition-scoped Cosmos claim queries"
-        )
+        records: list[CosmosStoredEvent] = []
+        claimable_seen = 0
+        stale_claimed_before = now - claim_timeout
+        parameters = [
+            _query_parameter("@pending_status", OutboxStatus.PENDING.value),
+            _query_parameter("@in_flight_status", OutboxStatus.IN_FLIGHT.value),
+            _query_parameter("@now_epoch_ms", _epoch_ms(now)),
+            _query_parameter(
+                "@stale_claimed_before_epoch_ms",
+                _epoch_ms(stale_claimed_before),
+            ),
+        ]
+        for record in sorted(
+            await self._query_known_partitions(
+                _CLAIM_CANDIDATES_QUERY,
+                parameters=parameters,
+                max_item_count=limit,
+            ),
+            key=claim_order_key,
+        ):
+            if is_claimable_record(record, now=now, claim_timeout=claim_timeout):
+                if claimable_seen >= limit:
+                    continue
+                records.append(record)
+                claimable_seen += 1
+            elif _fresh_ordering_blocker(
+                record,
+                now=now,
+                claim_timeout=claim_timeout,
+            ):
+                records.append(record)
+        return tuple(records)
 
     async def list_failover_replay_candidates(
         self,
@@ -176,11 +257,42 @@ class AzureCosmosOutboxClient:
         limit: int,
         exclude_event_ids: Collection[str] = (),
     ) -> Sequence[CosmosStoredEvent]:
-        _ = failover_started_at, exclude_event_ids
         require_positive_limit(limit)
-        raise ConfigurationError(
-            "AzureCosmosOutboxClient requires partition-scoped Cosmos replay queries"
-        )
+        parameters = [
+            _query_parameter("@pending_status", OutboxStatus.PENDING.value),
+            _query_parameter("@in_flight_status", OutboxStatus.IN_FLIGHT.value),
+            _query_parameter("@sent_status", OutboxStatus.SENT.value),
+            _query_parameter(
+                "@failover_started_at_epoch_ms",
+                _epoch_ms(failover_started_at),
+            ),
+            _query_parameter("@exclude_event_ids", tuple(sorted(exclude_event_ids))),
+        ]
+        records: list[CosmosStoredEvent] = []
+        locked_ordering_scopes: set[str] = set()
+        for record in sorted(
+            await self._query_known_partitions(
+                _REPLAY_CANDIDATES_QUERY,
+                parameters=parameters,
+                max_item_count=limit,
+            ),
+            key=lambda item: item.event.created_at,
+        ):
+            if len(records) >= limit:
+                break
+            if not _replay_candidate(
+                record,
+                failover_started_at=failover_started_at,
+                exclude_event_ids=exclude_event_ids,
+            ):
+                continue
+            scoped_key = ordering_scope(record.event)
+            if scoped_key is not None and scoped_key in locked_ordering_scopes:
+                continue
+            records.append(record)
+            if scoped_key is not None:
+                locked_ordering_scopes.add(scoped_key)
+        return tuple(records)
 
     async def list_cleanup_candidates(
         self,
@@ -189,10 +301,27 @@ class AzureCosmosOutboxClient:
         safety_margin: timedelta,
         limit: int | None = None,
     ) -> Sequence[CosmosStoredEvent]:
-        _ = now, safety_margin, limit
-        raise ConfigurationError(
-            "AzureCosmosOutboxClient requires partition-scoped Cosmos cleanup queries"
-        )
+        expires_before = now - safety_margin
+        records = [
+            record
+            for record in await self._query_known_partitions(
+                _CLEANUP_CANDIDATES_QUERY,
+                parameters=[
+                    _query_parameter("@sent_status", OutboxStatus.SENT.value),
+                    _query_parameter(
+                        "@expires_before_epoch_ms",
+                        _epoch_ms(expires_before),
+                    ),
+                ],
+                max_item_count=limit,
+            )
+            if record.status is OutboxStatus.SENT
+            and now > record.event.expires_at + safety_margin
+        ]
+        records.sort(key=lambda item: item.event.expires_at)
+        if limit is not None:
+            records = records[:limit]
+        return tuple(records)
 
     async def delete(self, event_id: str) -> None:
         partition_key = self.partition_keys_by_event_id.pop(event_id, None)
@@ -206,6 +335,42 @@ class AzureCosmosOutboxClient:
             ):
                 return
             raise
+        if all(
+            partition_key != key for key in self.partition_keys_by_event_id.values()
+        ):
+            self.known_partition_keys.discard(partition_key)
+
+    def add_known_partition_key(self, partition_key: str) -> None:
+        self.known_partition_keys.add(partition_key)
+
+    def _remember_partition_key(self, record: CosmosStoredEvent) -> None:
+        self.partition_keys_by_event_id[record.event.event_id] = record.partition_key
+        self.known_partition_keys.add(record.partition_key)
+
+    async def _query_known_partitions(
+        self,
+        query: str,
+        *,
+        parameters: list[dict[str, object]],
+        max_item_count: int | None,
+    ) -> Sequence[CosmosStoredEvent]:
+        records: list[CosmosStoredEvent] = []
+        for partition_key in sorted(self.known_partition_keys):
+            partition_parameters = [
+                *parameters,
+                _query_parameter("@partition_key", partition_key),
+            ]
+            items = self.container.query_items(
+                query=query,
+                parameters=partition_parameters,
+                partition_key=partition_key,
+                max_item_count=max_item_count,
+            )
+            async for item in items:
+                record = decode_cosmos_item(item)
+                self._remember_partition_key(record)
+                records.append(record)
+        return tuple(records)
 
     async def get_cleanup_freeze_reason(self) -> str | None:
         try:
@@ -398,6 +563,38 @@ def _region_names(value: object) -> set[str]:
 
 def _is_azure_error(exc: Exception, names: set[str]) -> bool:
     return type(exc).__name__ in names
+
+
+def _fresh_ordering_blocker(
+    record: CosmosStoredEvent,
+    *,
+    now: datetime,
+    claim_timeout: timedelta,
+) -> bool:
+    return (
+        ordering_scope(record.event) is not None
+        and record.status is OutboxStatus.IN_FLIGHT
+        and record.claimed_at is not None
+        and record.claimed_at + claim_timeout > now
+    )
+
+
+def _replay_candidate(
+    record: CosmosStoredEvent,
+    *,
+    failover_started_at: datetime,
+    exclude_event_ids: Collection[str],
+) -> bool:
+    return (
+        record.event.event_id not in exclude_event_ids
+        and record.status
+        in {
+            OutboxStatus.PENDING,
+            OutboxStatus.IN_FLIGHT,
+            OutboxStatus.SENT,
+        }
+        and record.event.expires_at >= failover_started_at
+    )
 
 
 def _encode_bytes(value: bytes) -> str:

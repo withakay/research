@@ -57,10 +57,20 @@ Cosmos RPO=0 requires strong consistency, more than one region, and single-write
 behind the `azure` optional extra. It covers lazy SDK import, snake_case JSON
 encode/decode with epoch-millisecond timestamps, point insert/read/replace/delete
 operations, `_etag` optimistic concurrency mapping, cleanup-freeze control
-items, and `read_account()` validation for certified RPO=0 account shape. It is
-not yet a full provider-contract client: normal claim, failover replay, and
-cleanup candidate selection remain explicitly unsupported until the store
-protocol and client expose partition-scoped Cosmos queries.
+items, `read_account()` validation for certified RPO=0 account shape, and
+bounded candidate selection over configured or previously observed partition
+keys. Candidate selection is intentionally partition-scoped: the client passes a
+single `partition_key` to each Cosmos query and never enables cross-partition
+querying. Query methods still return candidates only; claim ownership remains in
+the store's `_etag` compare-and-swap `replace()` path.
+
+This is still not a full provider-contract client. Deployments must provide or
+discover a complete set of active partition keys across process restarts, and
+Cosmos `id` uniqueness is only partition-local unless the container is created
+with an appropriate unique-key/index strategy. Live Cosmos integration tests for
+SDK query behavior, partition completeness, restart duplicate handling, and ETag
+conflicts remain required before treating this adapter as certified provider
+complete.
 
 ## SQL
 

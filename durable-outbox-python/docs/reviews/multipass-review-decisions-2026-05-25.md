@@ -2517,3 +2517,61 @@ verification evidence.
   `uv run ruff format --check .` -> 57 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 75: Azure Cosmos Partition-Scoped Candidate Queries
+
+### Findings Partially Accepted
+
+- **P-P0-5 / A-P0-1:** the Azure Cosmos client now had point operations, but
+  normal claim, failover replay, and cleanup still had no SDK-backed query
+  implementation. The review's full recommendation remains broader: a complete
+  Cosmos provider still needs durable partition discovery, restart-safe
+  event-id uniqueness, and live Cosmos integration coverage.
+
+### Fixes Implemented
+
+- Added `known_partition_keys` and `add_known_partition_key()` to
+  `AzureCosmosOutboxClient`.
+- Recorded partition keys observed through insert, get, replace, and query
+  decoding so later point deletes and candidate queries can stay partition
+  scoped.
+- Implemented `claim_batch_pending()` with per-partition Cosmos queries that
+  return due `PENDING` records, stale `IN_FLIGHT` records, and fresh ordered
+  `IN_FLIGHT` blockers. The store still performs the `_etag` CAS mutation, so
+  this remains candidate selection only.
+- Implemented `list_failover_replay_candidates()` with partition-scoped status,
+  TTL, and exclusion parameters, then kept client-side one-per-ordering-scope
+  filtering after merging partition results.
+- Implemented `list_cleanup_candidates()` with partition-scoped `SENT` expiry
+  queries and global limit application after deterministic oldest-first merge.
+- Kept `list_records()` unsupported to avoid a cross-partition scan API.
+- Updated provider documentation to state the remaining blockers before Cosmos
+  can be called provider-contract complete.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_cosmos_azure.py -q` -> failed because
+  `known_partition_keys` and partition-scoped query methods did not exist.
+- Focused green run:
+  `uv run ruff format tests/test_cosmos_azure.py durable_outbox/stores/cosmos_azure.py && uv run ruff check tests/test_cosmos_azure.py durable_outbox/stores/cosmos_azure.py && uv run ty check && uv run pytest tests/test_cosmos_azure.py -q`
+  -> 13 passed.
+- Focused export run:
+  `uv run pytest tests/test_cosmos_azure.py tests/test_adapters.py::test_store_package_exports_are_importable -q`
+  -> 14 passed.
+- Full package gates:
+  `uv run pytest -q` -> 282 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 57 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
+
+### Deferred
+
+- Persisted partition registry/discovery remains open. A static known-partition
+  tuple is sufficient for bounded candidate queries but not for full restarted
+  worker coverage.
+- Cosmos event-id uniqueness remains partition-local unless deployments provide
+  a unique-key policy, secondary index item, or partition-key-aware public API.
+- Live Azure Cosmos integration tests remain open for SDK query shape, ETag
+  conflict behavior, restart behavior, and partition completeness.
