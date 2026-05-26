@@ -135,6 +135,11 @@ cursor or stream claimed rows can additionally expose
 `iter_failover_replay_candidates(failover_started_at=..., limit=...)` as an async
 iterator. The replayer consumes that stream in bounded in-memory pages and uses
 the same concurrent publish path, avoiding repeated list/exclusion calls.
+The built-in SQL and Cosmos stores expose this streaming shape over their
+provider-side replay candidate seams, so `FailoverReplayer` can consume them
+without falling back to `failover_replay_candidates()`. Deeper backend-native
+replay cursors, such as a SQL batch-token rollback cursor or Cosmos
+continuation-token cursor, remain provider-specific optimizations.
 
 ## Kafka
 

@@ -38,7 +38,7 @@ from durable_outbox.core.validation import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Collection, Sequence
+    from collections.abc import AsyncIterator, Callable, Collection, Sequence
 
 
 @dataclass(frozen=True, slots=True)
@@ -455,14 +455,65 @@ class CosmosStrongOutboxStore:
         exclude_event_ids: Collection[str] = (),
     ) -> list[ClaimedEvent]:
         require_positive_limit(limit)
-        candidates: list[ClaimedEvent] = []
         records = await self.client.list_failover_replay_candidates(
             failover_started_at=failover_started_at,
             limit=limit,
             exclude_event_ids=exclude_event_ids,
         )
-        claimed_originals: list[tuple[CosmosStoredEvent, CosmosStoredEvent]] = []
+        return await self._claim_failover_replay_records(
+            records,
+            failover_started_at=failover_started_at,
+            limit=limit,
+            exclude_event_ids=exclude_event_ids,
+        )
+
+    async def iter_failover_replay_candidates(
+        self,
+        *,
+        failover_started_at: datetime,
+        limit: int,
+    ) -> AsyncIterator[ClaimedEvent]:
+        require_positive_limit(limit)
+        yielded = 0
+        excluded_event_ids: set[str] = set()
         locked_ordering_scopes: set[str] = set()
+        while yielded < limit:
+            records = await self.client.list_failover_replay_candidates(
+                failover_started_at=failover_started_at,
+                limit=1,
+                exclude_event_ids=excluded_event_ids,
+            )
+            if not records:
+                break
+            claimed = await self._claim_failover_replay_records(
+                records,
+                failover_started_at=failover_started_at,
+                limit=1,
+                exclude_event_ids=excluded_event_ids,
+                locked_ordering_scopes=locked_ordering_scopes,
+            )
+            if not claimed:
+                excluded_event_ids.update(record.event.event_id for record in records)
+                continue
+            for candidate in claimed:
+                excluded_event_ids.add(candidate.event.event_id)
+                yielded += 1
+                yield candidate
+
+    async def _claim_failover_replay_records(
+        self,
+        records: Sequence[CosmosStoredEvent],
+        *,
+        failover_started_at: datetime,
+        limit: int,
+        exclude_event_ids: Collection[str],
+        locked_ordering_scopes: set[str] | None = None,
+    ) -> list[ClaimedEvent]:
+        candidates: list[ClaimedEvent] = []
+        claimed_originals: list[tuple[CosmosStoredEvent, CosmosStoredEvent]] = []
+        locked_ordering_scopes = (
+            set() if locked_ordering_scopes is None else locked_ordering_scopes
+        )
         try:
             for record in records:
                 if len(candidates) >= limit:

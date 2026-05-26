@@ -2869,3 +2869,57 @@ verification evidence.
 - Cosmos replay still materializes partition query results before store-level
   claiming. A provider-native async replay cursor remains open under
   **P-P0-5 / P-P1-1**.
+
+## Batch 82: SQL And Cosmos Replay Streaming Stores
+
+### Findings Partially Accepted
+
+- **P-P1-1 / P-P0-2 / P-P0-5:** `FailoverReplayer` already supported an
+  optional async replay iterator, but the built-in SQL and Cosmos stores still
+  did not expose that shape. The replayer therefore fell back to repeated
+  `failover_replay_candidates()` calls for those providers.
+
+### Fixes Implemented
+
+- Added `iter_failover_replay_candidates()` to the shared SQL store base.
+- Added `iter_failover_replay_candidates()` to `CosmosStrongOutboxStore`.
+- Refactored SQL and Cosmos replay candidate claiming through a shared
+  rollback-safe helper per store, preserving the existing behavior where
+  partially claimed records are restored if an exception occurs before the
+  claimed batch is returned.
+- The streaming path asks the provider candidate seam for one bounded candidate
+  at a time, keeps per-run event exclusions, and keeps per-run ordering-scope
+  locks so a streamed replay run does not claim multiple ordered events from
+  the same scope concurrently.
+- Documented that SQL and Cosmos now expose the streaming store shape while
+  deeper backend-native continuation-token or batch-token replay cursors remain
+  future provider-specific optimizations.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_failover_ordering_cleanup.py::test_sql_and_cosmos_failover_replay_expose_streaming_store -q`
+  -> failed because both providers fell back to legacy
+  `failover_replay_candidates()`.
+- Focused green run:
+  `uv run pytest tests/test_failover_ordering_cleanup.py::test_sql_and_cosmos_failover_replay_expose_streaming_store -q`
+  -> 2 passed.
+- Focused lint/type gates:
+  `uv run ruff check durable_outbox/stores/sql.py durable_outbox/stores/cosmos.py tests/test_failover_ordering_cleanup.py`
+  -> all checks passed;
+  `uv run ty check` -> all checks passed.
+- Full package gates:
+  `uv run pytest -q` -> 296 passed, 7 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 59 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
+
+### Deferred
+
+- SQL still needs a provider-native replay claim/rollback cursor if replay
+  claims should be owned by a backend batch token instead of one optimistic
+  replace per streamed candidate.
+- Cosmos still needs a continuation-token-aware replay cursor if replay should
+  stream directly from SDK pages without materializing partition results inside
+  `AzureCosmosOutboxClient`.

@@ -8,9 +8,9 @@ Work in `/Users/jack/Code/withakay/research`. Stay inside `durable-outbox-python
 
 Current state:
 
-- Latest completed batch: live SQL/Cosmos provider certification gates.
+- Latest completed batch: SQL/Cosmos replay streaming store hooks.
 - Latest full gates:
-  - `uv run pytest -q` -> `294 passed, 7 skipped`
+  - `uv run pytest -q` -> `296 passed, 7 skipped`
   - `uv run ruff check .` -> passed
   - `uv run ruff format --check .` -> passed
   - `uv run ty check` -> passed
@@ -48,6 +48,9 @@ Recent implementation notes:
 - `FailoverReplayer` now also consumes stores that expose
   `iter_failover_replay_candidates(...)` as an async iterator, collecting only
   bounded `replay_page_size` chunks before publishing.
+- SQL and Cosmos stores now expose that streaming replay shape, so the replayer
+  does not fall back to the legacy list-returning method for those built-in
+  providers.
 - Store failover replay candidate methods accept `exclude_event_ids`.
 - SQL and Cosmos normal claim paths delegate to `claim_batch_pending()`.
 - SQL and Cosmos failover replay paths delegate to `list_failover_replay_candidates()` instead of `list_records()`.
@@ -70,8 +73,9 @@ Suggested next move:
      claim/rollback design after the pyodbc normal-claim atomic path.
    - `P-P0-5`: live Cosmos integration coverage for the partition registry,
      event index, conditional commits, and repair behavior.
-   - `P-P1-1`: provider-native async replay iterators/cursors for SQL, Cosmos,
-     or Blob. The replayer can consume the optional stream shape, but built-in
-     stores still need backend-specific implementations.
+   - `P-P1-1`: deeper backend-native replay cursors remain open. SQL still
+     needs a batch-token replay claim/rollback design; Cosmos still needs an
+     SDK continuation-token cursor that avoids materializing partition results
+     in the client.
 3. Treat `A-P0-1`, `P-P0-2`, and `P-P0-5` as larger provider-client/query-track work; use subagents before implementing.
 4. For every accepted finding: write or preserve red tests, implement, run focused gates, run full gates, update the decisions doc, then commit conventionally.

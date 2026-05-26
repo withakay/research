@@ -20,8 +20,16 @@ from durable_outbox.stores.blob_geo import (
     InMemoryBlobClient,
     ordering_lock_blob_name,
 )
-from durable_outbox.stores.cosmos import CosmosConfiguration, CosmosStrongOutboxStore
-from durable_outbox.stores.sql import AzureSqlSyncOutboxStore, SqlAlwaysOnOutboxStore
+from durable_outbox.stores.cosmos import (
+    CosmosConfiguration,
+    CosmosStrongOutboxStore,
+    InMemoryCosmosOutboxClient,
+)
+from durable_outbox.stores.sql import (
+    AzureSqlSyncOutboxStore,
+    InMemorySqlOutboxClient,
+    SqlAlwaysOnOutboxStore,
+)
 from durable_outbox.telemetry import InMemoryMetrics
 from durable_outbox.testing import FailingSink, FakeOutboxStore, FakeSink, FixedClock
 from durable_outbox.testing.provider_contract import make_event
@@ -107,6 +115,43 @@ class StreamingReplayStore(FakeOutboxStore):
         _ = failover_started_at, limit, exclude_event_ids
         self.legacy_calls += 1
         raise AssertionError("streaming replay should not use list candidates")
+
+
+class StreamingSqlStore(AzureSqlSyncOutboxStore):
+    def __init__(self) -> None:
+        super().__init__(client=InMemorySqlOutboxClient())
+        self.legacy_calls = 0
+
+    async def failover_replay_candidates(
+        self,
+        *,
+        failover_started_at: datetime,
+        limit: int,
+        exclude_event_ids: Collection[str] = (),
+    ) -> Any:
+        _ = failover_started_at, limit, exclude_event_ids
+        self.legacy_calls += 1
+        raise AssertionError("SQL streaming replay should not use list candidates")
+
+
+class StreamingCosmosStore(CosmosStrongOutboxStore):
+    def __init__(self) -> None:
+        super().__init__(
+            CosmosConfiguration(consistency="Strong", regions=("westus", "eastus")),
+            client=InMemoryCosmosOutboxClient(),
+        )
+        self.legacy_calls = 0
+
+    async def failover_replay_candidates(
+        self,
+        *,
+        failover_started_at: datetime,
+        limit: int,
+        exclude_event_ids: Collection[str] = (),
+    ) -> Any:
+        _ = failover_started_at, limit, exclude_event_ids
+        self.legacy_calls += 1
+        raise AssertionError("Cosmos streaming replay should not use list candidates")
 
 
 def test_failover_replayer_requires_rpo_zero_by_default() -> None:
@@ -366,6 +411,31 @@ async def test_failover_replay_consumes_streaming_store_without_list_pages() -> 
     assert store.stream_calls == 1
     assert store.legacy_calls == 0
     assert len({event.event_id for event in sink.published}) == 5
+
+
+@pytest.mark.parametrize("store", [StreamingSqlStore(), StreamingCosmosStore()])
+@pytest.mark.asyncio
+async def test_sql_and_cosmos_failover_replay_expose_streaming_store(
+    store: StreamingSqlStore | StreamingCosmosStore,
+) -> None:
+    sink = FakeSink()
+    for index in range(3):
+        await store.put(make_event(f"provider-streamed-replay-{index}"))
+
+    summary = await FailoverReplayer(
+        store,
+        sink,
+        replay_page_size=2,
+        max_concurrency=2,
+    ).replay_once(
+        failover_started_at=datetime.now(UTC),
+        limit=3,
+    )
+
+    assert summary.replayed == 3
+    assert summary.errored == 0
+    assert store.legacy_calls == 0
+    assert len({event.event_id for event in sink.published}) == 3
 
 
 @pytest.mark.asyncio
