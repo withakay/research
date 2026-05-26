@@ -3,7 +3,7 @@
 - [x] 1.2 Add project-local uv workspace metadata with `packages/*` members.
 - [x] 1.3 Update README development commands for workspace sync and build.
 - [x] 1.4 Update packaging tests for `uv_build` and workspace-aware commands.
-- [ ] 1.5 Regenerate `uv.lock`.
+- [x] 1.5 Regenerate `uv.lock`.
 
 ## 2. Verification
 - [ ] 2.1 Run `uv sync --all-packages --group dev` from `durable-outbox-python`.
