@@ -57,7 +57,7 @@ Affected areas:
 - `durable-outbox-sql-provider`
 - `durable-outbox-provider-contract`
 - `durable_outbox.stores.cosmos`
-- `durable_outbox.stores.sql`
+- `durable_outbox_sql_store`
 - Shared provider concurrency tests
 
 ## Repository Note

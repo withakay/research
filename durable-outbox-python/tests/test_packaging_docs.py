@@ -19,7 +19,9 @@ OPTIONAL_DEPENDENCY_FLOORS = {
         "azure-cosmos>=4.15.0",
     },
     "kafka": {"confluent-kafka>=2.14.0"},
-    "sql": {"pyodbc>=5.3.0"},
+}
+EXPECTED_WORKSPACE_MEMBERS = {
+    "packages/*",
 }
 EXPECTED_PROJECT_URLS = {"Homepage", "Documentation", "Repository", "Issues"}
 EXPECTED_KEYWORDS = {
@@ -44,11 +46,14 @@ def test_readme_documents_configured_extras_and_verification_commands() -> None:
 
     for extra in pyproject["project"]["optional-dependencies"]:
         assert f"durable-outbox[{extra}]" in readme
+    assert "uv add durable-outbox-file-sink" in readme
+    assert "uv add durable-outbox-sql-store" in readme
     assert "uv run pytest" in readme
     assert "aspire run --apphost DurableOutbox.Integration.AppHost" in readme
     assert "uv run ruff check ." in readme
     assert "uv run ty check" in readme
-    assert "uv build" in readme
+    assert "uv sync --all-packages --group dev" in readme
+    assert "uv build --all-packages" in readme
 
 
 def test_license_file_matches_project_metadata() -> None:
@@ -66,6 +71,64 @@ def test_optional_dependency_floors_match_reviewed_provider_versions() -> None:
         extra: set(dependencies)
         for extra, dependencies in pyproject["project"]["optional-dependencies"].items()
     } == OPTIONAL_DEPENDENCY_FLOORS
+
+
+def test_core_package_uses_uv_build_workspace_metadata() -> None:
+    pyproject = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
+
+    assert pyproject["build-system"] == {
+        "requires": ["uv_build>=0.11.8,<0.12.0"],
+        "build-backend": "uv_build",
+    }
+    assert set(pyproject["tool"]["uv"]["workspace"]["members"]) == (
+        EXPECTED_WORKSPACE_MEMBERS
+    )
+    assert pyproject["tool"]["uv"]["build-backend"]["module-name"] == "durable_outbox"
+    assert pyproject["tool"]["uv"]["build-backend"]["module-root"] == ""
+
+
+def test_provider_plugin_packages_use_uv_build_and_entry_points() -> None:
+    file_sink = tomllib.loads(
+        (
+            PROJECT_ROOT / "packages" / "durable-outbox-file-sink" / "pyproject.toml"
+        ).read_text()
+    )
+    sql_store = tomllib.loads(
+        (
+            PROJECT_ROOT / "packages" / "durable-outbox-sql-store" / "pyproject.toml"
+        ).read_text()
+    )
+
+    assert file_sink["project"]["name"] == "durable-outbox-file-sink"
+    assert sql_store["project"]["name"] == "durable-outbox-sql-store"
+    for plugin in (file_sink, sql_store):
+        assert plugin["build-system"] == {
+            "requires": ["uv_build>=0.11.8,<0.12.0"],
+            "build-backend": "uv_build",
+        }
+        assert plugin["project"]["license"] == "MIT"
+
+    assert file_sink["project"]["entry-points"]["durable_outbox.sinks"] == {
+        "file": "durable_outbox_file_sink:build_file_sink"
+    }
+    assert sql_store["project"]["entry-points"]["durable_outbox.stores"] == {
+        "azure-sql-sync": "durable_outbox_sql_store:build_azure_sql_sync_store",
+        "sql-always-on": "durable_outbox_sql_store:build_sql_always_on_store",
+    }
+    assert (
+        PROJECT_ROOT
+        / "packages"
+        / "durable-outbox-file-sink"
+        / "durable_outbox_file_sink"
+        / "py.typed"
+    ).is_file()
+    assert (
+        PROJECT_ROOT
+        / "packages"
+        / "durable-outbox-sql-store"
+        / "durable_outbox_sql_store"
+        / "py.typed"
+    ).is_file()
 
 
 def test_project_metadata_describes_package_surface() -> None:
@@ -89,6 +152,10 @@ def test_top_level_package_exports_obvious_public_api() -> None:
         "OutboxEvent",
         "RetryPolicy",
         "__version__",
+        "available_sinks",
+        "available_stores",
+        "load_sink",
+        "load_store",
     ):
         assert name in package.__all__
         assert hasattr(package, name)

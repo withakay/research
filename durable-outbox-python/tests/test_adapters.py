@@ -7,6 +7,17 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from durable_outbox_sql_store import (
+    SQL_ORDERED_INDEX_NAME,
+    SQL_PENDING_INDEX_NAME,
+    SQL_REPLAY_INDEX_NAME,
+    SQL_SCHEMA,
+    AzureSqlSyncConfiguration,
+    AzureSqlSyncOutboxStore,
+    InMemorySqlOutboxClient,
+    SqlAlwaysOnOutboxStore,
+    SqlStoredEvent,
+)
 
 from durable_outbox.core import AdminActionStatus, ConfigurationError, ValidationError
 from durable_outbox.core.errors import (
@@ -42,17 +53,6 @@ from durable_outbox.stores.memory import (
     CleanupFreezeState,
     MemoryOutboxStore,
     StoredEvent,
-)
-from durable_outbox.stores.sql import (
-    SQL_ORDERED_INDEX_NAME,
-    SQL_PENDING_INDEX_NAME,
-    SQL_REPLAY_INDEX_NAME,
-    SQL_SCHEMA,
-    AzureSqlSyncConfiguration,
-    AzureSqlSyncOutboxStore,
-    InMemorySqlOutboxClient,
-    SqlAlwaysOnOutboxStore,
-    SqlStoredEvent,
 )
 from durable_outbox.telemetry import InMemoryMetrics
 from durable_outbox.testing import FakeOutboxStore, FixedClock

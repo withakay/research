@@ -163,12 +163,12 @@ developer environment.
 1. Run the scoped verification suite:
 
    ```bash
-   uv sync --group dev
+   uv sync --all-packages --group dev
    uv run pytest
    uv run ruff check .
    uv run ruff format --check .
    uv run ty check
-   uv build
+   uv build --all-packages
    ```
 
 2. Confirm `README.md`, `docs/`, `LICENSE`, and `pyproject.toml` are included

@@ -18,7 +18,7 @@ from durable_outbox.core.errors import (
 )
 from durable_outbox.core.model import OutboxEvent, OutboxStatus, PublishingMode
 from durable_outbox.core.validation import require_positive_limit
-from durable_outbox.stores.sql import (
+from durable_outbox_sql_store.store import (
     SQL_REPLAY_INDEX_NAME,
     SQL_TABLE_NAME,
     SqlReplayClaimedRecord,
@@ -28,7 +28,7 @@ from durable_outbox.stores.sql import (
 if TYPE_CHECKING:
     from durable_outbox.core.model import PublishResult
 
-_SQL_EXTRA_MESSAGE = "SQL support requires the sql extra: install durable-outbox[sql]"
+_SQL_EXTRA_MESSAGE = "SQL support requires pyodbc: install durable-outbox-sql-store"
 _IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _CLEANUP_FREEZE_KEY = "cleanup-freeze"
 

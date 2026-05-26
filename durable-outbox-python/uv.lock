@@ -2,6 +2,13 @@ version = 1
 revision = 3
 requires-python = ">=3.14"
 
+[manifest]
+members = [
+    "durable-outbox",
+    "durable-outbox-file-sink",
+    "durable-outbox-sql-store",
+]
+
 [[package]]
 name = "aiohappyeyeballs"
 version = "2.6.2"
@@ -296,12 +303,13 @@ azure = [
 kafka = [
     { name = "confluent-kafka" },
 ]
-sql = [
-    { name = "pyodbc" },
-]
 
 [package.dev-dependencies]
 dev = [
+    { name = "aiohttp" },
+    { name = "azure-cosmos" },
+    { name = "azure-storage-blob" },
+    { name = "confluent-kafka" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
@@ -314,16 +322,45 @@ requires-dist = [
     { name = "azure-cosmos", marker = "extra == 'azure'", specifier = ">=4.15.0" },
     { name = "azure-storage-blob", marker = "extra == 'azure'", specifier = ">=12.29.0" },
     { name = "confluent-kafka", marker = "extra == 'kafka'", specifier = ">=2.14.0" },
-    { name = "pyodbc", marker = "extra == 'sql'", specifier = ">=5.3.0" },
 ]
-provides-extras = ["kafka", "azure", "sql"]
+provides-extras = ["kafka", "azure"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "aiohttp", specifier = ">=3.13.5" },
+    { name = "azure-cosmos", specifier = ">=4.15.0" },
+    { name = "azure-storage-blob", specifier = ">=12.29.0" },
+    { name = "confluent-kafka", specifier = ">=2.14.0" },
     { name = "pytest", specifier = ">=9.0.0" },
     { name = "pytest-asyncio", specifier = ">=1.3.0" },
     { name = "ruff", specifier = ">=0.14.14" },
     { name = "ty", specifier = ">=0.0.25" },
+]
+
+[[package]]
+name = "durable-outbox-file-sink"
+version = "0.1.0"
+source = { editable = "packages/durable-outbox-file-sink" }
+dependencies = [
+    { name = "durable-outbox" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "durable-outbox", editable = "." }]
+
+[[package]]
+name = "durable-outbox-sql-store"
+version = "0.1.0"
+source = { editable = "packages/durable-outbox-sql-store" }
+dependencies = [
+    { name = "durable-outbox" },
+    { name = "pyodbc" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "durable-outbox", editable = "." },
+    { name = "pyodbc", specifier = ">=5.3.0" },
 ]
 
 [[package]]

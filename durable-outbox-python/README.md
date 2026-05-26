@@ -10,7 +10,8 @@ The core package is storage- and sink-agnostic. Applications persist accepted ev
 uv add durable-outbox
 uv add "durable-outbox[kafka]"
 uv add "durable-outbox[azure]"
-uv add "durable-outbox[sql]"
+uv add durable-outbox-file-sink
+uv add durable-outbox-sql-store
 ```
 
 ## Quickstart
@@ -46,6 +47,22 @@ RPO=0 is an adapter acceptance contract, not a storage product label.
 - Cosmos RPO=0 requires strong consistency, more than one region, and single-write configuration.
 - SQL RPO=0 requires Azure SQL commit plus `sp_wait_for_database_copy_sync`, or SQL Server Always On synchronous commit with required synchronized secondaries.
 
+## Provider Plugins
+
+Provider implementations that are not part of the core package are loaded from
+Python entry points. Install the plugin package, then load the configured store
+or sink by name:
+
+```python
+from durable_outbox import load_sink, load_store
+
+sink = load_sink("file", {"path": "published.jsonl"})
+store = load_store("azure-sql-sync", {"connection_string": "Driver={ODBC Driver 18};..."})
+```
+
+Installed sink names are available with `available_sinks()`. Installed store
+names are available with `available_stores()`.
+
 ## Operations
 
 `durable_outbox.operations` provides structural admin protocols, durable
@@ -66,12 +83,12 @@ credential expectations, and release workflow notes.
 ## Development
 
 ```bash
-uv sync --group dev
+uv sync --all-packages --group dev
 uv run pytest
 uv run ruff check .
 uv run ruff format --check .
 uv run ty check
-uv build
+uv build --all-packages
 ```
 
 ## Provider Contract

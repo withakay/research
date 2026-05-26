@@ -7,6 +7,11 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from durable_outbox_sql_store import (
+    AzureSqlSyncOutboxStore,
+    InMemorySqlOutboxClient,
+    SqlAlwaysOnOutboxStore,
+)
 
 from durable_outbox.core import ConfigurationError
 from durable_outbox.core.failover import FailoverReplayer
@@ -25,11 +30,6 @@ from durable_outbox.stores.cosmos import (
     CosmosStoredEvent,
     CosmosStrongOutboxStore,
     InMemoryCosmosOutboxClient,
-)
-from durable_outbox.stores.sql import (
-    AzureSqlSyncOutboxStore,
-    InMemorySqlOutboxClient,
-    SqlAlwaysOnOutboxStore,
 )
 from durable_outbox.telemetry import InMemoryMetrics
 from durable_outbox.testing import FailingSink, FakeOutboxStore, FakeSink, FixedClock

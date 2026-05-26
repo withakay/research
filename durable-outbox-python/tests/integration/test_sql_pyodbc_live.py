@@ -9,18 +9,18 @@ from typing import Any, Protocol, cast
 from uuid import uuid4
 
 import pytest
-
-from durable_outbox.core import OutboxEvent
-from durable_outbox.core.model import OutboxStatus, PublishResult
-from durable_outbox.stores.sql import (
+from durable_outbox_sql_store import (
     SQL_ORDERED_INDEX_NAME,
     SQL_PENDING_INDEX_NAME,
     SQL_REPLAY_INDEX_NAME,
     SQL_SCHEMA,
     AzureSqlSyncOutboxStore,
+    PyodbcSqlOutboxClient,
     SqlStoredEvent,
 )
-from durable_outbox.stores.sql_pyodbc import PyodbcSqlOutboxClient
+
+from durable_outbox.core import OutboxEvent
+from durable_outbox.core.model import OutboxStatus, PublishResult
 
 pytestmark = pytest.mark.integration
 

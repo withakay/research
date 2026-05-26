@@ -6,6 +6,16 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from durable_outbox_sql_store import (
+    SQL_TABLE_NAME,
+    AzureSqlSyncOutboxStore,
+    InMemorySqlOutboxClient,
+    PyodbcSqlOutboxClient,
+    SqlReplayClaimedRecord,
+    SqlStoredEvent,
+    decode_sql_record,
+    encode_sql_record,
+)
 
 from durable_outbox.core import ConfigurationError
 from durable_outbox.core.errors import (
@@ -18,18 +28,6 @@ from durable_outbox.core.model import (
     OutboxStatus,
     PublishingMode,
     PublishResult,
-)
-from durable_outbox.stores.sql import (
-    SQL_TABLE_NAME,
-    AzureSqlSyncOutboxStore,
-    InMemorySqlOutboxClient,
-    SqlReplayClaimedRecord,
-    SqlStoredEvent,
-)
-from durable_outbox.stores.sql_pyodbc import (
-    PyodbcSqlOutboxClient,
-    decode_sql_record,
-    encode_sql_record,
 )
 from durable_outbox.testing import FixedClock
 from durable_outbox.testing.provider_contract import make_event
@@ -136,7 +134,7 @@ class RaceInsertClient(InMemorySqlOutboxClient):
 
 
 def test_sql_pyodbc_module_does_not_import_pyodbc_at_import_time() -> None:
-    module = import_module("durable_outbox.stores.sql_pyodbc")
+    module = import_module("durable_outbox_sql_store.pyodbc")
 
     assert module.PyodbcSqlOutboxClient is PyodbcSqlOutboxClient
 
@@ -152,10 +150,10 @@ def test_pyodbc_client_reports_missing_optional_dependency(
         return real_import_module(name)
 
     monkeypatch.setattr(
-        "durable_outbox.stores.sql_pyodbc.import_module", fail_pyodbc_import
+        "durable_outbox_sql_store.pyodbc.import_module", fail_pyodbc_import
     )
 
-    with pytest.raises(ConfigurationError, match="durable-outbox\\[sql\\]"):
+    with pytest.raises(ConfigurationError, match="durable-outbox-sql-store"):
         PyodbcSqlOutboxClient.from_connection_string("Driver={ODBC Driver 18};")
 
 

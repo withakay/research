@@ -25,6 +25,14 @@ from durable_outbox.core.model import (
 from durable_outbox.core.retry import RetryPolicy
 from durable_outbox.core.sink import MessageSink
 from durable_outbox.core.store import DurableOutboxStore
+from durable_outbox.plugins import (
+    SinkFactory,
+    StoreFactory,
+    available_sinks,
+    available_stores,
+    load_sink,
+    load_store,
+)
 
 try:
     __version__ = version("durable-outbox")
@@ -54,6 +62,12 @@ __all__ = [
     "RetryPolicy",
     "RetryablePublishError",
     "RetryableStoreError",
+    "SinkFactory",
+    "StoreFactory",
     "ValidationError",
     "__version__",
+    "available_sinks",
+    "available_stores",
+    "load_sink",
+    "load_store",
 ]

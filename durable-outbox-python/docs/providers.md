@@ -151,13 +151,14 @@ optimizations.
 
 The Kafka sink enforces certified producer defaults such as `acks=all` and
 idempotence. For local integration tests that should not publish to Kafka,
-`FileSink` writes the same event envelope to a JSONL file and returns
-Kafka-like partition/offset metadata. This gives deterministic dispatch
-coverage while the Aspire suite can still exercise a real Kafka broker. The
-sink keeps its file handle open until `aclose()` or async context-manager exit,
-defaults to `fsync=False` for local test throughput, and supports
-`fsync_interval_events` / `fsync_interval_ms` when callers need batched local
-durability.
+install `durable-outbox-file-sink` and load sink plugin `file`.
+`durable_outbox_file_sink.FileSink` writes the same event envelope to a JSONL
+file and returns Kafka-like partition/offset metadata. This gives deterministic
+dispatch coverage while the Aspire suite can still exercise a real Kafka
+broker. The sink keeps its file handle open until `aclose()` or async
+context-manager exit, defaults to `fsync=False` for local test throughput, and
+supports `fsync_interval_events` / `fsync_interval_ms` when callers need batched
+local durability.
 
 Kafka producer idempotence is producer-session scoped. During failover replay,
 previously sent events can be published again by a new producer, so consumers

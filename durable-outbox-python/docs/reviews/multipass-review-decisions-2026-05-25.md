@@ -2195,7 +2195,7 @@ verification evidence.
 
 ### Fixes Implemented
 
-- Added `durable_outbox.stores.sql_pyodbc.PyodbcSqlOutboxClient` with lazy
+- Added `durable_outbox_sql_store.pyodbc.PyodbcSqlOutboxClient` with lazy
   optional `pyodbc` import and an actionable `durable-outbox[sql]` error when
   the extra is missing.
 - Added `PyodbcSqlConnectionSettings`, strict table-name validation, and lazy
@@ -2218,7 +2218,7 @@ verification evidence.
 
 - Focused red run:
   `uv run pytest tests/test_sql_pyodbc.py -q`
-  -> failed at collection because `durable_outbox.stores.sql_pyodbc` did not
+  -> failed at collection because `durable_outbox_sql_store.pyodbc` did not
   exist.
 - Focused green run:
   `uv run pytest tests/test_sql_pyodbc.py -q`

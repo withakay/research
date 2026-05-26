@@ -7,10 +7,10 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from durable_outbox_file_sink import FileSink
 
 from durable_outbox.core import ConfigurationError
 from durable_outbox.core.errors import RetryableStoreError
-from durable_outbox.sinks.file import FileSink
 from durable_outbox.stores.azure_blob import MAX_BLOB_DOWNLOAD_BYTES, AzureBlobClient
 from durable_outbox.stores.blob_geo import BlobObject
 from durable_outbox.testing.provider_contract import make_event
@@ -289,7 +289,7 @@ async def test_file_sink_batches_fsync_until_interval_or_close(
         _ = fd
         fsync_calls += 1
 
-    monkeypatch.setattr("durable_outbox.sinks.file.os.fsync", fsync)
+    monkeypatch.setattr("durable_outbox_file_sink.sink.os.fsync", fsync)
     sink = FileSink(
         tmp_path / "published" / "events.jsonl",
         fsync=True,
