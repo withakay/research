@@ -73,19 +73,17 @@ Recent implementation notes:
 - Blob replay now uses metadata-only listing before loading claimable records,
   so `P-P1-1`'s remaining Blob materialization gap is closed locally.
 
-Remaining direct review IDs:
+Remaining external evidence:
 
 - `A-P0-1`
-- `P-P1-1`
 
 Suggested next move:
 
 1. Confirm a clean worktree and rerun the remaining-ID script.
 2. Pick the next bounded item. Likely candidates are:
    - `A-P0-1`: run live-account SQL/Cosmos integration tests when credentials/services are available.
-   - `P-P1-1`: built-in stores now expose replay streaming; remaining work is
-     live-service certification plus optional SQL batch-token cursor
-     optimization.
+   - Optional: add a SQL replay batch-token cursor optimization for very large
+     failovers if round-trip reduction becomes a concrete requirement.
 3. Treat remaining provider certification as evidence-gathering unless new
    review identifies a concrete code gap.
 4. For every accepted finding: write or preserve red tests, implement, run focused gates, run full gates, update the decisions doc, then commit conventionally.
