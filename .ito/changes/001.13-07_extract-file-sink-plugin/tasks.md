@@ -1,0 +1,13 @@
+## 1. Implementation
+- [ ] 1.1 Create `packages/durable-outbox-file-sink` using `uv_build`.
+- [ ] 1.2 Move `FileSink` and helpers to `durable_outbox_file_sink`.
+- [ ] 1.3 Add `file` sink entry point and factory function.
+- [ ] 1.4 Remove old core file sink module and exports.
+- [ ] 1.5 Update tests, integration demos, README, and provider docs.
+
+## 2. Verification
+- [ ] 2.1 Run file sink package tests through workspace pytest.
+- [ ] 2.2 Run plugin loader tests proving `load_sink("file", ...)` works.
+- [ ] 2.3 Run `uv run pytest`.
+- [ ] 2.4 Run `uv run ruff check .` and `uv run ty check`.
+- [ ] 2.5 Run `uv build --all-packages`.
