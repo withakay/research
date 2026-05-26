@@ -25,6 +25,7 @@ from durable_outbox.core import (
     ValidationError,
 )
 from durable_outbox.core.claim import (
+    InFlightOrderingIndex,
     claim_order_key,
     in_flight_ordering_keys,
     is_claimable_record,
@@ -150,6 +151,31 @@ def test_claim_helpers_match_store_claimability_rules() -> None:
         7,
         ordered_for_sort.event.created_at,
     )
+
+
+def test_in_flight_ordering_index_tracks_releases_and_prunes_stale_claims() -> None:
+    now = datetime.now(UTC)
+    first = make_ordered_event("index-first", ordering_key="customer-1")
+    second = make_ordered_event("index-second", ordering_key="customer-1")
+    other = make_ordered_event("index-other", ordering_key="customer-2")
+    unordered = make_event("index-unordered")
+    index = InFlightOrderingIndex()
+
+    index.record_claim(first, claimed_at=now - timedelta(minutes=4))
+    index.record_claim(second, claimed_at=now - timedelta(minutes=10))
+    index.record_claim(other, claimed_at=now)
+    index.record_claim(unordered, claimed_at=now)
+
+    assert index.active_keys(now=now, claim_timeout=timedelta(minutes=5)) == {
+        "v1\0durable.outbox.outputs\0customer-1",
+        "v1\0durable.outbox.outputs\0customer-2",
+    }
+
+    index.release(first)
+
+    assert index.active_keys(now=now, claim_timeout=timedelta(minutes=5)) == {
+        "v1\0durable.outbox.outputs\0customer-2"
+    }
 
 
 def test_event_preserves_opaque_payload_and_freezes_headers() -> None:

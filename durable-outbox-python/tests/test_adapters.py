@@ -113,6 +113,26 @@ class ConflictOnceSqlClient(InMemorySqlOutboxClient):
         return await super().replace(record, expected_version=expected_version)
 
 
+class CountingCosmosClient(InMemoryCosmosOutboxClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.list_records_calls = 0
+
+    async def list_records(self) -> Any:
+        self.list_records_calls += 1
+        return await super().list_records()
+
+
+class CountingSqlClient(InMemorySqlOutboxClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.list_records_calls = 0
+
+    async def list_records(self) -> Any:
+        self.list_records_calls += 1
+        return await super().list_records()
+
+
 class FailingDeleteBlobClient(InMemoryBlobClient):
     def __init__(self) -> None:
         super().__init__()
@@ -1442,6 +1462,48 @@ async def test_provider_replay_event_requeues_sent_event(
 
     assert [claim.event.event_id for claim in reclaimed] == [event.event_id]
     assert reclaimed[0].attempt_count == 2
+
+
+@pytest.mark.parametrize(
+    ("store", "client"),
+    [
+        (
+            CosmosStrongOutboxStore(
+                CosmosConfiguration(consistency="Strong", regions=("westus", "eastus")),
+                client=CountingCosmosClient(),
+            ),
+            lambda store: store.client,
+        ),
+        (
+            AzureSqlSyncOutboxStore(client=CountingSqlClient()),
+            lambda store: store.client,
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_sql_and_cosmos_claim_reuses_claim_candidate_list(
+    store: Any,
+    client: Any,
+) -> None:
+    await store.put(
+        make_ordered_event(
+            "candidate-list-first",
+            ordering_key="customer-1",
+            ordering_sequence=1,
+        )
+    )
+    await store.put(
+        make_ordered_event(
+            "candidate-list-second",
+            ordering_key="customer-1",
+            ordering_sequence=2,
+        )
+    )
+
+    claimed = await store.claim_batch(limit=10)
+
+    assert [claim.event.event_id for claim in claimed] == ["candidate-list-first"]
+    assert client(store).list_records_calls == 1
 
 
 @pytest.mark.parametrize(
