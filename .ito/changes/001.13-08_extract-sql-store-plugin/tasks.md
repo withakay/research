@@ -3,7 +3,7 @@
 - [x] 1.2 Move SQL store implementation, schema constants, config, client protocol, and in-memory SQL client into `durable_outbox_sql_store`.
 - [x] 1.3 Add `azure-sql-sync` and `sql-always-on` store entry point factories.
 - [x] 1.4 Remove old core SQL module and store exports.
-- [ ] 1.5 Move or split SQL-specific tests into the SQL plugin package.
+- [x] 1.5 Move or split SQL-specific tests into the SQL plugin package.
 - [ ] 1.6 Update README, provider docs, optional dependency metadata, and lockfile.
 
 ## 2. Verification
