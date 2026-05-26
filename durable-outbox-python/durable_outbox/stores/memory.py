@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from durable_outbox.core.admin import AdminActionStatus
@@ -30,6 +33,9 @@ from durable_outbox.core.validation import (
     require_optional_positive_limit,
     require_positive_limit,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Collection
 
 
 @dataclass(slots=True)
@@ -177,16 +183,20 @@ class MemoryOutboxStore:
         *,
         failover_started_at: datetime,
         limit: int,
+        exclude_event_ids: Collection[str] = (),
     ) -> list[ClaimedEvent]:
         require_positive_limit(limit)
         candidates: list[ClaimedEvent] = []
         originals: dict[str, StoredEvent] = {}
+        locked_ordering_scopes: set[str] = set()
         try:
             for record in sorted(
                 self.records.values(), key=lambda item: item.event.created_at
             ):
                 if len(candidates) >= limit:
                     break
+                if record.event.event_id in exclude_event_ids:
+                    continue
                 if not record.accepted:
                     continue
                 if record.status not in {
@@ -196,6 +206,9 @@ class MemoryOutboxStore:
                 }:
                     continue
                 if record.event.expires_at < failover_started_at:
+                    continue
+                scoped_key = ordering_scope(record.event)
+                if scoped_key is not None and scoped_key in locked_ordering_scopes:
                     continue
                 event_id = record.event.event_id
                 originals.setdefault(event_id, _clone_record(record))
@@ -209,6 +222,8 @@ class MemoryOutboxStore:
                     record.event,
                     claimed_at=record.claimed_at,
                 )
+                if scoped_key is not None:
+                    locked_ordering_scopes.add(scoped_key)
                 candidates.append(
                     ClaimedEvent(
                         event=record.event,

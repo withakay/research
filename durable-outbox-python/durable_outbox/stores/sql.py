@@ -36,7 +36,7 @@ from durable_outbox.core.validation import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Collection, Sequence
 
 SQL_TABLE_NAME = "durable_outbox_events"
 SQL_PENDING_INDEX_NAME = "IX_outbox_pending"
@@ -405,6 +405,7 @@ class _SqlOutboxStoreBase:
         *,
         failover_started_at: datetime,
         limit: int,
+        exclude_event_ids: Collection[str] = (),
     ) -> list[ClaimedEvent]:
         require_positive_limit(limit)
         candidates: list[ClaimedEvent] = []
@@ -412,10 +413,13 @@ class _SqlOutboxStoreBase:
             await self.client.list_records(), key=lambda item: item.event.created_at
         )
         claimed_originals: list[tuple[SqlStoredEvent, SqlStoredEvent]] = []
+        locked_ordering_scopes: set[str] = set()
         try:
             for record in records:
                 if len(candidates) >= limit:
                     break
+                if record.event.event_id in exclude_event_ids:
+                    continue
                 if record.status not in {
                     OutboxStatus.PENDING,
                     OutboxStatus.IN_FLIGHT,
@@ -423,6 +427,9 @@ class _SqlOutboxStoreBase:
                 }:
                     continue
                 if record.event.expires_at < failover_started_at:
+                    continue
+                scoped_key = ordering_scope(record.event)
+                if scoped_key is not None and scoped_key in locked_ordering_scopes:
                     continue
                 original = _clone_record(record)
                 token = str(uuid4())
@@ -439,6 +446,8 @@ class _SqlOutboxStoreBase:
                 except ClaimConflictError:
                     continue
                 claimed_originals.append((claimed, original))
+                if scoped_key is not None:
+                    locked_ordering_scopes.add(scoped_key)
                 candidates.append(
                     ClaimedEvent(
                         event=claimed.event,

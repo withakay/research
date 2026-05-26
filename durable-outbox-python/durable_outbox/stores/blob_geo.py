@@ -4,7 +4,7 @@ import binascii
 import hmac
 import json
 import logging
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Collection, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -462,17 +462,21 @@ class BlobOutboxStore:
         *,
         failover_started_at: datetime,
         limit: int,
+        exclude_event_ids: Collection[str] = (),
     ) -> list[ClaimedEvent]:
         require_positive_limit(limit)
         await self._refresh_records()
         candidates: list[ClaimedEvent] = []
         originals: dict[str, StoredEvent] = {}
+        locked_ordering_scopes: set[str] = set()
         try:
             for record in sorted(
                 self.records.values(), key=lambda item: item.event.created_at
             ):
                 if len(candidates) >= limit:
                     break
+                if record.event.event_id in exclude_event_ids:
+                    continue
                 if not record.accepted:
                     continue
                 if record.status not in {
@@ -482,6 +486,9 @@ class BlobOutboxStore:
                 }:
                     continue
                 if record.event.expires_at < failover_started_at:
+                    continue
+                scoped_key = ordering_scope(record.event)
+                if scoped_key is not None and scoped_key in locked_ordering_scopes:
                     continue
                 event_id = record.event.event_id
                 originals.setdefault(event_id, _clone_record(record))
@@ -496,6 +503,8 @@ class BlobOutboxStore:
                 except BlobPreconditionFailedError:
                     self.records[event_id] = originals.pop(event_id)
                     continue
+                if scoped_key is not None:
+                    locked_ordering_scopes.add(scoped_key)
                 candidates.append(
                     ClaimedEvent(
                         event=record.event,
@@ -1175,12 +1184,14 @@ class DualRegionBlobOutboxStore:
         *,
         failover_started_at: datetime,
         limit: int,
+        exclude_event_ids: Collection[str] = (),
     ) -> list[ClaimedEvent]:
         await self.reconcile_mirror_updates()
         await self.reconcile_prepared()
         return await self._active.failover_replay_candidates(
             failover_started_at=failover_started_at,
             limit=limit,
+            exclude_event_ids=exclude_event_ids,
         )
 
     async def freeze_cleanup(self, *, reason: str) -> None:

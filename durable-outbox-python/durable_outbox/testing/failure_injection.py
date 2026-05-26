@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from durable_outbox.core.errors import DurableOutboxError, RetryablePublishError
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Collection, Iterable
     from datetime import datetime, timedelta
 
     from durable_outbox.core.admin import AdminActionStatus
@@ -113,10 +113,12 @@ class FailingStore:
         *,
         failover_started_at: datetime,
         limit: int,
+        exclude_event_ids: Collection[str] = (),
     ) -> list[ClaimedEvent]:
         return await self._store.failover_replay_candidates(
             failover_started_at=failover_started_at,
             limit=limit,
+            exclude_event_ids=exclude_event_ids,
         )
 
     async def freeze_cleanup(self, *, reason: str) -> None:

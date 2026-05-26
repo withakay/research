@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
     from datetime import datetime, timedelta
 
     from durable_outbox.core.admin import AdminActionStatus
@@ -58,6 +59,7 @@ class DurableOutboxStore(Protocol):
         *,
         failover_started_at: datetime,
         limit: int,
+        exclude_event_ids: Collection[str] = (),
     ) -> list[ClaimedEvent]:
         """Claim accepted replay candidates that remain TTL-valid for failover."""
         ...

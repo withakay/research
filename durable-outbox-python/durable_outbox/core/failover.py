@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from durable_outbox.core.model import OutboxStatus
+from durable_outbox.core.ordering import ordering_scope
+from durable_outbox.core.validation import require_positive_limit
 from durable_outbox.telemetry.metrics import NoopMetrics
 
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from durable_outbox.core.model import ClaimedEvent
     from durable_outbox.core.sink import MessageSink
     from durable_outbox.core.store import DurableOutboxStore
     from durable_outbox.telemetry.metrics import MetricsAdapter
@@ -31,24 +35,85 @@ class FailoverReplayer:
         *,
         require_rpo_zero: bool = True,
         metrics: MetricsAdapter | None = None,
+        replay_page_size: int = 100,
+        max_concurrency: int = 1,
     ) -> None:
         if require_rpo_zero:
             store.capabilities.require_rpo_zero()
+        require_positive_limit(replay_page_size, field_name="replay_page_size")
+        require_positive_limit(max_concurrency, field_name="max_concurrency")
         self.store = store
         self.sink = sink
         self.metrics = metrics or NoopMetrics()
+        self.replay_page_size = replay_page_size
+        self.max_concurrency = max_concurrency
 
     async def replay_once(
         self, *, failover_started_at: datetime, limit: int
     ) -> ReplaySummary:
+        require_positive_limit(limit)
         await self.store.freeze_cleanup(reason="failover replay")
-        candidates = await self.store.failover_replay_candidates(
-            failover_started_at=failover_started_at,
-            limit=limit,
-        )
         replayed = 0
         errored = 0
-        for claimed in candidates:
+        seen_event_ids: set[str] = set()
+        remaining = limit
+        while remaining > 0:
+            page_limit = min(remaining, self.replay_page_size)
+            candidates = await self.store.failover_replay_candidates(
+                failover_started_at=failover_started_at,
+                limit=page_limit,
+                exclude_event_ids=seen_event_ids,
+            )
+            if not candidates:
+                break
+            seen_event_ids.update(claimed.event.event_id for claimed in candidates)
+            page_replayed = await self._replay_page(candidates)
+            replayed += page_replayed
+            errored += len(candidates) - page_replayed
+            remaining -= len(candidates)
+            if len(candidates) < page_limit:
+                break
+        return ReplaySummary(replayed=replayed, errored=errored)
+
+    async def complete_replay(self) -> None:
+        await self.store.resume_cleanup()
+
+    async def _replay_page(self, candidates: list[ClaimedEvent]) -> int:
+        semaphore = asyncio.Semaphore(self.max_concurrency)
+        ordering_locks: dict[str, asyncio.Lock] = {}
+        results = await asyncio.gather(
+            *(
+                self._replay_claimed(
+                    claimed,
+                    semaphore=semaphore,
+                    ordering_locks=ordering_locks,
+                )
+                for claimed in candidates
+            )
+        )
+        return sum(results)
+
+    async def _replay_claimed(
+        self,
+        claimed: ClaimedEvent,
+        *,
+        semaphore: asyncio.Semaphore,
+        ordering_locks: dict[str, asyncio.Lock],
+    ) -> int:
+        scoped_key = ordering_scope(claimed.event)
+        if scoped_key is None:
+            return await self._publish_claimed(claimed, semaphore=semaphore)
+        lock = ordering_locks.setdefault(scoped_key, asyncio.Lock())
+        async with lock:
+            return await self._publish_claimed(claimed, semaphore=semaphore)
+
+    async def _publish_claimed(
+        self,
+        claimed: ClaimedEvent,
+        *,
+        semaphore: asyncio.Semaphore,
+    ) -> int:
+        async with semaphore:
             if claimed.source_status is OutboxStatus.SENT:
                 _LOGGER.warning(
                     "Replaying previously sent outbox event; consumers must dedupe "
@@ -71,10 +136,5 @@ class FailoverReplayer:
                     topic=claimed.event.topic,
                     error_type=type(exc).__name__,
                 )
-                errored += 1
-                continue
-            replayed += 1
-        return ReplaySummary(replayed=replayed, errored=errored)
-
-    async def complete_replay(self) -> None:
-        await self.store.resume_cleanup()
+                return 0
+            return 1

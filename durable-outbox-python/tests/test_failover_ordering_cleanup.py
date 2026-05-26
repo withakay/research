@@ -1,7 +1,10 @@
+from __future__ import annotations
+
+import asyncio
 import logging
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -22,6 +25,48 @@ from durable_outbox.stores.sql import AzureSqlSyncOutboxStore, SqlAlwaysOnOutbox
 from durable_outbox.telemetry import InMemoryMetrics
 from durable_outbox.testing import FailingSink, FakeOutboxStore, FakeSink, FixedClock
 from durable_outbox.testing.provider_contract import make_event
+
+if TYPE_CHECKING:
+    from collections.abc import Collection
+
+
+class ConcurrentReplaySink(FakeSink):
+    def __init__(self, *, release: asyncio.Event) -> None:
+        super().__init__()
+        self.release = release
+        self.in_flight = 0
+        self.max_in_flight = 0
+
+    async def publish(self, event: Any) -> Any:
+        self.in_flight += 1
+        self.max_in_flight = max(self.max_in_flight, self.in_flight)
+        await self.release.wait()
+        try:
+            return await super().publish(event)
+        finally:
+            self.in_flight -= 1
+
+
+class RecordingReplayStore(FakeOutboxStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.replay_limits: list[int] = []
+        self.replay_exclusions: list[tuple[str, ...]] = []
+
+    async def failover_replay_candidates(
+        self,
+        *,
+        failover_started_at: datetime,
+        limit: int,
+        exclude_event_ids: Collection[str] = (),
+    ) -> Any:
+        self.replay_limits.append(limit)
+        self.replay_exclusions.append(tuple(sorted(exclude_event_ids)))
+        return await super().failover_replay_candidates(
+            failover_started_at=failover_started_at,
+            limit=limit,
+            exclude_event_ids=exclude_event_ids,
+        )
 
 
 def test_failover_replayer_requires_rpo_zero_by_default() -> None:
@@ -196,6 +241,67 @@ async def test_replay_continues_after_publish_failure_and_keeps_cleanup_frozen()
     )
     await FailoverReplayer(store, FakeSink()).complete_replay()
     assert store.cleanup_frozen is False
+
+
+@pytest.mark.asyncio
+async def test_failover_replay_fetches_bounded_pages_without_replaying_seen_events() -> (
+    None
+):
+    store = RecordingReplayStore()
+    sink = FakeSink()
+    for index in range(5):
+        await store.put(make_event(f"paged-replay-{index}"))
+
+    summary = await FailoverReplayer(
+        store,
+        sink,
+        replay_page_size=2,
+        max_concurrency=2,
+    ).replay_once(
+        failover_started_at=datetime.now(UTC),
+        limit=5,
+    )
+
+    assert summary.replayed == 5
+    assert summary.errored == 0
+    assert store.replay_limits == [2, 2, 1]
+    assert store.replay_exclusions[0] == ()
+    assert set(store.replay_exclusions[1]) == {"paged-replay-0", "paged-replay-1"}
+    assert set(store.replay_exclusions[2]) == {
+        "paged-replay-0",
+        "paged-replay-1",
+        "paged-replay-2",
+        "paged-replay-3",
+    }
+    assert len({event.event_id for event in sink.published}) == 5
+
+
+@pytest.mark.asyncio
+async def test_failover_replay_publishes_page_concurrently() -> None:
+    store = FakeOutboxStore()
+    release = asyncio.Event()
+    sink = ConcurrentReplaySink(release=release)
+    for index in range(3):
+        await store.put(make_event(f"concurrent-replay-{index}"))
+
+    replay_task = asyncio.create_task(
+        FailoverReplayer(
+            store,
+            sink,
+            replay_page_size=3,
+            max_concurrency=2,
+        ).replay_once(
+            failover_started_at=datetime.now(UTC),
+            limit=3,
+        )
+    )
+    while sink.max_in_flight < 2:
+        await asyncio.sleep(0)
+    release.set()
+    summary = await replay_task
+
+    assert summary.replayed == 3
+    assert sink.max_in_flight == 2
 
 
 @pytest.mark.asyncio
