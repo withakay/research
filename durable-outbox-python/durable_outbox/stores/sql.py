@@ -246,7 +246,11 @@ class _SqlOutboxStoreBase:
         require_positive_limit(limit)
         now = self.clock.utcnow()
         claimed: list[ClaimedEvent] = []
-        locked_keys = await self._in_flight_ordering_keys(now)
+        locked_keys = in_flight_ordering_keys(
+            records,
+            now=now,
+            claim_timeout=self.claim_timeout,
+        )
         for record in records:
             if len(claimed) >= limit:
                 break

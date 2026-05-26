@@ -15,8 +15,8 @@ from uuid import uuid4
 from durable_outbox.core.admin import AdminActionStatus
 from durable_outbox.core.capabilities import OutboxCapabilities
 from durable_outbox.core.claim import (
+    InFlightOrderingIndex,
     claim_order_key,
-    in_flight_ordering_keys,
     is_claimable_record,
 )
 from durable_outbox.core.claim_token import claim_token_matches
@@ -276,6 +276,7 @@ class BlobOutboxStore:
         self.records: dict[str, StoredEvent] = {}
         self._record_etags: dict[str, str] = {}
         self._event_fingerprints: dict[str, tuple[OutboxEvent, str]] = {}
+        self._in_flight_ordering_index = InFlightOrderingIndex()
         self._ordering_leases_by_event_id: dict[str, OrderingLockLease] = {}
         self.capabilities = OutboxCapabilities(
             store_name=store_name,
@@ -372,6 +373,9 @@ class BlobOutboxStore:
             if lease is not None:
                 self._ordering_leases_by_event_id[record.event.event_id] = lease
             if scoped_key is not None:
+                self._in_flight_ordering_index.record_claim(
+                    record.event, claimed_at=now
+                )
                 locked_keys.add(scoped_key)
             claimed.append(
                 ClaimedEvent(
@@ -390,6 +394,7 @@ class BlobOutboxStore:
         record.claim_token = None
         record.claimed_at = None
         await self._save_record(record)
+        self._in_flight_ordering_index.release(record.event)
         await self._release_ordering_lease(claimed.event.event_id)
 
     async def mark_pending_after_retryable_failure(
@@ -408,6 +413,7 @@ class BlobOutboxStore:
         record.claim_token = None
         record.claimed_at = None
         await self._save_record(record)
+        self._in_flight_ordering_index.release(record.event)
         await self._release_ordering_lease(claimed.event.event_id)
 
     async def mark_failed(
@@ -425,6 +431,7 @@ class BlobOutboxStore:
         record.claim_token = None
         record.claimed_at = None
         await self._save_record(record)
+        self._in_flight_ordering_index.release(record.event)
         await self._release_ordering_lease(claimed.event.event_id)
 
     async def failover_replay_candidates(
@@ -522,6 +529,7 @@ class BlobOutboxStore:
             self.records.pop(event_id, None)
             self._record_etags.pop(event_id, None)
             self._event_fingerprints.pop(event_id, None)
+            self._in_flight_ordering_index.release(record.event)
         return deleted
 
     async def repair_failed_to_pending(self, *, event_id: str) -> AdminActionStatus:
@@ -539,6 +547,7 @@ class BlobOutboxStore:
         record.claim_token = None
         record.claimed_at = None
         await self._save_record(record)
+        self._in_flight_ordering_index.release(record.event)
         return AdminActionStatus.SUCCESS
 
     async def _cleanup_is_frozen(self) -> bool:
@@ -565,6 +574,7 @@ class BlobOutboxStore:
         record.last_error_type = None
         record.last_error = None
         await self._save_record(record)
+        self._in_flight_ordering_index.release(record.event)
         await self._release_ordering_lease(event_id)
         return AdminActionStatus.SUCCESS
 
@@ -617,9 +627,12 @@ class BlobOutboxStore:
     async def _load_record(self, event_id: str) -> StoredEvent | None:
         blob = await self.client.get_blob(event_blob_name(event_id))
         if blob is None:
+            existing = self.records.get(event_id)
             self.records.pop(event_id, None)
             self._record_etags.pop(event_id, None)
             self._event_fingerprints.pop(event_id, None)
+            if existing is not None:
+                self._in_flight_ordering_index.release(existing.event)
             return None
         record = _decode_record(blob.content)
         self._verify_and_cache_record_fingerprint(record, blob)
@@ -641,6 +654,11 @@ class BlobOutboxStore:
             self.records.pop(event_id, None)
             self._record_etags.pop(event_id, None)
             self._event_fingerprints.pop(event_id, None)
+        self._in_flight_ordering_index.rebuild(
+            self.records.values(),
+            now=self.clock.utcnow(),
+            claim_timeout=self.claim_timeout,
+        )
 
     async def _write_new_record(self, record: StoredEvent) -> None:
         event_fingerprint = self._event_fingerprint_for_record(record)
@@ -732,8 +750,7 @@ class BlobOutboxStore:
         )
 
     def _in_flight_ordering_keys(self, now: datetime) -> set[str]:
-        return in_flight_ordering_keys(
-            self.records.values(),
+        return self._in_flight_ordering_index.active_keys(
             now=now,
             claim_timeout=self.claim_timeout,
         )

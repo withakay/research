@@ -54,6 +54,7 @@ from durable_outbox.testing import FakeOutboxStore, FixedClock
 from durable_outbox.testing.provider_contract import (
     ProviderContract,
     make_event,
+    make_ordered_event,
     run_provider_contract,
 )
 

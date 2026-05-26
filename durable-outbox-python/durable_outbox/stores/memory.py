@@ -5,8 +5,8 @@ from uuid import uuid4
 from durable_outbox.core.admin import AdminActionStatus
 from durable_outbox.core.capabilities import OutboxCapabilities
 from durable_outbox.core.claim import (
+    InFlightOrderingIndex,
     claim_order_key,
-    in_flight_ordering_keys,
     is_claimable_record,
 )
 from durable_outbox.core.claim_token import claim_token_matches
@@ -72,6 +72,7 @@ class MemoryOutboxStore:
         self._cleanup_state = cleanup_state or CleanupFreezeState()
         self.cleanup_frozen = False
         self.cleanup_freeze_reason: str | None = None
+        self._in_flight_ordering_index = InFlightOrderingIndex()
 
     async def put(self, event: OutboxEvent) -> AcceptedReceipt:
         enforce_payload_size(event, self.capabilities)
@@ -112,6 +113,9 @@ class MemoryOutboxStore:
             record.claimed_at = now
             record.attempt_count += 1
             if scoped_key is not None:
+                self._in_flight_ordering_index.record_claim(
+                    record.event, claimed_at=now
+                )
                 locked_keys.add(scoped_key)
             claimed.append(
                 ClaimedEvent(
@@ -129,6 +133,7 @@ class MemoryOutboxStore:
         record.publish_result = result
         record.claim_token = None
         record.claimed_at = None
+        self._in_flight_ordering_index.release(record.event)
 
     async def mark_pending_after_retryable_failure(
         self,
@@ -145,6 +150,7 @@ class MemoryOutboxStore:
         record.last_error = error_message
         record.claim_token = None
         record.claimed_at = None
+        self._in_flight_ordering_index.release(record.event)
 
     async def mark_failed(
         self,
@@ -160,6 +166,7 @@ class MemoryOutboxStore:
         record.last_error = error_message
         record.claim_token = None
         record.claimed_at = None
+        self._in_flight_ordering_index.release(record.event)
 
     async def failover_replay_candidates(
         self,
@@ -194,6 +201,10 @@ class MemoryOutboxStore:
                 record.claim_token = token
                 record.claimed_at = self.clock.utcnow()
                 record.attempt_count += 1
+                self._in_flight_ordering_index.record_claim(
+                    record.event,
+                    claimed_at=record.claimed_at,
+                )
                 candidates.append(
                     ClaimedEvent(
                         event=record.event,
@@ -205,6 +216,7 @@ class MemoryOutboxStore:
         except BaseException:
             for event_id, original in originals.items():
                 self.records[event_id] = original
+                self._in_flight_ordering_index.release(original.event)
             raise
         return candidates
 
@@ -245,6 +257,7 @@ class MemoryOutboxStore:
         record.next_attempt_at = None
         record.claim_token = None
         record.claimed_at = None
+        self._in_flight_ordering_index.release(record.event)
         return AdminActionStatus.SUCCESS
 
     def _cleanup_is_frozen(self) -> bool:
@@ -265,6 +278,7 @@ class MemoryOutboxStore:
         record.failed_at = None
         record.last_error_type = None
         record.last_error = None
+        self._in_flight_ordering_index.release(record.event)
         return AdminActionStatus.SUCCESS
 
     def _claimed_record(self, claimed: ClaimedEvent) -> StoredEvent:
@@ -283,8 +297,7 @@ class MemoryOutboxStore:
         )
 
     def _in_flight_ordering_keys(self, now: datetime) -> set[str]:
-        return in_flight_ordering_keys(
-            self.records.values(),
+        return self._in_flight_ordering_index.active_keys(
             now=now,
             claim_timeout=self.claim_timeout,
         )

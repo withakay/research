@@ -1992,3 +1992,56 @@ verification evidence.
   `uv run ruff format --check .` -> 53 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 64: In-Flight Ordering Key Fast Path
+
+### Findings Accepted
+
+- **P-P1-4:** `claim_batch` rebuilt fresh in-flight ordering-key sets by
+  rescanning all visible records. This duplicated work for SQL/Cosmos and kept
+  memory/blob from maintaining a cheap local view of keys already claimed by
+  the current process.
+
+### Fixes Implemented
+
+- Added `InFlightOrderingIndex` in `durable_outbox.core.claim` to track
+  process-local fresh ordered claims by scoped `ordering_scope(event)` and
+  prune stale entries at `claim_timeout`.
+- Wired `MemoryOutboxStore` to use the index as authoritative process-local
+  state, recording keys only after claims are made and releasing keys on
+  `mark_sent`, retryable pending, failed, repair, replay, and rollback paths.
+- Wired `BlobOutboxStore` to use the same index as a fast path while keeping
+  `BlobOrderingLockBackend` as the cross-publisher authority. Blob refreshes
+  rebuild the local index from the refreshed cache, and failed conditional
+  claims do not record keys.
+- Kept SQL and Cosmos provider-backed semantics shared-client safe: no local
+  authoritative index was added. Instead, `_claim_from_candidates()` computes
+  fresh in-flight ordering keys from the already-fetched candidate list, avoiding
+  the second `list_records()` call without missing claims from another store
+  instance.
+- Added regression tests for the shared index pruning/release behavior and for
+  SQL/Cosmos claim using one candidate-list read.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_core.py::test_in_flight_ordering_index_tracks_releases_and_prunes_stale_claims tests/test_adapters.py::test_sql_and_cosmos_claim_reuses_claim_candidate_list -q`
+  -> failed because `InFlightOrderingIndex` did not exist.
+- Focused green run:
+  `uv run pytest tests/test_core.py::test_in_flight_ordering_index_tracks_releases_and_prunes_stale_claims tests/test_adapters.py::test_sql_and_cosmos_claim_reuses_claim_candidate_list -q`
+  -> 3 passed.
+- Focused adapter/provider run:
+  `uv run pytest tests/test_core.py::test_in_flight_ordering_index_tracks_releases_and_prunes_stale_claims tests/test_core.py::test_claim_helpers_match_store_claimability_rules tests/test_adapters.py::test_sql_and_cosmos_claim_reuses_claim_candidate_list tests/test_adapters.py::test_builtin_adapters_pass_reusable_provider_contract tests/test_failover_ordering_cleanup.py -q`
+  -> 31 passed.
+- Focused lint/type/format:
+  `uv run ruff check durable_outbox/core/claim.py durable_outbox/stores/memory.py durable_outbox/stores/blob_geo.py durable_outbox/stores/cosmos.py durable_outbox/stores/sql.py tests/test_core.py tests/test_adapters.py`
+  -> all checks passed;
+  `uv run ruff format --check durable_outbox/core/claim.py durable_outbox/stores/memory.py durable_outbox/stores/blob_geo.py durable_outbox/stores/cosmos.py durable_outbox/stores/sql.py tests/test_core.py tests/test_adapters.py`
+  -> 7 files already formatted;
+  `uv run ty check` -> all checks passed.
+- Full package gates:
+  `uv run pytest -q` -> 234 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 53 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
