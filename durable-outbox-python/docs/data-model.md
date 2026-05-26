@@ -29,13 +29,13 @@ and `*_at_epoch_ms` timestamp suffixes for indexed or queryable timestamps.
 | `payload` | JSON `event.payload` base64 or claim-check data | `payload` base64 or claim-check URI | `payload` |
 | `schema_id` | JSON `event.schema_id` | `schema_id` | `schema_id` |
 | `schema_version` | JSON `event.schema_version` | `schema_version` | `schema_version` |
-| `ordering_key` | JSON `event.ordering_key`; metadata may store `ordering_key_hash` | `ordering_key_hash` for lookup, optional raw key if policy allows | `ordering_key_hash` |
+| `ordering_key` | JSON `event.ordering_key`; metadata may store `ordering_key_hash` | `ordering_key`, `ordering_key_hash` | `ordering_key`, `ordering_key_hash` |
 | `ordering_sequence` | metadata and JSON `ordering_sequence` | `ordering_sequence` | `ordering_sequence` |
-| `publishing_mode` | JSON `event.publishing_mode` | `publishing_mode` | derived from ordering fields |
+| `publishing_mode` | JSON `event.publishing_mode` | `publishing_mode` | `publishing_mode` |
 | `created_at` | metadata `created_at_epoch_ms`; JSON `event.created_at` | `created_at_epoch_ms` | `created_at_utc` |
 | `expires_at` | metadata `expires_at_epoch_ms`; JSON `event.expires_at` | `expires_at_epoch_ms` | `expires_at_utc` |
 | `accepted` | metadata and JSON `accepted` | `accepted` | row existence plus status |
-| `accepted_at` | JSON `accepted_at` | `accepted_at_epoch_ms` | stored record field; future column `accepted_at_utc` if needed |
+| `accepted_at` | JSON `accepted_at` | `accepted_at_epoch_ms` | `accepted_at_utc` |
 | `status` | metadata and JSON `status` | `status` | `status` |
 | `attempt_count` | metadata and JSON `attempt_count` | `attempt_count` | `attempt_count` |
 | `claim_token` | JSON `claim_token`; metadata may expose only claim id | `claim_id` | `claim_id` |
@@ -44,7 +44,7 @@ and `*_at_epoch_ms` timestamp suffixes for indexed or queryable timestamps.
 | `sent_at` | metadata `sent_at_epoch_ms`; JSON `sent_at` | `sent_at_epoch_ms` | `sent_at_utc` |
 | `publish_result.partition` | metadata `kafka_partition`; JSON `publish_result.partition` | `kafka_partition` | `kafka_partition` |
 | `publish_result.offset` | metadata `kafka_offset`; JSON `publish_result.offset` | `kafka_offset` | `kafka_offset` |
-| `publish_result.published_at` | JSON `publish_result.published_at` | `published_at_epoch_ms` | `sent_at_utc` |
+| `publish_result.published_at` | JSON `publish_result.published_at` | `published_at_epoch_ms` | `published_at_utc` |
 | `failed_at` | JSON `failed_at` | `failed_at_epoch_ms` | `failed_at_utc` |
 | `last_error_type` | metadata and JSON `last_error_type` | `last_error_type` | `last_error_type` |
 | `last_error` | metadata and JSON `last_error` | `last_error` | `last_error` |

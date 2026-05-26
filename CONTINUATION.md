@@ -8,9 +8,9 @@ Work in `/Users/jack/Code/withakay/research`. Stay inside `durable-outbox-python
 
 Current state:
 
-- Latest completed batch: SQL pyodbc candidate query seam.
+- Latest completed batch: Azure Cosmos provider slice.
 - Latest full gates:
-  - `uv run pytest -q` -> `269 passed, 2 skipped`
+  - `uv run pytest -q` -> `278 passed, 2 skipped`
   - `uv run ruff check .` -> passed
   - `uv run ruff format --check .` -> passed
   - `uv run ty check` -> passed
@@ -23,6 +23,11 @@ Current state:
 
 Recent implementation notes:
 
+- `AzureCosmosOutboxClient` now exists as a lazy optional Azure SDK-backed
+  point-operation client with snake_case JSON encode/decode, `_etag` conflict
+  mapping, cleanup-freeze control items, and `read_account()` validation. It is
+  intentionally not in the provider-contract matrix yet because partition-
+  scoped claim/replay/cleanup candidate queries are still open.
 - `PyodbcSqlOutboxClient` now exists as a lazy optional SQL provider slice for
   persistence primitives, SQL durability checks, cleanup freeze state, strict
   row encode/decode, and bounded candidate queries for normal claim, failover
@@ -47,9 +52,9 @@ Suggested next move:
 
 1. Confirm a clean worktree and rerun the remaining-ID script.
 2. Pick the next bounded item. Likely candidates are:
-   - `A-P0-1`: start the narrower Azure Cosmos client module slice.
+   - `A-P0-1`: add live-account integration tests for SQL/Cosmos provider clients when credentials/services are available.
    - `P-P0-2`: SQL Server single-statement atomic claim mutation behind the existing pyodbc client.
-   - `P-P0-5`: Cosmos partition-scoped claim/replay queries behind the existing client seams.
+   - `P-P0-5`: Cosmos partition-scoped claim/replay/cleanup queries behind the existing client seams.
    - `P-P1-1`: true async-iterator/cursor replay for providers. Current work is bounded page lists plus concurrent page publish, not full provider streaming.
 3. Treat `A-P0-1`, `P-P0-2`, and `P-P0-5` as larger provider-client/query-track work; use subagents before implementing.
 4. For every accepted finding: write or preserve red tests, implement, run focused gates, run full gates, update the decisions doc, then commit conventionally.

@@ -2467,3 +2467,53 @@ verification evidence.
   `uv run ruff format --check .` -> 55 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 74: Azure Cosmos Provider Slice
+
+### Findings Partially Accepted
+
+- **A-P0-1 / P-P0-5:** Cosmos still had no importable Azure SDK-backed client.
+  The review calls for a full partition-scoped Cosmos provider; this batch adds
+  the point-operation and account-validation slice only, leaving claim, replay,
+  and cleanup candidate queries open until the store protocol is partition-aware.
+
+### Fixes Implemented
+
+- Added `durable_outbox.stores.cosmos_azure.AzureCosmosOutboxClient` with lazy
+  `azure.cosmos.aio` import and actionable `durable-outbox[azure]` dependency
+  errors.
+- Added snake_case Cosmos item encode/decode helpers using epoch-millisecond
+  timestamps, base64 bytes/header values, status/publishing-mode strings, and
+  `_etag` as the optimistic concurrency token.
+- Added Azure Cosmos point operations for insert, cached point get, replace, and
+  delete. Replaces pass the record `_etag` and map Azure precondition failures
+  to `ClaimConflictError`.
+- Added `validate_account(config)` using `read_account()` to reject non-strong,
+  single-region, or multi-write certified-mode accounts.
+- Added cleanup-freeze control item point operations.
+- Left `list_records`, `claim_batch_pending`, `list_failover_replay_candidates`,
+  and `list_cleanup_candidates` explicitly unsupported with partition-scoped
+  query errors. This avoids implying that **P-P0-5** is complete before Cosmos
+  partition query seams land.
+- Exported `AzureCosmosOutboxClient` lazily from `durable_outbox.stores` and
+  updated provider/data-model docs with the partial support boundary.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_cosmos_azure.py -q`
+  -> failed at collection because `durable_outbox.stores.cosmos_azure` did not
+  exist.
+- Focused green run:
+  `uv run pytest tests/test_cosmos_azure.py tests/test_adapters.py::test_store_package_exports_are_importable -q`
+  -> 9 passed.
+- Quality gates:
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 57 files already formatted;
+  `uv run ty check` -> all checks passed.
+- Full package gates:
+  `uv run pytest -q` -> 278 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 57 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.

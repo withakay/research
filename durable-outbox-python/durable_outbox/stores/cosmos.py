@@ -63,6 +63,7 @@ class CosmosStoredEvent:
     event: OutboxEvent
     partition_key: str
     version: int = 0
+    etag: str | None = None
     status: OutboxStatus = OutboxStatus.PENDING
     accepted_at: datetime | None = None
     attempt_count: int = 0
@@ -140,6 +141,7 @@ class InMemoryCosmosOutboxClient:
         if record.event.event_id in self.partition_keys_by_event_id:
             raise DuplicateEventConflictError("event_id already exists")
         stored = _clone_record(record, version=1)
+        stored.etag = '"1"'
         self.partition_keys_by_event_id[record.event.event_id] = record.partition_key
         self.records[(record.partition_key, record.event.event_id)] = stored
         return _clone_record(stored)
@@ -154,6 +156,7 @@ class InMemoryCosmosOutboxClient:
         if current is None or current.version != expected_version:
             raise ClaimConflictError("record version precondition failed")
         stored = _clone_record(record, version=current.version + 1)
+        stored.etag = f'"{stored.version}"'
         self.partition_keys_by_event_id[stored.event.event_id] = stored.partition_key
         self.records[(stored.partition_key, stored.event.event_id)] = stored
         return _clone_record(stored)
@@ -738,6 +741,7 @@ def _clone_record(
         event=record.event,
         partition_key=record.partition_key,
         version=record.version if version is None else version,
+        etag=record.etag,
         status=record.status,
         accepted_at=record.accepted_at,
         attempt_count=record.attempt_count,

@@ -53,6 +53,15 @@ outbox record.
 
 Cosmos RPO=0 requires strong consistency, more than one region, and single-write configuration. Multi-write and session-consistency modes can still be useful, but they must not declare `rpo_zero_for_accepted_events=True` in certified mode.
 
+`AzureCosmosOutboxClient` provides the first Azure Cosmos SDK-backed slice
+behind the `azure` optional extra. It covers lazy SDK import, snake_case JSON
+encode/decode with epoch-millisecond timestamps, point insert/read/replace/delete
+operations, `_etag` optimistic concurrency mapping, cleanup-freeze control
+items, and `read_account()` validation for certified RPO=0 account shape. It is
+not yet a full provider-contract client: normal claim, failover replay, and
+cleanup candidate selection remain explicitly unsupported until the store
+protocol and client expose partition-scoped Cosmos queries.
+
 ## SQL
 
 Azure SQL RPO=0 requires committing the outbox row and then completing `sp_wait_for_database_copy_sync` against the active secondary before returning success. SQL Server Always On RPO=0 requires synchronous commit with the required synchronized secondaries configured.
