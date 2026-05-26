@@ -6,7 +6,7 @@
 - [x] 1.5 Regenerate `uv.lock`.
 
 ## 2. Verification
-- [ ] 2.1 Run `uv sync --all-packages --group dev` from `durable-outbox-python`.
+- [x] 2.1 Run `uv sync --all-packages --group dev` from `durable-outbox-python`.
 - [ ] 2.2 Run `uv run pytest` from `durable-outbox-python`.
 - [ ] 2.3 Run `uv run ruff check .` and `uv run ruff format --check .`.
 - [ ] 2.4 Run `uv run ty check`.
