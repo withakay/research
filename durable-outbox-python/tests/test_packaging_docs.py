@@ -300,6 +300,55 @@ def test_provider_docs_cover_rpo_zero_modes() -> None:
     assert "fsync_interval_events" in docs
 
 
+def test_plugin_authoring_guide_documents_sink_and_store_contracts() -> None:
+    guide = (PROJECT_ROOT / "docs" / "plugin-authoring.md").read_text()
+
+    for required_text in (
+        "durable_outbox.sinks",
+        "durable_outbox.stores",
+        "MessageSink",
+        "DurableOutboxStore",
+        "def build_sink(config: Mapping[str, object])",
+        "def build_store(config: Mapping[str, object])",
+        '[project.entry-points."durable_outbox.sinks"]',
+        '[project.entry-points."durable_outbox.stores"]',
+        "pyproject.toml",
+    ):
+        assert required_text in guide
+
+
+def test_plugin_authoring_guide_documents_installation_modes() -> None:
+    guide = (PROJECT_ROOT / "docs" / "plugin-authoring.md").read_text()
+
+    for required_text in (
+        "pip install durable-outbox-example-sink",
+        "uv add durable-outbox-example-sink",
+        "uv pip install -e ../durable-outbox-example-sink",
+        "uv add ../durable-outbox-example-store",
+        'load_sink("example-file"',
+        'load_store("example-sql"',
+    ):
+        assert required_text in guide
+
+
+def test_plugin_authoring_guide_documents_verification() -> None:
+    guide = (PROJECT_ROOT / "docs" / "plugin-authoring.md").read_text()
+    readme = (PROJECT_ROOT / "README.md").read_text()
+    providers = (PROJECT_ROOT / "docs" / "providers.md").read_text()
+
+    for required_text in (
+        "available_sinks()",
+        "available_stores()",
+        "run_provider_contract",
+        "ProviderContract",
+        "uv run ty check",
+        "uv build",
+    ):
+        assert required_text in guide
+    assert "docs/plugin-authoring.md" in readme
+    assert "plugin-authoring.md" in providers
+
+
 def test_operations_docs_describe_error_and_outcome_policy() -> None:
     operations = (PROJECT_ROOT / "docs" / "operations.md").read_text()
 

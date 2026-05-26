@@ -160,6 +160,10 @@ context-manager exit, defaults to `fsync=False` for local test throughput, and
 supports `fsync_interval_events` / `fsync_interval_ms` when callers need batched
 local durability.
 
+See `plugin-authoring.md` for creating custom sink and store plugin packages,
+including local path installs, registry-published installs, entry point
+metadata, and provider contract verification.
+
 Kafka producer idempotence is producer-session scoped. During failover replay,
 previously sent events can be published again by a new producer, so consumers
 must dedupe by the `event_id` Kafka header. `durable_outbox.consumer.EventDeduper`

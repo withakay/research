@@ -61,7 +61,9 @@ store = load_store("azure-sql-sync", {"connection_string": "Driver={ODBC Driver 
 ```
 
 Installed sink names are available with `available_sinks()`. Installed store
-names are available with `available_stores()`.
+names are available with `available_stores()`. See
+`docs/plugin-authoring.md` for local path plugins, registry-published plugins,
+entry point metadata, factory signatures, and verification guidance.
 
 ## Operations
 
