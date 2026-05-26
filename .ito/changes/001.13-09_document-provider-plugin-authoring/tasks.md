@@ -73,7 +73,7 @@ ______________________________________________________________________
 - **Done When**: Focused documentation and plugin tests pass.
 - **Requirements**: durable-outbox-plugin-authoring:plugin-authoring-guide, durable-outbox-plugin-authoring:plugin-installation-modes, durable-outbox-plugin-authoring:plugin-verification
 - **Updated At**: 2026-05-26
-- **Status**: [ ] pending
+- **Status**: [>] in-progress
 
 ### Task 2.2: Run Full Quality Gates
 
