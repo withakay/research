@@ -119,7 +119,7 @@ ______________________________________________________________________
 - **Done When**: Consumer docs explain how to install and use each provider package without importing concrete providers from core.
 - **Requirements**: durable-outbox-packaging:consumer-documentation
 - **Updated At**: 2026-05-26
-- **Status**: [ ] pending
+- **Status**: [>] in-progress
 
 ______________________________________________________________________
 
