@@ -8,9 +8,9 @@ Work in `/Users/jack/Code/withakay/research`. Stay inside `durable-outbox-python
 
 Current state:
 
-- Latest completed batch: Azure Cosmos event index repair.
+- Latest completed batch: live SQL/Cosmos provider certification gates.
 - Latest full gates:
-  - `uv run pytest -q` -> `293 passed, 2 skipped`
+  - `uv run pytest -q` -> `294 passed, 7 skipped`
   - `uv run ruff check .` -> passed
   - `uv run ruff format --check .` -> passed
   - `uv run ty check` -> passed
@@ -33,6 +33,10 @@ Recent implementation notes:
   detection. It is intentionally not in the provider-contract matrix yet because
   live Azure Cosmos integration coverage is still open. It also exposes
   `repair_event_index()` for reserved-index/event-missing crash windows.
+- Opt-in live provider certification tests now exist for SQL Server/pyodbc and
+  Azure Cosmos. They skip in normal runs unless `DURABLE_OUTBOX_SQL_LIVE=1` or
+  `DURABLE_OUTBOX_COSMOS_LIVE=1` plus provider connection settings are present.
+  The SQL path also decodes real pyodbc row shapes via `cursor_description`.
 - `PyodbcSqlOutboxClient` now exists as a lazy optional SQL provider slice for
   persistence primitives, SQL durability checks, cleanup freeze state, strict
   row encode/decode, and bounded candidate queries for normal claim, failover
@@ -61,7 +65,7 @@ Suggested next move:
 
 1. Confirm a clean worktree and rerun the remaining-ID script.
 2. Pick the next bounded item. Likely candidates are:
-   - `A-P0-1`: add live-account integration tests for SQL/Cosmos provider clients when credentials/services are available.
+   - `A-P0-1`: run and expand live-account SQL/Cosmos integration tests when credentials/services are available.
    - `P-P0-2`: live SQL Server integration and any provider-native replay
      claim/rollback design after the pyodbc normal-claim atomic path.
    - `P-P0-5`: live Cosmos integration coverage for the partition registry,

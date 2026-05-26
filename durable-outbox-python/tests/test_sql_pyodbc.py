@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -26,6 +26,9 @@ from durable_outbox.stores.sql_pyodbc import (
 )
 from durable_outbox.testing import FixedClock
 from durable_outbox.testing.provider_contract import make_event
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 class FakeCursor:
@@ -61,6 +64,17 @@ class FakeConnection:
 
     def close(self) -> None:
         self.closed = True
+
+
+class FakePyodbcRow:
+    def __init__(self, values: dict[str, object]) -> None:
+        self.cursor_description = tuple(
+            (name, None, None, None, None, None, None) for name in values
+        )
+        self.values = tuple(values.values())
+
+    def __iter__(self) -> Iterator[object]:
+        return iter(self.values)
 
 
 def test_sql_pyodbc_module_does_not_import_pyodbc_at_import_time() -> None:
@@ -168,6 +182,22 @@ async def test_pyodbc_get_decodes_row_to_sql_stored_event() -> None:
     sql, params = connection.statements[0]
     assert "WHERE event_id = ?" in sql
     assert params == (event.event_id,)
+
+
+@pytest.mark.asyncio
+async def test_pyodbc_get_decodes_real_row_shape() -> None:
+    connection = FakeConnection()
+    event = make_event("sql-get-row-shape")
+    connection.rows.append(
+        FakePyodbcRow(encode_sql_record(SqlStoredEvent(event=event, version=5)))
+    )
+    client = PyodbcSqlOutboxClient(lambda: connection)
+
+    record = await client.get(event.event_id)
+
+    assert record is not None
+    assert record.event == event
+    assert record.version == 5
 
 
 @pytest.mark.asyncio

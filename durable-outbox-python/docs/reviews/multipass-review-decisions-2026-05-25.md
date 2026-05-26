@@ -2806,3 +2806,66 @@ verification evidence.
 - Live Azure Cosmos integration tests remain required for real exception
   mapping, conditional delete behavior, and operational repair behavior under
   strong consistency and regional failover.
+
+## Batch 81: Live Provider Certification Gates
+
+### Findings Partially Accepted
+
+- **A-P0-1 / P-P0-2 / P-P0-5:** the SQL pyodbc and Azure Cosmos provider
+  slices now have substantial fake-driver and fake-container coverage, but the
+  review still requires executable certification against real SQL Server and
+  Azure Cosmos behavior. This batch adds opt-in live integration gates without
+  making normal local or CI test runs depend on external services.
+- **A-P0-1:** the SQL review slice found that real `pyodbc.Row` values are not
+  mappings, while the provider decoder only accepted mapping-shaped fake rows.
+  That would make live `OUTPUT INSERTED.*` reads fail before reaching the
+  actual provider behavior under test.
+
+### Fixes Implemented
+
+- Added `tests/integration/test_sql_pyodbc_live.py`, gated by
+  `DURABLE_OUTBOX_SQL_LIVE=1` and
+  `DURABLE_OUTBOX_SQL_CONNECTION_STRING`.
+- The SQL live suite creates isolated event and cleanup-state tables, exercises
+  real pyodbc insert/atomic-claim/replace/cleanup-freeze/cleanup-candidate
+  paths, and optionally verifies Azure SQL `sp_wait_for_database_copy_sync`
+  when partner-server/database environment variables are provided.
+- Added `tests/integration/test_azure_cosmos_live.py`, gated by
+  `DURABLE_OUTBOX_COSMOS_LIVE=1` plus connection, database, and container
+  environment variables.
+- The Cosmos live suite exercises SDK-backed store put/restart lookup,
+  compatible and incompatible duplicates through the event index, claim, sent
+  cleanup, optional account validation, and event-index repair behavior.
+- Updated `PyodbcSqlOutboxClient` row decoding to accept real pyodbc row shape
+  via `cursor_description` plus row values while preserving mapping support for
+  unit fakes.
+- Documented the live provider environment variables in `docs/providers.md`.
+
+### Verification
+
+- Focused provider-gate run:
+  `uv run pytest tests/test_sql_pyodbc.py tests/integration/test_sql_pyodbc_live.py tests/integration/test_azure_cosmos_live.py -q`
+  -> 18 passed, 5 skipped.
+- Focused lint/type gates:
+  `uv run ruff check durable_outbox/stores/sql_pyodbc.py tests/test_sql_pyodbc.py tests/integration/test_sql_pyodbc_live.py tests/integration/test_azure_cosmos_live.py`
+  -> all checks passed;
+  `uv run ruff format --check durable_outbox/stores/sql_pyodbc.py tests/test_sql_pyodbc.py tests/integration/test_sql_pyodbc_live.py tests/integration/test_azure_cosmos_live.py`
+  -> 4 files already formatted;
+  `uv run ty check` -> all checks passed.
+- Full package gates:
+  `uv run pytest -q` -> 294 passed, 7 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 59 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
+
+### Deferred
+
+- Live tests are present but were skipped locally because no live SQL Server or
+  Azure Cosmos credentials were configured.
+- SQL failover replay still uses candidate selection plus per-row optimistic
+  rollback. A provider-native replay claim/rollback cursor remains open under
+  **P-P0-2 / P-P1-1**.
+- Cosmos replay still materializes partition query results before store-level
+  claiming. A provider-native async replay cursor remains open under
+  **P-P0-5 / P-P1-1**.

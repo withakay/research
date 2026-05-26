@@ -734,6 +734,23 @@ def _update_parameters(
 def _row_mapping(row: object) -> Mapping[str, object]:
     if isinstance(row, Mapping):
         return cast("Mapping[str, object]", row)
+    description = getattr(row, "cursor_description", None)
+    if isinstance(description, Sequence):
+        try:
+            values = tuple(cast("Sequence[object]", row))
+        except TypeError as exc:
+            raise RetryableStoreError("pyodbc row values are not iterable") from exc
+        names: list[str] = []
+        for column in description:
+            if not isinstance(column, Sequence) or not column:
+                raise RetryableStoreError("pyodbc row description is invalid")
+            name = column[0]
+            if not isinstance(name, str):
+                raise RetryableStoreError("pyodbc row column name must be a string")
+            names.append(name)
+        if len(names) != len(values):
+            raise RetryableStoreError("pyodbc row description/value length mismatch")
+        return dict(zip(names, values, strict=True))
     raise RetryableStoreError("pyodbc row mapping is required")
 
 

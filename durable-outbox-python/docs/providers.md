@@ -85,6 +85,17 @@ restart duplicate handling, conditional index commits, event-index repair, and
 ETag conflicts remain required before treating this adapter as certified
 provider complete.
 
+Live Cosmos certification tests are present but opt-in. Set
+`DURABLE_OUTBOX_COSMOS_LIVE=1`,
+`DURABLE_OUTBOX_COSMOS_CONNECTION_STRING`,
+`DURABLE_OUTBOX_COSMOS_DATABASE`, and `DURABLE_OUTBOX_COSMOS_CONTAINER` to run
+the SDK-backed integration suite. `DURABLE_OUTBOX_COSMOS_REGIONS`,
+`DURABLE_OUTBOX_COSMOS_CONSISTENCY`, and
+`DURABLE_OUTBOX_COSMOS_MULTI_WRITE=1` describe the expected account shape, and
+`DURABLE_OUTBOX_COSMOS_CERTIFY_ACCOUNT=1` enables the strong-consistency,
+multi-region, single-write account validation assertion. Without
+`DURABLE_OUTBOX_COSMOS_LIVE=1`, these tests skip in normal local and CI runs.
+
 ## SQL
 
 Azure SQL RPO=0 requires committing the outbox row and then completing `sp_wait_for_database_copy_sync` against the active secondary before returning success. SQL Server Always On RPO=0 requires synchronous commit with the required synchronized secondaries configured.
@@ -104,6 +115,16 @@ older select-candidates-then-CAS loop for pyodbc clients. Replay claiming still
 uses candidate selection plus optimistic `replace()` so replay rollback can
 restore original state on interruption; a provider-native replay-claim/rollback
 cursor remains future work.
+
+Live SQL certification tests are present but opt-in. Set
+`DURABLE_OUTBOX_SQL_LIVE=1` and `DURABLE_OUTBOX_SQL_CONNECTION_STRING` to run
+the pyodbc-backed integration suite against isolated test tables. Optional
+`DURABLE_OUTBOX_SQL_TABLE_NAME` and
+`DURABLE_OUTBOX_SQL_CLEANUP_STATE_TABLE_NAME`
+override those generated table names. Set `DURABLE_OUTBOX_SQL_PARTNER_SERVER`
+and `DURABLE_OUTBOX_SQL_PARTNER_DATABASE` to enable the Azure SQL
+`sp_wait_for_database_copy_sync` acceptance test. Without
+`DURABLE_OUTBOX_SQL_LIVE=1`, these tests skip in normal local and CI runs.
 
 ## Failover Replay Streaming
 
