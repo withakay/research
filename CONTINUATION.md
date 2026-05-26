@@ -36,6 +36,7 @@ Recent implementation notes:
 - Opt-in live provider certification tests now exist for SQL Server/pyodbc and
   Azure Cosmos. They skip in normal runs unless `DURABLE_OUTBOX_SQL_LIVE=1` or
   `DURABLE_OUTBOX_COSMOS_LIVE=1` plus provider connection settings are present.
+  They now cover SQL atomic replay claims and Cosmos paged replay iteration.
   The SQL path also decodes real pyodbc row shapes via `cursor_description`.
 - `PyodbcSqlOutboxClient` now exists as a lazy optional SQL provider slice for
   persistence primitives, SQL durability checks, cleanup freeze state, strict

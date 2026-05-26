@@ -103,6 +103,15 @@ async def test_live_cosmos_store_restart_duplicate_claim_and_cleanup_paths() -> 
         assert fetched_after_restart is not None
         assert fetched_after_restart.event == event
         assert receipt.event_id == duplicate.event_id == event_id
+        replay_candidates = [
+            record
+            async for record in restarted_client.iter_failover_replay_candidates(
+                failover_started_at=event.created_at - timedelta(seconds=1),
+                limit=1,
+                page_size=1,
+            )
+        ]
+        assert [record.event.event_id for record in replay_candidates] == [event_id]
 
         expired = _event(expired_event_id, expired=True)
         await restarted_store.put(expired)

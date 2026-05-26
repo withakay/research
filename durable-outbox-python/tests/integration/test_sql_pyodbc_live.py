@@ -189,6 +189,19 @@ async def test_live_pyodbc_claim_freeze_and_cleanup_paths() -> None:
         assert claimed[0].claim_token is not None
         assert claimed[0].attempt_count == 1
 
+        replay_claims = await client.claim_failover_replay_batch_atomic(
+            failover_started_at=event.created_at - timedelta(seconds=1),
+            limit=1,
+            now=datetime.now(UTC),
+            claim_timeout=timedelta(minutes=5),
+            exclude_event_ids=set(),
+        )
+        assert len(replay_claims) == 1
+        assert replay_claims[0].record.event.event_id == event.event_id
+        assert replay_claims[0].record.status is OutboxStatus.IN_FLIGHT
+        assert replay_claims[0].record.claim_token is not None
+        assert replay_claims[0].source_status is OutboxStatus.PENDING
+
         claimed[0].status = OutboxStatus.SENT
         claimed[0].sent_at = datetime.now(UTC)
         claimed[0].publish_result = PublishResult(

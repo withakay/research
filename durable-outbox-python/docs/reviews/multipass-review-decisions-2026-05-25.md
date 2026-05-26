@@ -2909,6 +2909,12 @@ verification evidence.
   -> all checks passed;
   `uv run ty check` -> all checks passed.
 - Full package gates:
+  `uv run pytest -q` -> 301 passed, 7 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 59 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
+- Full package gates:
   `uv run pytest -q` -> 296 passed, 7 skipped;
   `uv run ruff check .` -> all checks passed;
   `uv run ruff format --check .` -> 59 files already formatted;
@@ -3042,3 +3048,40 @@ verification evidence.
 - Live Azure Cosmos execution of SDK `by_page()` behavior and continuation
   semantics remains covered by the opt-in live Cosmos gate, not by the default
   local suite.
+
+## Batch 85: Live Replay Certification Coverage
+
+### Findings Partially Accepted
+
+- **A-P0-1 / P-P0-2 / P-P0-5 / P-P1-1:** after the SQL atomic replay and Cosmos
+  paged replay work, the opt-in live provider suites still covered the earlier
+  provider paths but did not exercise the newly added replay implementations.
+
+### Fixes Implemented
+
+- Extended the live SQL pyodbc integration suite to call
+  `claim_failover_replay_batch_atomic()` and assert the claimed row, generated
+  claim token, `IN_FLIGHT` state, and original `source_status`.
+- Extended the live Azure Cosmos integration suite to call
+  `AzureCosmosOutboxClient.iter_failover_replay_candidates(..., page_size=1)`
+  after a restarted client resolves the event through the control-partition
+  event index.
+- Kept both suites gated by their existing explicit live-provider environment
+  variables, so normal local and CI runs do not require external credentials.
+
+### Verification
+
+- Focused live-gate run without provider credentials:
+  `uv run pytest tests/integration/test_sql_pyodbc_live.py tests/integration/test_azure_cosmos_live.py -q`
+  -> 5 skipped.
+- Focused lint/type gates:
+  `uv run ruff check tests/integration/test_sql_pyodbc_live.py tests/integration/test_azure_cosmos_live.py`
+  -> all checks passed;
+  `uv run ruff format --check tests/integration/test_sql_pyodbc_live.py tests/integration/test_azure_cosmos_live.py`
+  -> 2 files already formatted;
+  `uv run ty check` -> all checks passed.
+
+### Deferred
+
+- The live replay certification assertions are present but were skipped locally
+  because no SQL Server or Azure Cosmos credentials were configured.
