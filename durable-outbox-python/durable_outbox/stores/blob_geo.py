@@ -4,7 +4,7 @@ import binascii
 import hmac
 import json
 import logging
-from collections.abc import Iterable, Mapping
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -16,7 +16,6 @@ from durable_outbox.core.admin import AdminActionStatus
 from durable_outbox.core.capabilities import OutboxCapabilities
 from durable_outbox.core.claim import (
     InFlightOrderingIndex,
-    claim_order_key,
     is_claimable_record,
 )
 from durable_outbox.core.claim_token import claim_token_matches
@@ -117,7 +116,12 @@ class BlobClientProtocol(Protocol):
 
     async def delete_blob(self, name: str, *, if_match: str | None = None) -> bool: ...
 
-    async def list_blobs(self, *, prefix: str) -> list[BlobObject]: ...
+    async def list_blobs(
+        self,
+        *,
+        prefix: str,
+        with_content: bool = True,
+    ) -> list[BlobObject]: ...
 
 
 class BlobPreconditionFailedError(RetryableStoreError):
@@ -167,9 +171,14 @@ class InMemoryBlobClient:
         del self._blobs[name]
         return True
 
-    async def list_blobs(self, *, prefix: str) -> list[BlobObject]:
+    async def list_blobs(
+        self,
+        *,
+        prefix: str,
+        with_content: bool = True,
+    ) -> list[BlobObject]:
         return [
-            _copy_blob(blob)
+            _copy_blob(blob) if with_content else _copy_blob_without_content(blob)
             for name, blob in sorted(self._blobs.items())
             if name.startswith(prefix)
         ]
@@ -334,11 +343,10 @@ class BlobOutboxStore:
 
     async def claim_batch(self, *, limit: int) -> list[ClaimedEvent]:
         require_positive_limit(limit)
-        await self._refresh_records()
         now = self.clock.utcnow()
         claimed: list[ClaimedEvent] = []
         locked_keys = self._in_flight_ordering_keys(now)
-        for record in self._ordered_records():
+        async for record in self._claim_candidate_records(now):
             if len(claimed) >= limit:
                 break
             if not self._eligible_for_claim(record, now):
@@ -385,6 +393,8 @@ class BlobOutboxStore:
                     attempt_count=record.attempt_count,
                 )
             )
+            if len(claimed) >= limit:
+                break
         return claimed
 
     async def mark_sent(self, claimed: ClaimedEvent, result: PublishResult) -> None:
@@ -691,6 +701,45 @@ class BlobOutboxStore:
             claim_timeout=self.claim_timeout,
         )
 
+    async def _claim_candidate_records(
+        self,
+        now: datetime,
+    ) -> AsyncIterator[StoredEvent]:
+        blobs = await self.client.list_blobs(
+            prefix="outbox/v1/events/",
+            with_content=False,
+        )
+        seen_ids: set[str] = set()
+        candidate_blobs: list[BlobObject] = []
+        for blob in blobs:
+            event_id = blob.metadata.get("event_id")
+            if event_id is None:
+                continue
+            seen_ids.add(event_id)
+            self._record_etags[event_id] = blob.etag
+            if _metadata_may_be_claimable(
+                blob.metadata,
+                now=now,
+                claim_timeout=self.claim_timeout,
+            ):
+                candidate_blobs.append(blob)
+        self._drop_unlisted_records(seen_ids)
+        for blob in sorted(candidate_blobs, key=_blob_claim_order_key):
+            event_id = blob.metadata.get("event_id")
+            if event_id is None:
+                continue
+            record = await self._load_record(event_id)
+            if record is not None:
+                yield record
+
+    def _drop_unlisted_records(self, seen_ids: set[str]) -> None:
+        for event_id in set(self.records) - seen_ids:
+            existing = self.records.pop(event_id, None)
+            self._record_etags.pop(event_id, None)
+            self._event_fingerprints.pop(event_id, None)
+            if existing is not None:
+                self._in_flight_ordering_index.release(existing.event)
+
     async def _write_new_record(self, record: StoredEvent) -> None:
         event_fingerprint = self._event_fingerprint_for_record(record)
         blob = await self.client.put_blob(
@@ -767,9 +816,6 @@ class BlobOutboxStore:
             record.event,
             actual_fingerprint,
         )
-
-    def _ordered_records(self) -> Iterable[StoredEvent]:
-        return sorted(self.records.values(), key=claim_order_key)
 
     def _eligible_for_claim(self, record: StoredEvent, now: datetime) -> bool:
         if not record.accepted:
@@ -1191,6 +1237,10 @@ def _record_metadata(
     values = dict(blob_metadata(record.event, environment=environment))
     values["accepted"] = str(record.accepted).lower()
     values["status"] = record.status.value
+    if record.claimed_at is not None:
+        values["claimed_at_epoch_ms"] = str(_epoch_ms(record.claimed_at))
+    if record.next_attempt_at is not None:
+        values["next_attempt_at_epoch_ms"] = str(_epoch_ms(record.next_attempt_at))
     values["event_fingerprint"] = event_fingerprint
     return values
 
@@ -1231,6 +1281,61 @@ def _copy_blob(blob: BlobObject) -> BlobObject:
         metadata=dict(blob.metadata),
         etag=blob.etag,
     )
+
+
+def _copy_blob_without_content(blob: BlobObject) -> BlobObject:
+    return BlobObject(
+        name=blob.name,
+        content=b"",
+        metadata=dict(blob.metadata),
+        etag=blob.etag,
+    )
+
+
+def _metadata_may_be_claimable(
+    metadata: Mapping[str, str],
+    *,
+    now: datetime,
+    claim_timeout: timedelta,
+) -> bool:
+    if metadata.get("accepted") != "true":
+        return False
+    status = metadata.get("status")
+    if status == OutboxStatus.PENDING.value:
+        next_attempt_at = _metadata_epoch_ms(metadata, "next_attempt_at_epoch_ms")
+        return next_attempt_at is None or next_attempt_at <= _epoch_ms(now)
+    if status == OutboxStatus.IN_FLIGHT.value:
+        claimed_at = _metadata_epoch_ms(metadata, "claimed_at_epoch_ms")
+        if claimed_at is None:
+            return True
+        stale_at = datetime.fromtimestamp(claimed_at / 1000, tz=UTC) + claim_timeout
+        return stale_at <= now
+    return False
+
+
+def _blob_claim_order_key(blob: BlobObject) -> tuple[str, str, int, int, str]:
+    metadata = blob.metadata
+    return (
+        metadata.get("topic", ""),
+        metadata.get("ordering_key_hash", ""),
+        _metadata_int(metadata, "ordering_sequence") or 0,
+        _metadata_int(metadata, "created_at_epoch_ms") or 0,
+        blob.name,
+    )
+
+
+def _metadata_epoch_ms(metadata: Mapping[str, str], name: str) -> int | None:
+    return _metadata_int(metadata, name)
+
+
+def _metadata_int(metadata: Mapping[str, str], name: str) -> int | None:
+    value = metadata.get(name)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
 
 
 def _claim_mutation_snapshot(

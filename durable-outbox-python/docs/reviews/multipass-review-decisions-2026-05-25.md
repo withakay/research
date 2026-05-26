@@ -2097,3 +2097,47 @@ verification evidence.
   `uv run ruff format --check .` -> 53 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 66: Blob Metadata-Only Claim Scan
+
+### Findings Accepted
+
+- **P-P0-4:** Blob `claim_batch` refreshed every event blob by content before
+  selecting claim candidates. On Azure this meant `list_blobs()` plus
+  `get_blob()` for every retained event, including long-retained `SENT` events.
+
+### Fixes Implemented
+
+- Extended the Blob client protocol with `list_blobs(..., with_content=True)`.
+  The default preserves existing callers, while `with_content=False` returns
+  blob names, metadata, and etags with empty content.
+- Updated `AzureBlobClient.list_blobs(with_content=False)` to request metadata
+  during listing and avoid per-blob property reads and downloads.
+- Changed `BlobOutboxStore.claim_batch` to perform a metadata-only scan, skip
+  non-accepted and non-claimable statuses from metadata, and load full blob
+  content only for plausible claim candidates until the requested claim limit is
+  reached.
+- Added claim-state metadata for `claimed_at` and `next_attempt_at` so future
+  writes can filter fresh `IN_FLIGHT` and delayed `PENDING` records without
+  downloading content. Legacy metadata remains compatible and falls back to
+  loading plausible non-terminal candidates.
+- Kept full-content `_refresh_records()` for failover replay and other paths
+  that need full record state. `P-P1-1` replay pagination remains a separate
+  finding because it mutates claim state and has rollback semantics.
+
+### Verification
+
+- Focused regression run during implementation:
+  `uv run pytest tests/test_adapters.py::test_blob_claim_batch_skips_retained_sent_blobs_during_scan tests/test_azure_blob_and_file_sink.py::test_azure_blob_client_can_list_metadata_without_downloading_content tests/test_azure_blob_and_file_sink.py::test_azure_blob_client_adapts_container_protocol -q`
+  -> initially failed because claim scanning loaded three candidate blobs for a
+  `limit=2` claim, then passed after changing candidate loading to stream until
+  the claim loop reaches its limit.
+- Focused Blob/provider run:
+  `uv run pytest tests/test_adapters.py::test_blob_claim_batch_skips_retained_sent_blobs_during_scan tests/test_adapters.py::test_builtin_adapters_pass_reusable_provider_contract tests/test_failover_ordering_cleanup.py tests/test_azure_blob_and_file_sink.py -q`
+  -> 36 passed.
+- Full package gates:
+  `uv run pytest -q` -> 246 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 53 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.

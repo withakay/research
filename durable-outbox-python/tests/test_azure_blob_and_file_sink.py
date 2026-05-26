@@ -36,6 +36,13 @@ class Download:
 
 
 class BlobItem:
+    def __init__(self, blob: BlobObject) -> None:
+        self.name = blob.name
+        self.metadata = blob.metadata
+        self.etag = blob.etag
+
+
+class NameOnlyBlobItem:
     def __init__(self, name: str) -> None:
         self.name = name
 
@@ -98,11 +105,19 @@ class Container:
     def get_blob_client(self, name: str) -> Blob:
         return Blob(self, name)
 
-    def list_blobs(self, *, name_starts_with: str) -> AsyncIterator[BlobItem]:
-        async def items() -> AsyncIterator[BlobItem]:
+    def list_blobs(
+        self,
+        *,
+        name_starts_with: str,
+        include: list[str] | None = None,
+    ) -> AsyncIterator[BlobItem | NameOnlyBlobItem]:
+        async def items() -> AsyncIterator[BlobItem | NameOnlyBlobItem]:
             for name in sorted(self.blobs):
                 if name.startswith(name_starts_with):
-                    yield BlobItem(name)
+                    if include == ["metadata"]:
+                        yield BlobItem(self.blobs[name])
+                    else:
+                        yield NameOnlyBlobItem(name)
 
         return items()
 
@@ -125,6 +140,35 @@ async def test_azure_blob_client_adapts_container_protocol() -> None:
     assert written.etag == '"1"'
     assert read == written
     assert listed == [written]
+
+
+@pytest.mark.asyncio
+async def test_azure_blob_client_can_list_metadata_without_downloading_content() -> (
+    None
+):
+    container = Container()
+    client = AzureBlobClient(container)
+    written = await client.put_blob(
+        "outbox/v1/events/one.json",
+        b"payload",
+        {"event_id": "one", "status": "PENDING"},
+    )
+
+    listed = await client.list_blobs(
+        prefix="outbox/v1/events/",
+        with_content=False,
+    )
+
+    assert listed == [
+        BlobObject(
+            name=written.name,
+            content=b"",
+            metadata={"event_id": "one", "status": "PENDING"},
+            etag=written.etag,
+        )
+    ]
+    assert container.property_reads == 0
+    assert container.downloads == 0
 
 
 @pytest.mark.asyncio

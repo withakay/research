@@ -19,6 +19,7 @@ from durable_outbox.core.store import DurableOutboxStore
 from durable_outbox.stores import blob_geo
 from durable_outbox.stores.blob_geo import (
     MAX_BLOB_PAYLOAD_BYTES,
+    BlobObject,
     BlobOutboxStore,
     DualRegionBlobOutboxStore,
     InMemoryBlobClient,
@@ -164,6 +165,26 @@ class ConcurrentDeleteBlobClient(InMemoryBlobClient):
             return await super().delete_blob(name, if_match=if_match)
         finally:
             self.in_flight_deletes -= 1
+
+
+class ClaimScanCountingBlobClient(InMemoryBlobClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.get_blob_calls = 0
+        self.list_with_content_values: list[bool] = []
+
+    async def get_blob(self, name: str) -> BlobObject | None:
+        self.get_blob_calls += 1
+        return await super().get_blob(name)
+
+    async def list_blobs(
+        self,
+        *,
+        prefix: str,
+        with_content: bool = True,
+    ) -> list[BlobObject]:
+        self.list_with_content_values.append(with_content)
+        return await super().list_blobs(prefix=prefix, with_content=with_content)
 
 
 class CleanupCountingCosmosClient(InMemoryCosmosOutboxClient):
@@ -1361,6 +1382,38 @@ async def test_blob_cleanup_sent_parallelizes_deletes_with_batch_limit() -> None
     assert deleted == 3
     assert client.max_in_flight_deletes == 2
     assert await client.get_blob(event_blob_name(events[3].event_id)) is not None
+
+
+@pytest.mark.asyncio
+async def test_blob_claim_batch_skips_retained_sent_blobs_during_scan() -> None:
+    now = datetime.now(UTC)
+    client = ClaimScanCountingBlobClient()
+    setup_store = BlobOutboxStore(client=client, clock=FixedClock(now))
+    for index in range(10):
+        event = make_event(f"retained-sent-{index}")
+        await setup_store.put(event)
+        claimed = (await setup_store.claim_batch(limit=1))[0]
+        await setup_store.mark_sent(
+            claimed,
+            PublishResult(partition=0, offset=index, published_at=now),
+        )
+    pending = [make_event(f"pending-claim-{index}") for index in range(3)]
+    for event in pending:
+        await setup_store.put(event)
+    client.get_blob_calls = 0
+    client.list_with_content_values.clear()
+    claim_store = BlobOutboxStore(client=client, clock=FixedClock(now))
+
+    claimed = await claim_store.claim_batch(limit=2)
+
+    assert len(claimed) == 2
+    assert {claim.event.event_id for claim in claimed} <= {
+        "pending-claim-0",
+        "pending-claim-1",
+        "pending-claim-2",
+    }
+    assert client.list_with_content_values == [False]
+    assert client.get_blob_calls == 2
 
 
 @pytest.mark.parametrize(

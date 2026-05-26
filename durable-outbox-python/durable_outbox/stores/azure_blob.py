@@ -19,7 +19,12 @@ class AzureContainerClientLike(Protocol):
 
     def get_blob_client(self, name: str) -> Any: ...
 
-    def list_blobs(self, *, name_starts_with: str) -> Any: ...
+    def list_blobs(
+        self,
+        *,
+        name_starts_with: str,
+        include: list[str] | None = None,
+    ) -> Any: ...
 
 
 if TYPE_CHECKING:
@@ -154,14 +159,42 @@ class AzureBlobClient:
             raise
         return True
 
-    async def list_blobs(self, *, prefix: str) -> list[BlobObject]:
+    async def list_blobs(
+        self,
+        *,
+        prefix: str,
+        with_content: bool = True,
+    ) -> list[BlobObject]:
         blobs: list[BlobObject] = []
-        async for item in self.container_client.list_blobs(name_starts_with=prefix):
+        async for item in self._list_blob_items(
+            prefix=prefix, with_content=with_content
+        ):
             name = str(item.name)
+            if not with_content:
+                blobs.append(
+                    BlobObject(
+                        name=name,
+                        content=b"",
+                        metadata=_blob_item_metadata(item),
+                        etag=_blob_item_etag(item),
+                    )
+                )
+                continue
             blob = await self.get_blob(name)
             if blob is not None:
                 blobs.append(blob)
         return blobs
+
+    def _list_blob_items(self, *, prefix: str, with_content: bool) -> Any:
+        if with_content:
+            return self.container_client.list_blobs(name_starts_with=prefix)
+        try:
+            return self.container_client.list_blobs(
+                name_starts_with=prefix,
+                include=["metadata"],
+            )
+        except TypeError:
+            return self.container_client.list_blobs(name_starts_with=prefix)
 
 
 def _if_not_modified() -> Any:
@@ -187,6 +220,18 @@ def _upload_response_etag(response: object) -> str:
     if isinstance(etag, str):
         return etag
     raise BlobPreconditionFailedError("uploaded blob response missing etag")
+
+
+def _blob_item_metadata(item: object) -> dict[str, str]:
+    metadata = getattr(item, "metadata", None)
+    if isinstance(metadata, Mapping):
+        return dict(cast("Mapping[str, str]", metadata))
+    return {}
+
+
+def _blob_item_etag(item: object) -> str:
+    etag = getattr(item, "etag", None)
+    return str(etag) if etag is not None else ""
 
 
 def _enforce_blob_download_size(properties: object) -> None:
