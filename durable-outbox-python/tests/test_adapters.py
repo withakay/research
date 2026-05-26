@@ -31,6 +31,7 @@ from durable_outbox.stores.blob_geo import (
 )
 from durable_outbox.stores.cosmos import (
     CosmosConfiguration,
+    CosmosStoredEvent,
     CosmosStrongOutboxStore,
     InMemoryCosmosOutboxClient,
 )
@@ -48,6 +49,7 @@ from durable_outbox.stores.sql import (
     AzureSqlSyncOutboxStore,
     InMemorySqlOutboxClient,
     SqlAlwaysOnOutboxStore,
+    SqlStoredEvent,
 )
 from durable_outbox.telemetry import InMemoryMetrics
 from durable_outbox.testing import FakeOutboxStore, FixedClock
@@ -143,6 +145,79 @@ class FailingDeleteBlobClient(InMemoryBlobClient):
         if self.fail_deletes and name.startswith("outbox/v1/events/"):
             raise RuntimeError("secondary cleanup failed")
         return await super().delete_blob(name, if_match=if_match)
+
+
+class ConcurrentDeleteBlobClient(InMemoryBlobClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.in_flight_deletes = 0
+        self.max_in_flight_deletes = 0
+
+    async def delete_blob(self, name: str, *, if_match: str | None = None) -> bool:
+        self.in_flight_deletes += 1
+        self.max_in_flight_deletes = max(
+            self.max_in_flight_deletes,
+            self.in_flight_deletes,
+        )
+        try:
+            await asyncio.sleep(0)
+            return await super().delete_blob(name, if_match=if_match)
+        finally:
+            self.in_flight_deletes -= 1
+
+
+class CleanupCountingCosmosClient(InMemoryCosmosOutboxClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.list_records_calls = 0
+        self.cleanup_candidate_limits: list[int | None] = []
+
+    async def list_records(self) -> tuple[CosmosStoredEvent, ...]:
+        self.list_records_calls += 1
+        return tuple(await super().list_records())
+
+    async def list_cleanup_candidates(
+        self,
+        *,
+        now: datetime,
+        safety_margin: timedelta,
+        limit: int | None = None,
+    ) -> tuple[CosmosStoredEvent, ...]:
+        self.cleanup_candidate_limits.append(limit)
+        return tuple(
+            await super().list_cleanup_candidates(
+                now=now,
+                safety_margin=safety_margin,
+                limit=limit,
+            )
+        )
+
+
+class CleanupCountingSqlClient(InMemorySqlOutboxClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.list_records_calls = 0
+        self.cleanup_candidate_limits: list[int | None] = []
+
+    async def list_records(self) -> tuple[SqlStoredEvent, ...]:
+        self.list_records_calls += 1
+        return tuple(await super().list_records())
+
+    async def list_cleanup_candidates(
+        self,
+        *,
+        now: datetime,
+        safety_margin: timedelta,
+        limit: int | None = None,
+    ) -> tuple[SqlStoredEvent, ...]:
+        self.cleanup_candidate_limits.append(limit)
+        return tuple(
+            await super().list_cleanup_candidates(
+                now=now,
+                safety_margin=safety_margin,
+                limit=limit,
+            )
+        )
 
 
 class FailingPutBlobClient(InMemoryBlobClient):
@@ -1213,6 +1288,124 @@ async def _record_from_store(store: Any, event_id: str) -> Any:
     if hasattr(store, "client"):
         return await store.client.get(event_id)
     return store.records[event_id]
+
+
+@pytest.mark.parametrize(
+    "store_factory",
+    [
+        lambda clock: MemoryOutboxStore(clock=clock),
+        lambda clock: BlobOutboxStore.for_testing(clock=clock),
+        lambda clock: CosmosStrongOutboxStore.for_testing(
+            CosmosConfiguration(consistency="Strong", regions=("westus", "eastus")),
+            clock=clock,
+        ),
+        lambda clock: AzureSqlSyncOutboxStore.for_testing(clock=clock),
+        lambda clock: SqlAlwaysOnOutboxStore.for_testing(clock=clock),
+    ],
+)
+@pytest.mark.asyncio
+async def test_provider_cleanup_sent_honors_max_per_tick(
+    store_factory: Any,
+) -> None:
+    now = datetime.now(UTC)
+    store = store_factory(FixedClock(now))
+    events = [make_event(f"cleanup-bound-{index}") for index in range(3)]
+    for event in events:
+        await store.put(event)
+    claimed = await store.claim_batch(limit=3)
+    for offset, claim in enumerate(claimed):
+        await store.mark_sent(
+            claim,
+            PublishResult(partition=0, offset=offset, published_at=now),
+        )
+
+    first_deleted = await store.cleanup_sent(
+        now=events[0].expires_at + timedelta(seconds=1),
+        safety_margin=timedelta(seconds=0),
+        batch_size=1,
+        max_per_tick=2,
+    )
+    second_deleted = await store.cleanup_sent(
+        now=events[0].expires_at + timedelta(seconds=1),
+        safety_margin=timedelta(seconds=0),
+        batch_size=1,
+        max_per_tick=2,
+    )
+
+    assert first_deleted == 2
+    assert second_deleted == 1
+
+
+@pytest.mark.asyncio
+async def test_blob_cleanup_sent_parallelizes_deletes_with_batch_limit() -> None:
+    now = datetime.now(UTC)
+    client = ConcurrentDeleteBlobClient()
+    store = BlobOutboxStore(client=client, clock=FixedClock(now))
+    events = [make_event(f"blob-cleanup-batch-{index}") for index in range(4)]
+    for event in events:
+        await store.put(event)
+    claimed = await store.claim_batch(limit=4)
+    for offset, claim in enumerate(claimed):
+        await store.mark_sent(
+            claim,
+            PublishResult(partition=0, offset=offset, published_at=now),
+        )
+
+    deleted = await store.cleanup_sent(
+        now=events[0].expires_at + timedelta(seconds=1),
+        safety_margin=timedelta(seconds=0),
+        batch_size=2,
+        max_per_tick=3,
+    )
+
+    assert deleted == 3
+    assert client.max_in_flight_deletes == 2
+    assert await client.get_blob(event_blob_name(events[3].event_id)) is not None
+
+
+@pytest.mark.parametrize(
+    ("store", "client"),
+    [
+        (
+            CosmosStrongOutboxStore(
+                CosmosConfiguration(consistency="Strong", regions=("westus", "eastus")),
+                client=(cosmos_client := CleanupCountingCosmosClient()),
+            ),
+            cosmos_client,
+        ),
+        (
+            AzureSqlSyncOutboxStore(client=(sql_client := CleanupCountingSqlClient())),
+            sql_client,
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_database_cleanup_uses_bounded_cleanup_candidates(
+    store: Any,
+    client: Any,
+) -> None:
+    now = datetime.now(UTC)
+    events = [make_event(f"db-cleanup-bound-{index}") for index in range(4)]
+    for event in events:
+        await store.put(event)
+    claimed = await store.claim_batch(limit=4)
+    for offset, claim in enumerate(claimed):
+        await store.mark_sent(
+            claim,
+            PublishResult(partition=0, offset=offset, published_at=now),
+        )
+    client.list_records_calls = 0
+
+    deleted = await store.cleanup_sent(
+        now=events[0].expires_at + timedelta(seconds=1),
+        safety_margin=timedelta(seconds=0),
+        batch_size=2,
+        max_per_tick=3,
+    )
+
+    assert deleted == 3
+    assert client.list_records_calls == 0
+    assert client.cleanup_candidate_limits == [3]
 
 
 @pytest.mark.parametrize(

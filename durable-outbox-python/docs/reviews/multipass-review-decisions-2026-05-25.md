@@ -2045,3 +2045,55 @@ verification evidence.
   `uv run ruff format --check .` -> 53 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 65: Bounded Cleanup Scheduler
+
+### Findings Accepted
+
+- **P-P1-6:** `cleanup_sent` walked and deleted every expired sent record in a
+  single call, and Blob cleanup deleted matching blobs sequentially. The core
+  `CleanupPolicy` was configuration only, with no runner that actually passed
+  policy values to providers.
+- **A-P3-1 cleanup portion:** `CleanupPolicy` was a dead public type unless it
+  was wired into a scheduler or removed. Keeping it is justified once it drives
+  cleanup execution.
+
+### Fixes Implemented
+
+- Added optional `batch_size` and `max_per_tick` parameters to the public
+  `DurableOutboxStore.cleanup_sent` protocol and every built-in adapter while
+  preserving existing callers that pass only `now` and `safety_margin`.
+- Added `CleanupScheduler` in `durable_outbox.core.cleanup` with `run_once()`
+  and `run_until_stopped()` methods. The scheduler consumes `CleanupPolicy`,
+  uses an injectable clock, and keeps provider-specific cleanup logic inside
+  stores.
+- Extended `CleanupPolicy` with `interval`, `batch_size`, and `max_per_tick`,
+  validating that configured limits are positive.
+- Bounded memory cleanup with `max_per_tick`.
+- Added bounded cleanup candidate helpers to the SQL and Cosmos client
+  protocols and in-memory clients so cleanup no longer has to call
+  `list_records()` before deleting expired sent rows.
+- Changed Blob cleanup to build at most `max_per_tick` candidates and delete
+  them in `batch_size` chunks with `asyncio.gather`, clearing local caches only
+  after a delete succeeds.
+- Passed cleanup bounds through `DualRegionBlobOutboxStore` and
+  `FailingStore`.
+- Explicitly deferred `failover_replay_candidates` pagination from this batch:
+  that method already has a public `limit` and mutates claim state with rollback
+  semantics, so it should be optimized separately through provider-specific
+  replay candidate queries.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_core.py::test_cleanup_scheduler_runs_once_with_policy_bounds tests/test_adapters.py::test_provider_cleanup_sent_honors_max_per_tick tests/test_adapters.py::test_blob_cleanup_sent_parallelizes_deletes_with_batch_limit -q`
+  -> failed because `CleanupScheduler` did not exist.
+- Focused green run:
+  `uv run pytest tests/test_core.py::test_cleanup_scheduler_runs_once_with_policy_bounds tests/test_core.py::test_cleanup_scheduler_loop_stops_after_stop_event tests/test_adapters.py::test_provider_cleanup_sent_honors_max_per_tick tests/test_adapters.py::test_blob_cleanup_sent_parallelizes_deletes_with_batch_limit tests/test_adapters.py::test_database_cleanup_uses_bounded_cleanup_candidates -q`
+  -> 10 passed.
+- Full package gates:
+  `uv run pytest -q` -> 244 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 53 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.

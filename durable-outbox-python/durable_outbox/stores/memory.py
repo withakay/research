@@ -25,7 +25,11 @@ from durable_outbox.core.model import (
 )
 from durable_outbox.core.ordering import ordering_scope
 from durable_outbox.core.time import Clock, SystemClock
-from durable_outbox.core.validation import enforce_payload_size, require_positive_limit
+from durable_outbox.core.validation import (
+    enforce_payload_size,
+    require_optional_positive_limit,
+    require_positive_limit,
+)
 
 
 @dataclass(slots=True)
@@ -230,7 +234,16 @@ class MemoryOutboxStore:
         self.cleanup_frozen = False
         self.cleanup_freeze_reason = None
 
-    async def cleanup_sent(self, *, now: datetime, safety_margin: timedelta) -> int:
+    async def cleanup_sent(
+        self,
+        *,
+        now: datetime,
+        safety_margin: timedelta,
+        batch_size: int | None = None,
+        max_per_tick: int | None = None,
+    ) -> int:
+        require_optional_positive_limit(batch_size, field_name="batch_size")
+        require_optional_positive_limit(max_per_tick, field_name="max_per_tick")
         if self._cleanup_is_frozen():
             return 0
         to_delete = [
@@ -239,6 +252,8 @@ class MemoryOutboxStore:
             if record.status is OutboxStatus.SENT
             and now > record.event.expires_at + safety_margin
         ]
+        if max_per_tick is not None:
+            to_delete = to_delete[:max_per_tick]
         for event_id in to_delete:
             del self.records[event_id]
         return len(to_delete)

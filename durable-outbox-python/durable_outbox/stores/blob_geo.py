@@ -43,6 +43,7 @@ from durable_outbox.core.time import Clock, SystemClock
 from durable_outbox.core.validation import (
     enforce_metadata_safe,
     enforce_payload_size,
+    require_optional_positive_limit,
     require_positive_limit,
 )
 from durable_outbox.stores.memory import StoredEvent
@@ -509,27 +510,57 @@ class BlobOutboxStore:
         self.cleanup_frozen = False
         self.cleanup_freeze_reason = None
 
-    async def cleanup_sent(self, *, now: datetime, safety_margin: timedelta) -> int:
+    async def cleanup_sent(
+        self,
+        *,
+        now: datetime,
+        safety_margin: timedelta,
+        batch_size: int | None = None,
+        max_per_tick: int | None = None,
+    ) -> int:
+        require_optional_positive_limit(batch_size, field_name="batch_size")
+        require_optional_positive_limit(max_per_tick, field_name="max_per_tick")
         if await self._cleanup_is_frozen():
             return 0
         await self._refresh_records()
-        deleted = 0
+        candidates: list[tuple[str, StoredEvent]] = []
         for event_id, record in list(self.records.items()):
             if record.status is not OutboxStatus.SENT:
                 continue
             if now <= record.event.expires_at + safety_margin:
                 continue
+            candidates.append((event_id, record))
+            if max_per_tick is not None and len(candidates) >= max_per_tick:
+                break
+
+        async def delete_candidate(event_id: str, record: StoredEvent) -> bool:
             try:
-                if await self.client.delete_blob(
-                    event_blob_name(event_id), if_match=self._record_etags.get(event_id)
-                ):
-                    deleted += 1
+                deleted = await self.client.delete_blob(
+                    event_blob_name(event_id),
+                    if_match=self._record_etags.get(event_id),
+                )
             except BlobPreconditionFailedError:
-                continue
+                return False
+            if not deleted:
+                return False
             self.records.pop(event_id, None)
             self._record_etags.pop(event_id, None)
             self._event_fingerprints.pop(event_id, None)
             self._in_flight_ordering_index.release(record.event)
+            return True
+
+        cleanup_batch_size = batch_size or 1
+        deleted = 0
+        for index in range(0, len(candidates), cleanup_batch_size):
+            results = await asyncio.gather(
+                *(
+                    delete_candidate(event_id, record)
+                    for event_id, record in candidates[
+                        index : index + cleanup_batch_size
+                    ]
+                )
+            )
+            deleted += sum(results)
         return deleted
 
     async def repair_failed_to_pending(self, *, event_id: str) -> AdminActionStatus:
@@ -993,11 +1024,28 @@ class DualRegionBlobOutboxStore:
         await self.primary.resume_cleanup()
         await self.secondary.resume_cleanup()
 
-    async def cleanup_sent(self, *, now: datetime, safety_margin: timedelta) -> int:
+    async def cleanup_sent(
+        self,
+        *,
+        now: datetime,
+        safety_margin: timedelta,
+        batch_size: int | None = None,
+        max_per_tick: int | None = None,
+    ) -> int:
         if self.cleanup_frozen:
             return 0
-        await self._standby.cleanup_sent(now=now, safety_margin=safety_margin)
-        deleted = await self._active.cleanup_sent(now=now, safety_margin=safety_margin)
+        await self._standby.cleanup_sent(
+            now=now,
+            safety_margin=safety_margin,
+            batch_size=batch_size,
+            max_per_tick=max_per_tick,
+        )
+        deleted = await self._active.cleanup_sent(
+            now=now,
+            safety_margin=safety_margin,
+            batch_size=batch_size,
+            max_per_tick=max_per_tick,
+        )
         return deleted
 
     async def repair_failed_to_pending(self, *, event_id: str) -> AdminActionStatus:

@@ -70,7 +70,14 @@ class DurableOutboxStore(Protocol):
         """Resume normal cleanup after a previous `freeze_cleanup` call."""
         ...
 
-    async def cleanup_sent(self, *, now: datetime, safety_margin: timedelta) -> int:
+    async def cleanup_sent(
+        self,
+        *,
+        now: datetime,
+        safety_margin: timedelta,
+        batch_size: int | None = None,
+        max_per_tick: int | None = None,
+    ) -> int:
         """Delete expired `SENT` events older than `safety_margin` and return the count."""
         ...
 

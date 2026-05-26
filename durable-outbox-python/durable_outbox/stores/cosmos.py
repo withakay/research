@@ -31,7 +31,11 @@ from durable_outbox.core.model import (
 )
 from durable_outbox.core.ordering import ordering_scope
 from durable_outbox.core.time import Clock, SystemClock
-from durable_outbox.core.validation import enforce_payload_size, require_positive_limit
+from durable_outbox.core.validation import (
+    enforce_payload_size,
+    require_optional_positive_limit,
+    require_positive_limit,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -86,6 +90,14 @@ class CosmosOutboxClient(Protocol):
 
     async def list_records(self) -> Sequence[CosmosStoredEvent]: ...
 
+    async def list_cleanup_candidates(
+        self,
+        *,
+        now: datetime,
+        safety_margin: timedelta,
+        limit: int | None = None,
+    ) -> Sequence[CosmosStoredEvent]: ...
+
     async def delete(self, event_id: str) -> None: ...
 
     async def get_cleanup_freeze_reason(self) -> str | None: ...
@@ -132,6 +144,23 @@ class InMemoryCosmosOutboxClient:
 
     async def list_records(self) -> Sequence[CosmosStoredEvent]:
         return tuple(_clone_record(record) for record in self.records.values())
+
+    async def list_cleanup_candidates(
+        self,
+        *,
+        now: datetime,
+        safety_margin: timedelta,
+        limit: int | None = None,
+    ) -> Sequence[CosmosStoredEvent]:
+        records = [
+            _clone_record(record)
+            for record in self.records.values()
+            if record.status is OutboxStatus.SENT
+            and now > record.event.expires_at + safety_margin
+        ]
+        if limit is not None:
+            records = records[:limit]
+        return tuple(records)
 
     async def delete(self, event_id: str) -> None:
         partition_key = self.partition_keys_by_event_id.pop(event_id, None)
@@ -395,14 +424,25 @@ class CosmosStrongOutboxStore:
         self.cleanup_frozen = False
         self.cleanup_freeze_reason = None
 
-    async def cleanup_sent(self, *, now: datetime, safety_margin: timedelta) -> int:
+    async def cleanup_sent(
+        self,
+        *,
+        now: datetime,
+        safety_margin: timedelta,
+        batch_size: int | None = None,
+        max_per_tick: int | None = None,
+    ) -> int:
+        require_optional_positive_limit(batch_size, field_name="batch_size")
+        require_optional_positive_limit(max_per_tick, field_name="max_per_tick")
         if await self._cleanup_is_frozen():
             return 0
         event_ids = [
             record.event.event_id
-            for record in await self.client.list_records()
-            if record.status is OutboxStatus.SENT
-            and now > record.event.expires_at + safety_margin
+            for record in await self.client.list_cleanup_candidates(
+                now=now,
+                safety_margin=safety_margin,
+                limit=max_per_tick,
+            )
         ]
         for event_id in event_ids:
             await self.client.delete(event_id)

@@ -41,6 +41,16 @@ def require_positive_limit(limit: int, *, field_name: str = "limit") -> None:
         )
 
 
+def require_optional_positive_limit(
+    limit: int | None,
+    *,
+    field_name: str = "limit",
+) -> int | None:
+    if limit is not None:
+        require_positive_limit(limit, field_name=field_name)
+    return limit
+
+
 def enforce_payload_size(
     event: OutboxEvent,
     capabilities: OutboxCapabilities,

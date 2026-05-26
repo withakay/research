@@ -125,8 +125,20 @@ class FailingStore:
     async def resume_cleanup(self) -> None:
         await self._store.resume_cleanup()
 
-    async def cleanup_sent(self, *, now: datetime, safety_margin: timedelta) -> int:
-        return await self._store.cleanup_sent(now=now, safety_margin=safety_margin)
+    async def cleanup_sent(
+        self,
+        *,
+        now: datetime,
+        safety_margin: timedelta,
+        batch_size: int | None = None,
+        max_per_tick: int | None = None,
+    ) -> int:
+        return await self._store.cleanup_sent(
+            now=now,
+            safety_margin=safety_margin,
+            batch_size=batch_size,
+            max_per_tick=max_per_tick,
+        )
 
     async def repair_failed_to_pending(self, *, event_id: str) -> AdminActionStatus:
         return await self._store.repair_failed_to_pending(event_id=event_id)

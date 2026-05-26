@@ -30,6 +30,7 @@ from durable_outbox.core.claim import (
     in_flight_ordering_keys,
     is_claimable_record,
 )
+from durable_outbox.core.cleanup import CleanupPolicy, CleanupScheduler
 from durable_outbox.core.errors import DuplicateEventConflictError
 from durable_outbox.stores.blob_geo import BlobOutboxStore
 from durable_outbox.telemetry import InMemoryMetrics
@@ -88,6 +89,81 @@ class StoredClaimState:
     status: OutboxStatus
     claimed_at: datetime | None = None
     next_attempt_at: datetime | None = None
+
+
+class CleanupRecordingStore:
+    def __init__(self) -> None:
+        self.calls: list[tuple[datetime, timedelta, int | None, int | None]] = []
+
+    async def cleanup_sent(
+        self,
+        *,
+        now: datetime,
+        safety_margin: timedelta,
+        batch_size: int | None = None,
+        max_per_tick: int | None = None,
+    ) -> int:
+        self.calls.append((now, safety_margin, batch_size, max_per_tick))
+        return 7
+
+
+class CleanupStoppingStore(CleanupRecordingStore):
+    def __init__(self, stop_event: asyncio.Event) -> None:
+        super().__init__()
+        self.stop_event = stop_event
+
+    async def cleanup_sent(
+        self,
+        *,
+        now: datetime,
+        safety_margin: timedelta,
+        batch_size: int | None = None,
+        max_per_tick: int | None = None,
+    ) -> int:
+        deleted = await super().cleanup_sent(
+            now=now,
+            safety_margin=safety_margin,
+            batch_size=batch_size,
+            max_per_tick=max_per_tick,
+        )
+        self.stop_event.set()
+        return deleted
+
+
+@pytest.mark.asyncio
+async def test_cleanup_scheduler_runs_once_with_policy_bounds() -> None:
+    now = datetime.now(UTC)
+    store = CleanupRecordingStore()
+    scheduler = CleanupScheduler(
+        store=store,
+        clock=FixedClock(now),
+        policy=CleanupPolicy(
+            sent_safety_margin=timedelta(minutes=9),
+            batch_size=3,
+            max_per_tick=5,
+        ),
+    )
+
+    deleted = await scheduler.run_once()
+
+    assert deleted == 7
+    assert store.calls == [(now, timedelta(minutes=9), 3, 5)]
+
+
+@pytest.mark.asyncio
+async def test_cleanup_scheduler_loop_stops_after_stop_event() -> None:
+    now = datetime.now(UTC)
+    stop_event = asyncio.Event()
+    store = CleanupStoppingStore(stop_event)
+    scheduler = CleanupScheduler(
+        store=store,
+        clock=FixedClock(now),
+        policy=CleanupPolicy(interval=timedelta(seconds=30)),
+    )
+
+    await scheduler.run_until_stopped(stop_event)
+
+    assert len(store.calls) == 1
 
 
 def test_claim_helpers_match_store_claimability_rules() -> None:
