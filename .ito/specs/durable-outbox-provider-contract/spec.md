@@ -1,27 +1,15 @@
-<!-- ITO:START -->
-## Purpose
-This specification documents the durable outbox capability after the archived implementation changes.
+## MODIFIED Requirements
 
-## Requirements
+### Requirement: Provider-Independent Duplicate Handling
+Providers SHALL reject incompatible duplicate `event_id` puts with `DuplicateEventConflictError`.
 
-### Requirement: Protocol Only Contract
-The shared provider contract SHALL exercise stores through the `DurableOutboxStore` protocol and SHALL NOT require fake-store internals.
+#### Scenario: duplicate event id has different envelope data
+- **WHEN** a producer puts an event id that already exists with incompatible content
+- **THEN** every provider raises the same duplicate-conflict exception type
 
-#### Scenario: non-fake adapter is tested
-- **WHEN** the adapter satisfies `DurableOutboxStore`
-- **THEN** the base provider contract can run without inheritance checks
+### Requirement: Provider Capability Enforcement
+Providers SHALL enforce declared maximum payload sizes before accepting events.
 
-### Requirement: Optional Capability Hooks
-The provider contract SHALL support optional hooks for cleanup, stale reclaim, failure injection, and state inspection.
-
-#### Scenario: provider lacks an optional hook
-- **WHEN** an optional behavior cannot be driven through public APIs
-- **THEN** the contract skips that scenario with an explicit capability reason
-
-### Requirement: Contract Coverage
-The contract SHALL verify duplicate put, single-winner claim, retry, mark-sent, failover replay, cleanup freeze, and ordering behavior where supported.
-
-#### Scenario: fake store is certified
-- **WHEN** the fake store runs the generic contract
-- **THEN** the contract passes without fake-store type checks
-<!-- ITO:END -->
+#### Scenario: payload exceeds provider maximum
+- **WHEN** an event payload exceeds the store capability limit
+- **THEN** the store rejects the put without accepting the event

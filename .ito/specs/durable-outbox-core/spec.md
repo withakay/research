@@ -1,15 +1,15 @@
 ## MODIFIED Requirements
 
-### Requirement: Post-Acknowledgement Store Failure Handling
-The dispatcher SHALL NOT convert a store failure after sink acknowledgement into a publish retry failure.
+### Requirement: Envelope Validation
+The system SHALL reject event envelopes with missing identifiers, invalid ordering metadata, non-bytes payload or header values, naive datetimes, or an expiration that is not after creation.
 
-#### Scenario: mark sent fails after sink acknowledgement
-- **WHEN** the sink acknowledges publication but `mark_sent` fails
-- **THEN** the dispatcher records a post-ack store failure and leaves the claimed event for store-level stale-claim recovery
+#### Scenario: producer submits a naive datetime
+- **WHEN** an outbox event is created with a naive `created_at` or `expires_at`
+- **THEN** validation fails before the event can be stored
 
-### Requirement: Sink-Agnostic Dispatcher Metrics
-The dispatcher SHALL emit provider-independent publish metrics.
+### Requirement: Store Method Arguments
+Stores SHALL reject non-positive claim and replay limits before mutating provider state.
 
-#### Scenario: a non-Kafka sink publishes an event
-- **WHEN** dispatch runs
-- **THEN** metrics are emitted with `outbox_publish_*` names rather than sink-specific names
+#### Scenario: dispatcher requests zero claims
+- **WHEN** a store receives `claim_batch(limit=0)`
+- **THEN** the store raises a validation error
