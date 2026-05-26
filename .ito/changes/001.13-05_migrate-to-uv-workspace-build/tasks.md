@@ -8,6 +8,6 @@
 ## 2. Verification
 - [x] 2.1 Run `uv sync --all-packages --group dev` from `durable-outbox-python`.
 - [x] 2.2 Run `uv run pytest` from `durable-outbox-python`.
-- [ ] 2.3 Run `uv run ruff check .` and `uv run ruff format --check .`.
+- [x] 2.3 Run `uv run ruff check .` and `uv run ruff format --check .`.
 - [ ] 2.4 Run `uv run ty check`.
 - [ ] 2.5 Run `uv build --all-packages`.
