@@ -19,6 +19,7 @@ from durable_outbox.core.errors import (
 from durable_outbox.core.model import OutboxEvent, OutboxStatus, PublishingMode
 from durable_outbox.core.validation import require_positive_limit
 from durable_outbox.stores.sql import (
+    SQL_REPLAY_INDEX_NAME,
     SQL_TABLE_NAME,
     SqlStoredEvent,
 )
@@ -58,9 +59,10 @@ class PyodbcSqlConnectionSettings:
 class PyodbcSqlOutboxClient:
     """pyodbc-backed SQL client for persistence and RPO checks.
 
-    Claim and replay candidate queries intentionally remain out of this first
-    adapter slice; they require SQL Server-specific atomic UPDATE/OUTPUT query
-    semantics before this client should be used as a full provider contract.
+    Claim and replay candidate selection use provider-side bounded queries.
+    Claim mutation still happens through the store's per-row optimistic
+    ``replace()`` path; this is not yet a single-statement SQL
+    ``UPDATE ... OUTPUT`` claim implementation.
     """
 
     def __init__(
@@ -133,11 +135,12 @@ class PyodbcSqlOutboxClient:
         now: datetime,
         claim_timeout: timedelta,
     ) -> Sequence[SqlStoredEvent]:
-        _ = now, claim_timeout
         require_positive_limit(limit)
-        raise ConfigurationError(
-            "PyodbcSqlOutboxClient claim_batch_pending requires the atomic "
-            "SQL claim-query implementation"
+        return await asyncio.to_thread(
+            self._claim_batch_pending_sync,
+            limit,
+            now,
+            claim_timeout,
         )
 
     async def list_failover_replay_candidates(
@@ -147,11 +150,12 @@ class PyodbcSqlOutboxClient:
         limit: int,
         exclude_event_ids: Collection[str] = (),
     ) -> Sequence[SqlStoredEvent]:
-        _ = failover_started_at, exclude_event_ids
         require_positive_limit(limit)
-        raise ConfigurationError(
-            "PyodbcSqlOutboxClient list_failover_replay_candidates requires the "
-            "SQL replay-query implementation"
+        return await asyncio.to_thread(
+            self._list_failover_replay_candidates_sync,
+            failover_started_at,
+            limit,
+            tuple(sorted(exclude_event_ids)),
         )
 
     async def list_cleanup_candidates(
@@ -161,10 +165,11 @@ class PyodbcSqlOutboxClient:
         safety_margin: timedelta,
         limit: int | None = None,
     ) -> Sequence[SqlStoredEvent]:
-        _ = now, safety_margin, limit
-        raise ConfigurationError(
-            "PyodbcSqlOutboxClient list_cleanup_candidates requires the SQL "
-            "cleanup-query implementation"
+        return await asyncio.to_thread(
+            self._list_cleanup_candidates_sync,
+            now,
+            safety_margin,
+            limit,
         )
 
     async def delete(self, event_id: str) -> None:
@@ -247,6 +252,73 @@ class PyodbcSqlOutboxClient:
                 event_id,
             )
             connection.commit()
+        finally:
+            connection.close()
+
+    def _claim_batch_pending_sync(
+        self,
+        limit: int,
+        now: datetime,
+        claim_timeout: timedelta,
+    ) -> Sequence[SqlStoredEvent]:
+        connection = self.connection_factory()
+        try:
+            cursor = connection.cursor()
+            cursor.execute(
+                _claim_batch_pending_sql(self.table_name),
+                limit,
+                now,
+                now - claim_timeout,
+                now - claim_timeout,
+            )
+            records = _fetch_records(cursor)
+            connection.commit()
+            return records
+        finally:
+            connection.close()
+
+    def _list_failover_replay_candidates_sync(
+        self,
+        failover_started_at: datetime,
+        limit: int,
+        exclude_event_ids: tuple[str, ...],
+    ) -> Sequence[SqlStoredEvent]:
+        connection = self.connection_factory()
+        try:
+            cursor = connection.cursor()
+            sql, params = _failover_replay_candidates_sql(
+                self.table_name,
+                exclude_event_ids=exclude_event_ids,
+            )
+            cursor.execute(sql, failover_started_at, *params, limit)
+            records = _fetch_records(cursor)
+            connection.commit()
+            return records
+        finally:
+            connection.close()
+
+    def _list_cleanup_candidates_sync(
+        self,
+        now: datetime,
+        safety_margin: timedelta,
+        limit: int | None,
+    ) -> Sequence[SqlStoredEvent]:
+        connection = self.connection_factory()
+        try:
+            cursor = connection.cursor()
+            cutoff = now - safety_margin
+            if limit is None:
+                cursor.execute(_cleanup_candidates_sql(self.table_name), cutoff)
+            else:
+                require_positive_limit(limit, field_name="limit")
+                cursor.execute(
+                    _cleanup_candidates_sql(self.table_name, bounded=True),
+                    limit,
+                    cutoff,
+                )
+            records = _fetch_records(cursor)
+            connection.commit()
+            return records
         finally:
             connection.close()
 
@@ -433,12 +505,14 @@ def _insert_sql(table_name: str) -> str:
     return (
         f"INSERT INTO {table_name} "
         "(event_id, status, topic, kafka_key, headers_json, payload, schema_id, "
-        "schema_version, ordering_key_hash, ordering_sequence, created_at_utc, "
-        "expires_at_utc, next_attempt_utc, attempt_count, claimed_by, claim_id, "
-        "claimed_at_utc, sent_at_utc, kafka_partition, kafka_offset, failed_at_utc, "
-        "last_error_type, last_error) "
+        "schema_version, publishing_mode, ordering_key, ordering_key_hash, "
+        "ordering_sequence, created_at_utc, expires_at_utc, accepted_at_utc, "
+        "next_attempt_utc, attempt_count, claimed_by, claim_id, claimed_at_utc, "
+        "sent_at_utc, published_at_utc, publish_metadata_json, kafka_partition, "
+        "kafka_offset, failed_at_utc, last_error_type, last_error) "
         "OUTPUT INSERTED.* VALUES "
-        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)"
+        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, "
+        "?, ?, ?, ?, ?, ?)"
     )
 
 
@@ -446,9 +520,73 @@ def _update_sql(table_name: str) -> str:
     return (
         f"UPDATE {table_name} SET status = ?, next_attempt_utc = ?, "
         "attempt_count = ?, claim_id = ?, claimed_at_utc = ?, sent_at_utc = ?, "
-        "kafka_partition = ?, kafka_offset = ?, failed_at_utc = ?, "
-        "last_error_type = ?, last_error = ? OUTPUT INSERTED.* "
+        "published_at_utc = ?, publish_metadata_json = ?, kafka_partition = ?, "
+        "kafka_offset = ?, failed_at_utc = ?, last_error_type = ?, last_error = ? "
+        "OUTPUT INSERTED.* "
         "WHERE event_id = ? AND row_version = ?"
+    )
+
+
+def _claim_batch_pending_sql(table_name: str) -> str:
+    return (
+        "WITH claimable AS ("
+        f"SELECT TOP (?) * FROM {table_name} "
+        "WITH (READPAST, UPDLOCK, ROWLOCK) "
+        "WHERE (status = 'PENDING' AND "
+        "(next_attempt_utc IS NULL OR next_attempt_utc <= ?)) "
+        "OR (status = 'IN_FLIGHT' AND claimed_at_utc <= ?) "
+        "ORDER BY topic, ordering_key_hash, ordering_sequence, created_at_utc"
+        "), fresh_ordering_blockers AS ("
+        f"SELECT blockers.* FROM {table_name} AS blockers "
+        "WITH (READPAST, UPDLOCK, ROWLOCK) "
+        "WHERE blockers.status = 'IN_FLIGHT' "
+        "AND blockers.claimed_at_utc > ? "
+        "AND blockers.ordering_key_hash IS NOT NULL "
+        "AND EXISTS (SELECT 1 FROM claimable AS c "
+        "WHERE c.topic = blockers.topic "
+        "AND c.ordering_key_hash = blockers.ordering_key_hash)"
+        ") SELECT * FROM fresh_ordering_blockers "
+        "UNION ALL SELECT * FROM claimable "
+        "ORDER BY topic, ordering_key_hash, ordering_sequence, created_at_utc"
+    )
+
+
+def _failover_replay_candidates_sql(
+    table_name: str,
+    *,
+    exclude_event_ids: tuple[str, ...],
+) -> tuple[str, tuple[str, ...]]:
+    exclusion = ""
+    if exclude_event_ids:
+        placeholders = ", ".join("?" for _ in exclude_event_ids)
+        exclusion = f" AND event_id NOT IN ({placeholders})"
+    return (
+        "WITH replay_candidates AS ("
+        f"SELECT * FROM {table_name} "
+        f"WITH (READPAST, UPDLOCK, ROWLOCK, INDEX({SQL_REPLAY_INDEX_NAME})) "
+        "WHERE expires_at_utc >= ? "
+        "AND status IN ('PENDING', 'IN_FLIGHT', 'SENT')"
+        f"{exclusion} "
+        "), ranked_replay_candidates AS ("
+        "SELECT *, ROW_NUMBER() OVER ("
+        "PARTITION BY CASE WHEN ordering_key_hash IS NULL "
+        "THEN event_id ELSE topic + ':' + ordering_key_hash END "
+        "ORDER BY created_at_utc, event_id) AS ordering_rank "
+        "FROM replay_candidates"
+        ") "
+        "SELECT TOP (?) * FROM ranked_replay_candidates "
+        "WHERE ordering_key_hash IS NULL OR ordering_rank = 1 "
+        "ORDER BY created_at_utc, event_id",
+        exclude_event_ids,
+    )
+
+
+def _cleanup_candidates_sql(table_name: str, *, bounded: bool = False) -> str:
+    top_clause = "TOP (?) " if bounded else ""
+    return (
+        f"SELECT {top_clause}* FROM {table_name} "
+        "WHERE status = 'SENT' AND expires_at_utc < ? "
+        "ORDER BY expires_at_utc, event_id"
     )
 
 
@@ -462,15 +600,20 @@ def _insert_parameters(values: Mapping[str, object]) -> tuple[object, ...]:
         values["payload"],
         values["schema_id"],
         values["schema_version"],
+        values["publishing_mode"],
+        values["ordering_key"],
         values["ordering_key_hash"],
         values["ordering_sequence"],
         values["created_at_utc"],
         values["expires_at_utc"],
+        values["accepted_at_utc"],
         values["next_attempt_utc"],
         values["attempt_count"],
         values["claim_id"],
         values["claimed_at_utc"],
         values["sent_at_utc"],
+        values["published_at_utc"],
+        values["publish_metadata_json"],
         values["kafka_partition"],
         values["kafka_offset"],
         values["failed_at_utc"],
@@ -491,13 +634,15 @@ def _update_parameters(
         values["claim_id"],
         values["claimed_at_utc"],
         values["sent_at_utc"],
+        values["published_at_utc"],
+        values["publish_metadata_json"],
         values["kafka_partition"],
         values["kafka_offset"],
         values["failed_at_utc"],
         values["last_error_type"],
         values["last_error"],
         values["event_id"],
-        expected_version,
+        _row_version_parameter(expected_version),
     )
 
 
@@ -505,6 +650,16 @@ def _row_mapping(row: object) -> Mapping[str, object]:
     if isinstance(row, Mapping):
         return cast("Mapping[str, object]", row)
     raise RetryableStoreError("pyodbc row mapping is required")
+
+
+def _fetch_records(cursor: PyodbcCursorLike) -> tuple[SqlStoredEvent, ...]:
+    records: list[SqlStoredEvent] = []
+    while True:
+        row = cursor.fetchone()
+        if row is None:
+            break
+        records.append(decode_sql_record(_row_mapping(row)))
+    return tuple(records)
 
 
 def _encode_headers(headers: Mapping[str, bytes]) -> str:
@@ -575,6 +730,10 @@ def _version_value(value: object) -> int:
     if isinstance(value, bytes):
         return int.from_bytes(value, byteorder="big")
     raise RetryableStoreError("row_version must be int or bytes")
+
+
+def _row_version_parameter(value: int) -> bytes:
+    return value.to_bytes(8, byteorder="big", signed=False)
 
 
 def _required_str(row: Mapping[str, object], field_name: str) -> str:

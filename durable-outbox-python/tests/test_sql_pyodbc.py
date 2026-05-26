@@ -140,6 +140,7 @@ async def test_pyodbc_upsert_new_inserts_encoded_record() -> None:
     sql, params = connection.statements[0]
     assert "INSERT INTO [durable_outbox_events]" in sql
     assert "OUTPUT INSERTED.*" in sql
+    assert sql.count("?") == len(params)
     assert event.event_id not in sql
     assert params[0] == event.event_id
     assert inserted.version == 1
@@ -189,7 +190,8 @@ async def test_pyodbc_replace_returns_record_from_output_row() -> None:
     sql, params = connection.statements[0]
     assert "UPDATE [durable_outbox_events]" in sql
     assert "OUTPUT INSERTED.*" in sql
-    assert params[-2:] == (event.event_id, 8)
+    assert sql.count("?") == len(params)
+    assert params[-2:] == (event.event_id, (8).to_bytes(8, byteorder="big"))
     assert replaced.version == 9
     assert connection.commits == 1
 
@@ -256,3 +258,110 @@ async def test_pyodbc_cleanup_freeze_state_round_trips() -> None:
         in connection.statements[1][0]
     )
     assert "DELETE FROM [durable_outbox_cleanup_state]" in connection.statements[2][0]
+
+
+@pytest.mark.asyncio
+async def test_pyodbc_claim_batch_pending_uses_bounded_locked_query() -> None:
+    connection = FakeConnection()
+    event = make_event("sql-claim-query")
+    row = encode_sql_record(SqlStoredEvent(event=event, version=3))
+    connection.rows.append(row)
+    now = datetime.now(UTC)
+    client = PyodbcSqlOutboxClient(lambda: connection)
+
+    records = await client.claim_batch_pending(
+        limit=25,
+        now=now,
+        claim_timeout=timedelta(minutes=5),
+    )
+
+    sql, params = connection.statements[0]
+    assert "TOP (?)" in sql
+    assert "WITH (READPAST, UPDLOCK, ROWLOCK)" in sql
+    assert "fresh_ordering_blockers" in sql
+    assert "status = 'PENDING'" in sql
+    assert "claimed_at_utc <= ?" in sql
+    assert params == (25, now, now - timedelta(minutes=5), now - timedelta(minutes=5))
+    assert [record.event.event_id for record in records] == [event.event_id]
+
+
+@pytest.mark.asyncio
+async def test_pyodbc_claim_batch_pending_returns_fresh_ordering_blockers() -> None:
+    connection = FakeConnection()
+    now = datetime.now(UTC)
+    blocker = SqlStoredEvent(
+        event=make_event("sql-claim-blocker", ordering_key="customer-1"),
+        version=2,
+        status=OutboxStatus.IN_FLIGHT,
+        claimed_at=now,
+    )
+    pending = SqlStoredEvent(
+        event=make_event("sql-claim-after-blocker", ordering_key="customer-1"),
+        version=3,
+    )
+    connection.rows.extend([encode_sql_record(blocker), encode_sql_record(pending)])
+    client = PyodbcSqlOutboxClient(lambda: connection)
+
+    records = await client.claim_batch_pending(
+        limit=1,
+        now=now,
+        claim_timeout=timedelta(minutes=5),
+    )
+
+    assert [record.event.event_id for record in records] == [
+        "sql-claim-blocker",
+        "sql-claim-after-blocker",
+    ]
+    assert records[0].status is OutboxStatus.IN_FLIGHT
+
+
+@pytest.mark.asyncio
+async def test_pyodbc_failover_replay_candidates_uses_replay_index_predicates() -> None:
+    connection = FakeConnection()
+    first = make_event("sql-replay-excluded")
+    second = make_event("sql-replay-query")
+    connection.rows.append(encode_sql_record(SqlStoredEvent(event=second, version=4)))
+    failover_started_at = datetime.now(UTC)
+    client = PyodbcSqlOutboxClient(lambda: connection)
+
+    records = await client.list_failover_replay_candidates(
+        failover_started_at=failover_started_at,
+        limit=10,
+        exclude_event_ids={first.event_id},
+    )
+
+    sql, params = connection.statements[0]
+    assert "TOP (?)" in sql
+    assert "IX_outbox_replay" in sql
+    assert "status IN ('PENDING', 'IN_FLIGHT', 'SENT')" in sql
+    assert "ROW_NUMBER() OVER" in sql
+    assert "event_id NOT IN (?)" in sql
+    assert first.event_id not in sql
+    assert params == (failover_started_at, first.event_id, 10)
+    assert [record.event.event_id for record in records] == [second.event_id]
+
+
+@pytest.mark.asyncio
+async def test_pyodbc_cleanup_candidates_uses_bounded_cleanup_query() -> None:
+    connection = FakeConnection()
+    event = make_event("sql-cleanup-query")
+    connection.rows.append(
+        encode_sql_record(
+            SqlStoredEvent(event=event, version=6, status=OutboxStatus.SENT)
+        )
+    )
+    now = event.expires_at + timedelta(minutes=10)
+    client = PyodbcSqlOutboxClient(lambda: connection)
+
+    records = await client.list_cleanup_candidates(
+        now=now,
+        safety_margin=timedelta(minutes=1),
+        limit=5,
+    )
+
+    sql, params = connection.statements[0]
+    assert "TOP (?)" in sql
+    assert "status = 'SENT'" in sql
+    assert "expires_at_utc < ?" in sql
+    assert params == (5, now - timedelta(minutes=1))
+    assert [record.event.event_id for record in records] == [event.event_id]

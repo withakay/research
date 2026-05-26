@@ -61,10 +61,12 @@ Azure SQL RPO=0 requires committing the outbox row and then completing `sp_wait_
 the `sql` optional extra. It covers lazy pyodbc import, row encode/decode,
 parameterized insert/update/delete/get primitives, cleanup freeze state, and
 the SQL durability checks used by `AzureSqlSyncOutboxStore` and
-`SqlAlwaysOnOutboxStore`. It is not yet a full provider-contract client:
-SQL-backed `claim_batch_pending`, failover replay candidate queries, and cleanup
-candidate queries still need provider-side atomic query implementations before
-the client should be used as the default production SQL provider.
+`SqlAlwaysOnOutboxStore`. It also provides bounded provider-side candidate
+queries for normal claim, failover replay, and cleanup. Those query methods
+return candidates only: claim mutation still happens through the store's
+per-row optimistic `replace()` path, so the single-statement SQL
+`UPDATE ... OUTPUT` claim path remains future work before this client should be
+treated as a complete high-concurrency SQL provider.
 
 ## Kafka
 

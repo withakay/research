@@ -2065,6 +2065,11 @@ def test_sql_schema_contains_required_indexes() -> None:
     assert SQL_PENDING_INDEX_NAME in SQL_SCHEMA
     assert SQL_REPLAY_INDEX_NAME in SQL_SCHEMA
     assert SQL_ORDERED_INDEX_NAME in SQL_SCHEMA
+    assert "accepted_at_utc     DATETIME2 NULL" in SQL_SCHEMA
+    assert "publishing_mode      NVARCHAR(32)  NOT NULL" in SQL_SCHEMA
+    assert "ordering_key         NVARCHAR(1024) NULL" in SQL_SCHEMA
+    assert "published_at_utc     DATETIME2 NULL" in SQL_SCHEMA
+    assert "publish_metadata_json NVARCHAR(MAX) NULL" in SQL_SCHEMA
     assert "last_error          NVARCHAR(2048) NULL" in SQL_SCHEMA
 
 

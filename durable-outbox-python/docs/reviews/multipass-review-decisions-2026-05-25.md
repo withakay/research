@@ -2413,3 +2413,57 @@ verification evidence.
   `uv run ruff format --check .` -> 53 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 73: SQL pyodbc Candidate Query Seam
+
+### Findings Partially Accepted
+
+- **P-P0-2 / A-P0-1 / P-P1-1:** the pyodbc SQL client could persist and update
+  rows, but still rejected the provider-facing query methods that the store now
+  calls for normal claim, failover replay, and cleanup. The review's original
+  SQL recommendation asks for a single-statement atomic `UPDATE ... OUTPUT`
+  claim path; this batch implements bounded provider-side candidate selection
+  first and keeps atomic claim mutation open.
+
+### Fixes Implemented
+
+- Implemented `PyodbcSqlOutboxClient.claim_batch_pending()` with a bounded SQL
+  Server query using `READPAST`, `UPDLOCK`, and `ROWLOCK` hints. The query
+  returns due `PENDING` rows, stale `IN_FLIGHT` rows, and fresh ordered
+  `IN_FLIGHT` blockers needed by the store's ordering-key decision logic.
+- Implemented `list_failover_replay_candidates()` with `IX_outbox_replay`, TTL
+  and status predicates, exclusion parameters, and SQL ranking to return at
+  most one replay candidate per ordering scope.
+- Implemented `list_cleanup_candidates()` with bounded `SENT` expiry queries.
+- Extended `SQL_SCHEMA` with the clear fields the pyodbc encoder/decoder needs:
+  accepted timestamp, publishing mode, raw ordering key, published timestamp,
+  and publish metadata JSON.
+- Tightened pyodbc insert/update SQL to persist those fields and compare SQL
+  `row_version` via an 8-byte parameter while preserving the public integer
+  version used by the store protocol.
+- Updated provider documentation and the pyodbc docstring to distinguish
+  provider-side candidate queries from a true atomic SQL claim mutation. The
+  latter remains open under **P-P0-2**.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_sql_pyodbc.py::test_pyodbc_claim_batch_pending_uses_bounded_locked_query tests/test_sql_pyodbc.py::test_pyodbc_claim_batch_pending_returns_fresh_ordering_blockers tests/test_sql_pyodbc.py::test_pyodbc_failover_replay_candidates_uses_replay_index_predicates tests/test_adapters.py::test_sql_schema_contains_required_indexes -q`
+  -> failed because candidate query SQL did not include fresh blockers/replay
+  ranking and the SQL schema lacked pyodbc-decoded fields.
+- Focused green run:
+  `uv run pytest tests/test_sql_pyodbc.py tests/test_adapters.py::test_sql_schema_contains_required_indexes -q`
+  -> 16 passed.
+- Focused adapter/query run:
+  `uv run pytest tests/test_sql_pyodbc.py tests/test_adapters.py::test_sql_schema_contains_required_indexes tests/test_adapters.py::test_sql_and_cosmos_claim_reuses_claim_candidate_list tests/test_adapters.py::test_sql_and_cosmos_failover_replay_uses_replay_candidate_list -q`
+  -> 20 passed.
+- Quality gates:
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 55 files already formatted;
+  `uv run ty check` -> all checks passed.
+- Full package gates:
+  `uv run pytest -q` -> 269 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 55 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
