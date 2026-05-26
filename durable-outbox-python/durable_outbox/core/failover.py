@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
 from durable_outbox.core.model import OutboxStatus
 from durable_outbox.core.ordering import ordering_scope
@@ -11,6 +11,7 @@ from durable_outbox.core.validation import require_positive_limit
 from durable_outbox.telemetry.metrics import NoopMetrics
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
     from datetime import datetime
 
     from durable_outbox.core.model import ClaimedEvent
@@ -25,6 +26,16 @@ _LOGGER = logging.getLogger(__name__)
 class ReplaySummary:
     replayed: int
     errored: int = 0
+
+
+@runtime_checkable
+class FailoverReplayStreamStore(Protocol):
+    def iter_failover_replay_candidates(
+        self,
+        *,
+        failover_started_at: datetime,
+        limit: int,
+    ) -> AsyncIterator[ClaimedEvent]: ...
 
 
 class FailoverReplayer:
@@ -53,6 +64,19 @@ class FailoverReplayer:
     ) -> ReplaySummary:
         require_positive_limit(limit)
         await self.store.freeze_cleanup(reason="failover replay")
+        if isinstance(self.store, FailoverReplayStreamStore):
+            return await self._replay_once_streaming(
+                failover_started_at=failover_started_at,
+                limit=limit,
+            )
+        return await self._replay_once_paged(
+            failover_started_at=failover_started_at,
+            limit=limit,
+        )
+
+    async def _replay_once_paged(
+        self, *, failover_started_at: datetime, limit: int
+    ) -> ReplaySummary:
         replayed = 0
         errored = 0
         seen_event_ids: set[str] = set()
@@ -73,6 +97,30 @@ class FailoverReplayer:
             remaining -= len(candidates)
             if len(candidates) < page_limit:
                 break
+        return ReplaySummary(replayed=replayed, errored=errored)
+
+    async def _replay_once_streaming(
+        self, *, failover_started_at: datetime, limit: int
+    ) -> ReplaySummary:
+        replayed = 0
+        errored = 0
+        page: list[ClaimedEvent] = []
+        stream_store = cast("FailoverReplayStreamStore", self.store)
+        async for claimed in stream_store.iter_failover_replay_candidates(
+            failover_started_at=failover_started_at,
+            limit=limit,
+        ):
+            page.append(claimed)
+            if len(page) < self.replay_page_size:
+                continue
+            page_replayed = await self._replay_page(page)
+            replayed += page_replayed
+            errored += len(page) - page_replayed
+            page = []
+        if page:
+            page_replayed = await self._replay_page(page)
+            replayed += page_replayed
+            errored += len(page) - page_replayed
         return ReplaySummary(replayed=replayed, errored=errored)
 
     async def complete_replay(self) -> None:

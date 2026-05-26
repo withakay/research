@@ -92,6 +92,16 @@ uses candidate selection plus optimistic `replace()` so replay rollback can
 restore original state on interruption; a provider-native replay-claim/rollback
 cursor remains future work.
 
+## Failover Replay Streaming
+
+`FailoverReplayer` supports two store shapes. Existing stores can keep the
+portable `failover_replay_candidates(..., limit, exclude_event_ids=...)` method,
+which the replayer consumes in bounded pages. Providers that can hold a backend
+cursor or stream claimed rows can additionally expose
+`iter_failover_replay_candidates(failover_started_at=..., limit=...)` as an async
+iterator. The replayer consumes that stream in bounded in-memory pages and uses
+the same concurrent publish path, avoiding repeated list/exclusion calls.
+
 ## Kafka
 
 The Kafka sink enforces certified producer defaults such as `acks=all` and

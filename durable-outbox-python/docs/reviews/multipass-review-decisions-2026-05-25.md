@@ -2628,3 +2628,46 @@ verification evidence.
   across real rowversion, `NEWID()`, and lock-hint semantics.
 - Failover replay still needs a provider-native streaming or atomic replay
   claim design that preserves rollback-on-interruption behavior.
+
+## Batch 77: Optional Failover Replay Streaming Contract
+
+### Findings Partially Accepted
+
+- **P-P1-1:** failover replay had bounded pages and concurrent publishing, but
+  the only store contract still required repeated list-returning
+  `failover_replay_candidates()` calls with growing exclusion sets. The review
+  recommended an async iterator or cursor shape for provider-backed replay.
+
+### Fixes Implemented
+
+- Added optional `FailoverReplayStreamStore` detection in `FailoverReplayer`.
+- Stores that expose `iter_failover_replay_candidates(failover_started_at,
+  limit)` are now consumed as async streams instead of through repeated list
+  pages.
+- Kept memory usage bounded by collecting only `replay_page_size` streamed
+  claims before publishing through the existing concurrent page path.
+- Preserved the existing paged fallback for all current stores that only
+  implement `failover_replay_candidates()`.
+- Documented the optional streaming shape in `docs/providers.md`.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_failover_ordering_cleanup.py::test_failover_replay_consumes_streaming_store_without_list_pages -q`
+  -> failed because `FailoverReplayer` still called the list method.
+- Focused green run:
+  `uv run ruff check durable_outbox/core/failover.py tests/test_failover_ordering_cleanup.py && uv run ruff format --check durable_outbox/core/failover.py tests/test_failover_ordering_cleanup.py && uv run ty check && uv run pytest tests/test_failover_ordering_cleanup.py::test_failover_replay_consumes_streaming_store_without_list_pages tests/test_failover_ordering_cleanup.py::test_failover_replay_fetches_bounded_pages_without_replaying_seen_events tests/test_failover_ordering_cleanup.py::test_failover_replay_publishes_page_concurrently -q`
+  -> 3 passed.
+- Full package gates:
+  `uv run pytest -q` -> 285 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 57 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
+
+### Deferred
+
+- Built-in providers still need provider-native streaming implementations before
+  the async iterator path reduces backend work in production.
+- SQL/Cosmos/Blob provider integration tests remain required to prove cursor
+  behavior under real backends and concurrent replay workers.

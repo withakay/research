@@ -27,7 +27,9 @@ from durable_outbox.testing import FailingSink, FakeOutboxStore, FakeSink, Fixed
 from durable_outbox.testing.provider_contract import make_event
 
 if TYPE_CHECKING:
-    from collections.abc import Collection
+    from collections.abc import AsyncIterator, Collection
+
+    from durable_outbox.core.model import ClaimedEvent
 
 
 class ConcurrentReplaySink(FakeSink):
@@ -67,6 +69,44 @@ class RecordingReplayStore(FakeOutboxStore):
             limit=limit,
             exclude_event_ids=exclude_event_ids,
         )
+
+
+class StreamingReplayStore(FakeOutboxStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.stream_calls = 0
+        self.legacy_calls = 0
+
+    async def iter_failover_replay_candidates(
+        self,
+        *,
+        failover_started_at: datetime,
+        limit: int,
+    ) -> AsyncIterator[ClaimedEvent]:
+        self.stream_calls += 1
+        seen_event_ids: set[str] = set()
+        for _ in range(limit):
+            page = await FakeOutboxStore.failover_replay_candidates(
+                self,
+                failover_started_at=failover_started_at,
+                limit=1,
+                exclude_event_ids=seen_event_ids,
+            )
+            if not page:
+                break
+            seen_event_ids.add(page[0].event.event_id)
+            yield page[0]
+
+    async def failover_replay_candidates(
+        self,
+        *,
+        failover_started_at: datetime,
+        limit: int,
+        exclude_event_ids: Collection[str] = (),
+    ) -> Any:
+        _ = failover_started_at, limit, exclude_event_ids
+        self.legacy_calls += 1
+        raise AssertionError("streaming replay should not use list candidates")
 
 
 def test_failover_replayer_requires_rpo_zero_by_default() -> None:
@@ -302,6 +342,30 @@ async def test_failover_replay_publishes_page_concurrently() -> None:
 
     assert summary.replayed == 3
     assert sink.max_in_flight == 2
+
+
+@pytest.mark.asyncio
+async def test_failover_replay_consumes_streaming_store_without_list_pages() -> None:
+    store = StreamingReplayStore()
+    sink = FakeSink()
+    for index in range(5):
+        await store.put(make_event(f"streamed-replay-{index}"))
+
+    summary = await FailoverReplayer(
+        store,
+        sink,
+        replay_page_size=2,
+        max_concurrency=2,
+    ).replay_once(
+        failover_started_at=datetime.now(UTC),
+        limit=5,
+    )
+
+    assert summary.replayed == 5
+    assert summary.errored == 0
+    assert store.stream_calls == 1
+    assert store.legacy_calls == 0
+    assert len({event.event_id for event in sink.published}) == 5
 
 
 @pytest.mark.asyncio
