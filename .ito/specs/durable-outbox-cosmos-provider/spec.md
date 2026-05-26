@@ -1,13 +1,8 @@
-<!-- ITO:START -->
-## Purpose
-This specification documents the durable outbox capability after the archived implementation changes.
+## MODIFIED Requirements
 
-## Requirements
+### Requirement: Cosmos Conditional State Transitions
+Cosmos provider clients SHALL support compare-and-set replacement for claim and terminal state transitions.
 
-### Requirement: Cosmos Provider Client
-Cosmos stores SHALL use typed provider client operations for create/read/query/conditional update.
-
-#### Scenario: concurrent claim
-- **WHEN** two claim attempts target the same item
-- **THEN** only one conditional update succeeds
-<!-- ITO:END -->
+#### Scenario: two store instances race to claim one event
+- **WHEN** both instances use the same provider client
+- **THEN** only one instance receives a claim for the event

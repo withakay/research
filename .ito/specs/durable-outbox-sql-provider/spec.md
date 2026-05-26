@@ -1,13 +1,8 @@
-<!-- ITO:START -->
-## Purpose
-This specification documents the durable outbox capability after the archived implementation changes.
+## MODIFIED Requirements
 
-## Requirements
+### Requirement: SQL Conditional State Transitions
+SQL provider clients SHALL support compare-and-set replacement for claim and terminal state transitions.
 
-### Requirement: SQL Provider Client
-SQL stores SHALL use typed provider client operations for inserts, row-lock claims, transitions, replay, cleanup, and RPO=0 sync waits.
-
-#### Scenario: sync wait timeout
-- **WHEN** Azure SQL sync wait fails after insert
-- **THEN** put raises a retryable store error
-<!-- ITO:END -->
+#### Scenario: two store instances race to claim one event
+- **WHEN** both instances use the same provider client
+- **THEN** only one instance receives a claim for the event
