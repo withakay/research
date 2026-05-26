@@ -10,5 +10,5 @@
 - [x] 2.1 Run provider contract tests for `AzureSqlSyncOutboxStore` and `SqlAlwaysOnOutboxStore` from the plugin package.
 - [x] 2.2 Run plugin loader tests proving both SQL store names load successfully.
 - [x] 2.3 Run `uv run pytest`.
-- [ ] 2.4 Run `uv run ruff check .` and `uv run ty check`.
+- [x] 2.4 Run `uv run ruff check .` and `uv run ty check`.
 - [ ] 2.5 Run `uv build --all-packages`.
