@@ -1,20 +1,15 @@
-<!-- ITO:START -->
-## Purpose
-This specification documents the durable outbox capability after the archived implementation changes.
+## MODIFIED Requirements
 
-## Requirements
+### Requirement: Post-Acknowledgement Store Failure Handling
+The dispatcher SHALL NOT convert a store failure after sink acknowledgement into a publish retry failure.
 
-### Requirement: Retry Attempt Metadata
-Claimed events SHALL expose the current attempt count so dispatchers can compute retry backoff from durable store state.
+#### Scenario: mark sent fails after sink acknowledgement
+- **WHEN** the sink acknowledges publication but `mark_sent` fails
+- **THEN** the dispatcher records a post-ack store failure and leaves the claimed event for store-level stale-claim recovery
 
-#### Scenario: repeated transient failures occur
-- **WHEN** the same event is claimed and fails multiple times
-- **THEN** each retry uses the incremented attempt count to schedule a later next attempt time
+### Requirement: Sink-Agnostic Dispatcher Metrics
+The dispatcher SHALL emit provider-independent publish metrics.
 
-### Requirement: Retry Delay Cap
-Retry policy SHALL cap exponential backoff at the configured maximum delay.
-
-#### Scenario: attempt count is high
-- **WHEN** retry delay is computed
-- **THEN** the delay does not exceed the configured maximum
-<!-- ITO:END -->
+#### Scenario: a non-Kafka sink publishes an event
+- **WHEN** dispatch runs
+- **THEN** metrics are emitted with `outbox_publish_*` names rather than sink-specific names
