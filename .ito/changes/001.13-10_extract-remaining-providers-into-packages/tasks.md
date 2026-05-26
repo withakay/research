@@ -91,7 +91,7 @@ ______________________________________________________________________
 - **Done When**: Cosmos behavior is unchanged through package imports/plugin loading, Azure Cosmos dependencies are package-local, and old core Cosmos imports fail.
 - **Requirements**: durable-outbox-abstract-core:abstract-core-package, durable-outbox-provider-packages:first-party-provider-package-matrix, durable-outbox-provider-packages:provider-package-plugin-registration
 - **Updated At**: 2026-05-26
-- **Status**: [ ] pending
+- **Status**: [>] in-progress
 
 ______________________________________________________________________
 
