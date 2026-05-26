@@ -2141,3 +2141,45 @@ verification evidence.
   `uv run ruff format --check .` -> 53 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 67: Settings and Trace Propagation Wiring
+
+### Findings Accepted
+
+- **A-P3-1 remainder:** After the cleanup scheduler work, `OutboxSettings` and
+  `Tracer`/`NoopTracer` were still public types without a concrete code path.
+  Keeping those types is only justified if they configure host behavior or feed
+  sink propagation.
+
+### Fixes Implemented
+
+- Added `OutboxSettings.from_env()` for `DURABLE_OUTBOX_*` host settings:
+  environment, dispatcher limit, claim timeout, cleanup safety margin, cleanup
+  interval, cleanup batch size, and cleanup max-per-tick.
+- Added `OutboxSettings.cleanup_policy()` so settings directly construct the
+  `CleanupPolicy` consumed by `CleanupScheduler`.
+- Added validation for positive dispatcher limits and time windows through the
+  same validation/error types used elsewhere.
+- Extended `TraceContext` with `trace_flags` and a W3C `traceparent()` encoder.
+- Added an optional `tracer` to `KafkaSink` and `KafkaSink.from_config()`.
+  When the event does not already include a `traceparent` header, KafkaSink now
+  injects the current trace context before appending the durable `event_id`
+  header.
+- Preserved caller-provided trace headers exactly, avoiding duplicate
+  `traceparent` injection when an upstream component already set one.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_kafka_operations.py::test_kafka_sink_injects_current_trace_context_when_missing tests/test_packaging_docs.py::test_outbox_settings_loads_environment_and_builds_cleanup_policy -q`
+  -> failed because `KafkaSink.__init__` had no `tracer` argument and
+  `OutboxSettings` had no `from_env()`.
+- Focused green run:
+  `uv run pytest tests/test_kafka_operations.py::test_kafka_sink_injects_current_trace_context_when_missing tests/test_kafka_operations.py::test_kafka_sink_preserves_trace_headers_and_adds_event_identity tests/test_packaging_docs.py::test_outbox_settings_loads_environment_and_builds_cleanup_policy tests/test_packaging_docs.py::test_public_contracts_have_docstrings -q`
+  -> 4 passed.
+- Full package gates:
+  `uv run pytest -q` -> 248 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 53 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.

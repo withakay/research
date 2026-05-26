@@ -12,6 +12,7 @@ from durable_outbox.core.errors import (
     RetryablePublishError,
 )
 from durable_outbox.core.model import OutboxEvent, PublishingMode, PublishResult
+from durable_outbox.telemetry.tracing import NoopTracer, Tracer
 
 if TYPE_CHECKING:
     from confluent_kafka import Producer as ConfluentProducer
@@ -95,12 +96,14 @@ class KafkaSink:
         delivery_timeout_seconds: float = _DEFAULT_DELIVERY_TIMEOUT_SECONDS,
         poll_interval_seconds: float = _DEFAULT_POLL_INTERVAL_SECONDS,
         close_timeout_seconds: float = _DEFAULT_CLOSE_TIMEOUT_SECONDS,
+        tracer: Tracer | None = None,
     ) -> None:
         self.producer = producer
         self.config = (config or KafkaProducerConfig()).validated()
         self.delivery_timeout_seconds = delivery_timeout_seconds
         self.poll_interval_seconds = poll_interval_seconds
         self.close_timeout_seconds = close_timeout_seconds
+        self.tracer = tracer or NoopTracer()
 
     @classmethod
     def from_config(
@@ -111,6 +114,7 @@ class KafkaSink:
         delivery_timeout_seconds: float = _DEFAULT_DELIVERY_TIMEOUT_SECONDS,
         poll_interval_seconds: float = _DEFAULT_POLL_INTERVAL_SECONDS,
         close_timeout_seconds: float = _DEFAULT_CLOSE_TIMEOUT_SECONDS,
+        tracer: Tracer | None = None,
     ) -> KafkaSink:
         producer_config = config or KafkaProducerConfig()
         validated_config = producer_config.validated()
@@ -121,6 +125,7 @@ class KafkaSink:
             delivery_timeout_seconds=delivery_timeout_seconds,
             poll_interval_seconds=poll_interval_seconds,
             close_timeout_seconds=close_timeout_seconds,
+            tracer=tracer,
         )
 
     async def publish(self, event: OutboxEvent) -> PublishResult:
@@ -158,7 +163,7 @@ class KafkaSink:
             event.topic,
             key=_kafka_key(event),
             value=event.payload,
-            headers=_headers(event),
+            headers=_headers(event, self.tracer),
             on_delivery=on_delivery,
         )
         deadline = monotonic() + self.delivery_timeout_seconds
@@ -177,8 +182,12 @@ class KafkaSink:
         self.producer.flush(self.close_timeout_seconds)
 
 
-def _headers(event: OutboxEvent) -> list[tuple[str, bytes]]:
+def _headers(event: OutboxEvent, tracer: Tracer) -> list[tuple[str, bytes]]:
     headers = list(event.headers.items())
+    if not any(name.lower() == "traceparent" for name, _value in headers):
+        context = tracer.current_context()
+        if context is not None:
+            headers.append(("traceparent", context.traceparent().encode("ascii")))
     headers.append(("event_id", event.event_id.encode("utf-8")))
     return headers
 

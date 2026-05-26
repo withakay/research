@@ -22,7 +22,7 @@ from durable_outbox.operations import (
     StatusSummary,
 )
 from durable_outbox.sinks.kafka import KafkaProducerConfig, KafkaSink
-from durable_outbox.telemetry import InMemoryMetrics
+from durable_outbox.telemetry import InMemoryMetrics, TraceContext
 from durable_outbox.testing import FixedClock
 
 if TYPE_CHECKING:
@@ -116,6 +116,15 @@ class KafkaError:
 
     def __str__(self) -> str:
         return self.message
+
+
+class StaticTracer:
+    def current_context(self) -> TraceContext:
+        return TraceContext(
+            trace_id="4bf92f3577b34da6a3ce929d0e0e4736",
+            span_id="00f067aa0ba902b7",
+            trace_flags="01",
+        )
 
 
 class ProtocolAdminAdapter:
@@ -338,6 +347,24 @@ async def test_kafka_sink_preserves_trace_headers_and_adds_event_identity() -> N
     assert producer.calls[0].headers == [
         ("traceparent", b"00-abc"),
         ("x-app", b"kept"),
+        ("event_id", event.event_id.encode()),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_kafka_sink_injects_current_trace_context_when_missing() -> None:
+    producer = Producer()
+    sink = KafkaSink(producer=producer, tracer=StaticTracer())
+    event = make_event(headers={"x-app": b"kept"})
+
+    await sink.publish(event)
+
+    assert producer.calls[0].headers == [
+        ("x-app", b"kept"),
+        (
+            "traceparent",
+            b"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+        ),
         ("event_id", event.event_id.encode()),
     ]
 

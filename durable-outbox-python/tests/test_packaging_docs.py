@@ -1,7 +1,14 @@
+from __future__ import annotations
+
 import inspect
 import tomllib
+from datetime import timedelta
 from importlib import import_module
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = PROJECT_ROOT.parent
@@ -134,6 +141,30 @@ def test_public_contracts_have_docstrings() -> None:
     ):
         assert inspect.getdoc(getattr(DurableOutboxStore, method_name))
     assert inspect.getdoc(MessageSink.publish)
+
+
+def test_outbox_settings_loads_environment_and_builds_cleanup_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from durable_outbox.config.settings import OutboxSettings
+
+    monkeypatch.setenv("DURABLE_OUTBOX_ENVIRONMENT", "prod")
+    monkeypatch.setenv("DURABLE_OUTBOX_DISPATCHER_LIMIT", "25")
+    monkeypatch.setenv("DURABLE_OUTBOX_CLAIM_TIMEOUT_SECONDS", "45")
+    monkeypatch.setenv("DURABLE_OUTBOX_CLEANUP_SAFETY_MARGIN_SECONDS", "30")
+    monkeypatch.setenv("DURABLE_OUTBOX_CLEANUP_INTERVAL_SECONDS", "10")
+    monkeypatch.setenv("DURABLE_OUTBOX_CLEANUP_BATCH_SIZE", "7")
+    monkeypatch.setenv("DURABLE_OUTBOX_CLEANUP_MAX_PER_TICK", "11")
+
+    settings = OutboxSettings.from_env()
+
+    assert settings.environment == "prod"
+    assert settings.dispatcher_limit == 25
+    assert settings.claim_timeout == timedelta(seconds=45)
+    assert settings.cleanup_policy().sent_safety_margin == timedelta(seconds=30)
+    assert settings.cleanup_policy().interval == timedelta(seconds=10)
+    assert settings.cleanup_policy().batch_size == 7
+    assert settings.cleanup_policy().max_per_tick == 11
 
 
 def test_dual_region_blob_store_uses_documented_region_methods() -> None:
