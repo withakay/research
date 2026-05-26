@@ -8,5 +8,5 @@
 ## 2. Verification
 - [x] 2.1 Add tests for successful store and sink plugin loading.
 - [x] 2.2 Add tests for missing and invalid plugin configuration errors.
-- [ ] 2.3 Run `uv run pytest`.
+- [x] 2.3 Run `uv run pytest`.
 - [ ] 2.4 Run `uv run ruff check .` and `uv run ty check`.
