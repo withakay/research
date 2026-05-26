@@ -1,6 +1,6 @@
 ## 1. Implementation
 - [x] 1.1 Create `packages/durable-outbox-file-sink` using `uv_build`.
-- [ ] 1.2 Move `FileSink` and helpers to `durable_outbox_file_sink`.
+- [x] 1.2 Move `FileSink` and helpers to `durable_outbox_file_sink`.
 - [ ] 1.3 Add `file` sink entry point and factory function.
 - [ ] 1.4 Remove old core file sink module and exports.
 - [ ] 1.5 Update tests, integration demos, README, and provider docs.
