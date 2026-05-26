@@ -4,7 +4,7 @@
 - [x] 1.3 Add `azure-sql-sync` and `sql-always-on` store entry point factories.
 - [x] 1.4 Remove old core SQL module and store exports.
 - [x] 1.5 Move or split SQL-specific tests into the SQL plugin package.
-- [ ] 1.6 Update README, provider docs, optional dependency metadata, and lockfile.
+- [x] 1.6 Update README, provider docs, optional dependency metadata, and lockfile.
 
 ## 2. Verification
 - [ ] 2.1 Run provider contract tests for `AzureSqlSyncOutboxStore` and `SqlAlwaysOnOutboxStore` from the plugin package.
