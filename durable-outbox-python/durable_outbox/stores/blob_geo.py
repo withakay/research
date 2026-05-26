@@ -58,6 +58,16 @@ def event_blob_name(event_id: str) -> str:
     return f"outbox/v1/events/{safe_id}.json"
 
 
+def state_blob_name(event_id: str) -> str:
+    safe_id = sha256(event_id.encode("utf-8")).hexdigest()
+    return f"outbox/v1/state/{safe_id}.json"
+
+
+def payload_blob_name(event_id: str) -> str:
+    safe_id = sha256(event_id.encode("utf-8")).hexdigest()
+    return f"outbox/v1/payloads/{safe_id}.bin"
+
+
 def ordering_lock_blob_name(environment: str, topic: str, ordering_key: str) -> str:
     topic_hash = sha256(topic.encode("utf-8")).hexdigest()
     key_hash = sha256(ordering_key.encode("utf-8")).hexdigest()
@@ -285,6 +295,8 @@ class BlobOutboxStore:
         self.cleanup_freeze_reason: str | None = None
         self.records: dict[str, StoredEvent] = {}
         self._record_etags: dict[str, str] = {}
+        self._record_formats: dict[str, Literal["split", "legacy"]] = {}
+        self._payload_written_event_ids: set[str] = set()
         self._event_fingerprints: dict[str, tuple[OutboxEvent, str]] = {}
         self._in_flight_ordering_index = InFlightOrderingIndex()
         self._ordering_leases_by_event_id: dict[str, OrderingLockLease] = {}
@@ -544,17 +556,26 @@ class BlobOutboxStore:
                 break
 
         async def delete_candidate(event_id: str, record: StoredEvent) -> bool:
+            blob_name = (
+                state_blob_name(event_id)
+                if self._record_formats.get(event_id) == "split"
+                else event_blob_name(event_id)
+            )
             try:
                 deleted = await self.client.delete_blob(
-                    event_blob_name(event_id),
+                    blob_name,
                     if_match=self._record_etags.get(event_id),
                 )
             except BlobPreconditionFailedError:
                 return False
             if not deleted:
                 return False
+            if self._record_formats.get(event_id) == "split":
+                await self.client.delete_blob(payload_blob_name(event_id))
             self.records.pop(event_id, None)
             self._record_etags.pop(event_id, None)
+            self._record_formats.pop(event_id, None)
+            self._payload_written_event_ids.discard(event_id)
             self._event_fingerprints.pop(event_id, None)
             self._in_flight_ordering_index.release(record.event)
             return True
@@ -666,34 +687,80 @@ class BlobOutboxStore:
         await self._save_record(accepted_record)
 
     async def _load_record(self, event_id: str) -> StoredEvent | None:
-        blob = await self.client.get_blob(event_blob_name(event_id))
-        if blob is None:
+        split = await self._load_split_record(event_id)
+        if split is not None:
+            return split
+        legacy = await self._load_legacy_record(event_id)
+        if legacy is None:
             existing = self.records.get(event_id)
             self.records.pop(event_id, None)
             self._record_etags.pop(event_id, None)
+            self._record_formats.pop(event_id, None)
             self._event_fingerprints.pop(event_id, None)
             if existing is not None:
                 self._in_flight_ordering_index.release(existing.event)
+            return None
+        return legacy
+
+    async def _load_split_record(self, event_id: str) -> StoredEvent | None:
+        state_blob = await self.client.get_blob(state_blob_name(event_id))
+        if state_blob is None:
+            return None
+        payload_blob = await self.client.get_blob(payload_blob_name(event_id))
+        if payload_blob is None:
+            raise RetryableStoreError("split blob record missing payload")
+        record = _decode_state_record(state_blob.content, payload_blob.content)
+        self._verify_and_cache_record_fingerprint(record, state_blob)
+        self.records[event_id] = record
+        self._record_etags[event_id] = state_blob.etag
+        self._record_formats[event_id] = "split"
+        self._payload_written_event_ids.add(event_id)
+        return record
+
+    async def _load_legacy_record(self, event_id: str) -> StoredEvent | None:
+        blob = await self.client.get_blob(event_blob_name(event_id))
+        if blob is None:
             return None
         record = _decode_record(blob.content)
         self._verify_and_cache_record_fingerprint(record, blob)
         self.records[event_id] = record
         self._record_etags[event_id] = blob.etag
+        self._record_formats[event_id] = "legacy"
         return record
 
     async def _refresh_records(self) -> None:
-        blobs = await self.client.list_blobs(prefix="outbox/v1/events/")
+        state_blobs = await self.client.list_blobs(prefix="outbox/v1/state/")
+        legacy_blobs = await self.client.list_blobs(prefix="outbox/v1/events/")
         seen_ids: set[str] = set()
-        for blob in blobs:
-            record = _decode_record(blob.content)
+        for blob in state_blobs:
+            event_id = blob.metadata.get("event_id")
+            if event_id is None:
+                continue
+            payload_blob = await self.client.get_blob(payload_blob_name(event_id))
+            if payload_blob is None:
+                raise RetryableStoreError("split blob record missing payload")
+            record = _decode_state_record(blob.content, payload_blob.content)
             self._verify_and_cache_record_fingerprint(record, blob)
             event_id = record.event.event_id
             seen_ids.add(event_id)
             self.records[event_id] = record
             self._record_etags[event_id] = blob.etag
+            self._record_formats[event_id] = "split"
+        for blob in legacy_blobs:
+            record = _decode_record(blob.content)
+            event_id = record.event.event_id
+            if event_id in seen_ids:
+                continue
+            self._verify_and_cache_record_fingerprint(record, blob)
+            seen_ids.add(event_id)
+            self.records[event_id] = record
+            self._record_etags[event_id] = blob.etag
+            self._record_formats[event_id] = "legacy"
         for event_id in set(self.records) - seen_ids:
             self.records.pop(event_id, None)
             self._record_etags.pop(event_id, None)
+            self._record_formats.pop(event_id, None)
+            self._payload_written_event_ids.discard(event_id)
             self._event_fingerprints.pop(event_id, None)
         self._in_flight_ordering_index.rebuild(
             self.records.values(),
@@ -705,18 +772,36 @@ class BlobOutboxStore:
         self,
         now: datetime,
     ) -> AsyncIterator[StoredEvent]:
-        blobs = await self.client.list_blobs(
+        state_blobs = await self.client.list_blobs(
+            prefix="outbox/v1/state/",
+            with_content=False,
+        )
+        legacy_blobs = await self.client.list_blobs(
             prefix="outbox/v1/events/",
             with_content=False,
         )
         seen_ids: set[str] = set()
         candidate_blobs: list[BlobObject] = []
-        for blob in blobs:
+        for blob in state_blobs:
             event_id = blob.metadata.get("event_id")
             if event_id is None:
                 continue
             seen_ids.add(event_id)
             self._record_etags[event_id] = blob.etag
+            self._record_formats[event_id] = "split"
+            if _metadata_may_be_claimable(
+                blob.metadata,
+                now=now,
+                claim_timeout=self.claim_timeout,
+            ):
+                candidate_blobs.append(blob)
+        for blob in legacy_blobs:
+            event_id = blob.metadata.get("event_id")
+            if event_id is None or event_id in seen_ids:
+                continue
+            seen_ids.add(event_id)
+            self._record_etags[event_id] = blob.etag
+            self._record_formats[event_id] = "legacy"
             if _metadata_may_be_claimable(
                 blob.metadata,
                 now=now,
@@ -736,15 +821,18 @@ class BlobOutboxStore:
         for event_id in set(self.records) - seen_ids:
             existing = self.records.pop(event_id, None)
             self._record_etags.pop(event_id, None)
+            self._record_formats.pop(event_id, None)
+            self._payload_written_event_ids.discard(event_id)
             self._event_fingerprints.pop(event_id, None)
             if existing is not None:
                 self._in_flight_ordering_index.release(existing.event)
 
     async def _write_new_record(self, record: StoredEvent) -> None:
         event_fingerprint = self._event_fingerprint_for_record(record)
+        await self._ensure_payload_blob(record.event)
         blob = await self.client.put_blob(
-            event_blob_name(record.event.event_id),
-            _encode_record(record),
+            state_blob_name(record.event.event_id),
+            _encode_state_record(record),
             _record_metadata(
                 record,
                 environment=self.environment,
@@ -754,6 +842,8 @@ class BlobOutboxStore:
         )
         self.records[record.event.event_id] = record
         self._record_etags[record.event.event_id] = blob.etag
+        self._record_formats[record.event.event_id] = "split"
+        self._payload_written_event_ids.add(record.event.event_id)
         self._event_fingerprints[record.event.event_id] = (
             record.event,
             event_fingerprint,
@@ -762,19 +852,54 @@ class BlobOutboxStore:
     async def _save_record(self, record: StoredEvent) -> None:
         event_id = record.event.event_id
         event_fingerprint = self._event_fingerprint_for_record(record)
+        await self._ensure_payload_blob(record.event)
+        if self._record_formats.get(event_id) == "legacy":
+            if_match: str | None = None
+            if_none_match = True
+        else:
+            if_match = self._record_etags.get(event_id)
+            if_none_match = False
         blob = await self.client.put_blob(
-            event_blob_name(event_id),
-            _encode_record(record),
+            state_blob_name(event_id),
+            _encode_state_record(record),
             _record_metadata(
                 record,
                 environment=self.environment,
                 event_fingerprint=event_fingerprint,
             ),
-            if_match=self._record_etags.get(event_id),
+            if_none_match=if_none_match,
+            if_match=if_match,
         )
         self.records[event_id] = record
         self._record_etags[event_id] = blob.etag
+        self._record_formats[event_id] = "split"
+        self._payload_written_event_ids.add(event_id)
         self._event_fingerprints[event_id] = (record.event, event_fingerprint)
+
+    async def _ensure_payload_blob(self, event: OutboxEvent) -> None:
+        if event.event_id in self._payload_written_event_ids:
+            return
+        try:
+            await self.client.put_blob(
+                payload_blob_name(event.event_id),
+                event.payload,
+                {"event_id": event.event_id},
+                if_none_match=True,
+            )
+        except BlobPreconditionFailedError:
+            existing = await self.client.get_blob(payload_blob_name(event.event_id))
+            if existing is None or existing.content != event.payload:
+                state = await self.client.get_blob(state_blob_name(event.event_id))
+                legacy = await self.client.get_blob(event_blob_name(event.event_id))
+                if existing is None or state is not None or legacy is not None:
+                    raise
+                await self.client.put_blob(
+                    payload_blob_name(event.event_id),
+                    event.payload,
+                    {"event_id": event.event_id},
+                    if_match=existing.etag,
+                )
+        self._payload_written_event_ids.add(event.event_id)
 
     async def _claimed_record(self, claimed: ClaimedEvent) -> StoredEvent:
         record = self.records.get(claimed.event.event_id)
@@ -1430,11 +1555,75 @@ def _decode_record(content: bytes) -> StoredEvent:
     )
 
 
+def _encode_state_record(record: StoredEvent) -> bytes:
+    return json.dumps(
+        {
+            "event": _encode_event_reference(record.event),
+            "status": record.status.value,
+            "accepted": record.accepted,
+            "accepted_at": _encode_datetime(record.accepted_at),
+            "attempt_count": record.attempt_count,
+            "claim_token": record.claim_token,
+            "claimed_at": _encode_datetime(record.claimed_at),
+            "next_attempt_at": _encode_datetime(record.next_attempt_at),
+            "sent_at": _encode_datetime(record.sent_at),
+            "publish_result": _encode_publish_result(record.publish_result),
+            "failed_at": _encode_datetime(record.failed_at),
+            "last_error_type": record.last_error_type,
+            "last_error": record.last_error,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _decode_state_record(content: bytes, payload: bytes) -> StoredEvent:
+    data = json.loads(content.decode("utf-8"))
+    if not isinstance(data, dict):
+        raise RetryableStoreError("invalid blob state record")
+    record: Mapping[str, Any] = data
+    return StoredEvent(
+        event=_decode_event_reference(_mapping_field(record, "event"), payload),
+        status=_status_field(record, "status"),
+        accepted=_bool_field(record, "accepted"),
+        accepted_at=_optional_datetime_field(record, "accepted_at"),
+        attempt_count=_int_field(record, "attempt_count"),
+        claim_token=_optional_str_field(record, "claim_token"),
+        claimed_at=_optional_datetime_field(record, "claimed_at"),
+        next_attempt_at=_optional_datetime_field(record, "next_attempt_at"),
+        sent_at=_optional_datetime_field(record, "sent_at"),
+        publish_result=_decode_publish_result(
+            _optional_mapping_field(record, "publish_result")
+        ),
+        failed_at=_optional_datetime_field(record, "failed_at"),
+        last_error_type=_optional_str_field(record, "last_error_type"),
+        last_error=_optional_str_field(record, "last_error"),
+    )
+
+
 def _encode_event(event: OutboxEvent) -> dict[str, Any]:
     return {
         "event_id": event.event_id,
         "topic": event.topic,
         "payload": _encode_bytes(event.payload),
+        "key": _encode_optional_bytes(event.key),
+        "headers": {
+            name: _encode_bytes(value) for name, value in sorted(event.headers.items())
+        },
+        "created_at": _encode_datetime(event.created_at),
+        "expires_at": _encode_datetime(event.expires_at),
+        "ordering_key": event.ordering_key,
+        "ordering_sequence": event.ordering_sequence,
+        "publishing_mode": event.publishing_mode.value,
+        "schema_id": event.schema_id,
+        "schema_version": event.schema_version,
+    }
+
+
+def _encode_event_reference(event: OutboxEvent) -> dict[str, Any]:
+    return {
+        "event_id": event.event_id,
+        "topic": event.topic,
         "key": _encode_optional_bytes(event.key),
         "headers": {
             name: _encode_bytes(value) for name, value in sorted(event.headers.items())
@@ -1456,6 +1645,25 @@ def _decode_event(data: Mapping[str, Any]) -> OutboxEvent:
         event_id=_str_field(data, "event_id"),
         topic=_str_field(data, "topic"),
         payload=_decode_bytes_field(data, "payload"),
+        key=_decode_optional_bytes_field(data, "key"),
+        headers=_decode_headers(_mapping_field(data, "headers")),
+        created_at=created_at,
+        expires_at=expires_at,
+        ordering_key=_optional_str_field(data, "ordering_key"),
+        ordering_sequence=_optional_int_field(data, "ordering_sequence"),
+        publishing_mode=_publishing_mode_field(data, "publishing_mode"),
+        schema_id=_optional_str_field(data, "schema_id"),
+        schema_version=_optional_str_field(data, "schema_version"),
+    )
+
+
+def _decode_event_reference(data: Mapping[str, Any], payload: bytes) -> OutboxEvent:
+    created_at = _required_datetime_field(data, "created_at")
+    expires_at = _required_datetime_field(data, "expires_at")
+    return OutboxEvent(
+        event_id=_str_field(data, "event_id"),
+        topic=_str_field(data, "topic"),
+        payload=payload,
         key=_decode_optional_bytes_field(data, "key"),
         headers=_decode_headers(_mapping_field(data, "headers")),
         created_at=created_at,

@@ -2184,6 +2184,56 @@ verification evidence.
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
 
+## Batch 69: Blob Split Payload and State Layout
+
+### Findings Accepted
+
+- **P-P3-1:** Blob state transitions still called `_encode_record(record)` and
+  uploaded a full record containing base64 payload bytes on every claim, sent,
+  retry, failure, repair, replay, and mirror update. Fingerprint caching reduced
+  CPU work, but did not reduce payload-sized uploads.
+
+### Fixes Implemented
+
+- Added split Blob paths:
+  - `payload_blob_name(event_id)` for immutable raw payload bytes.
+  - `state_blob_name(event_id)` for the mutable state JSON.
+  - `event_blob_name(event_id)` remains the legacy full-record path.
+- Changed new Blob writes to persist payload bytes once, then write a small
+  state document that contains event metadata and mutable state but not payload
+  bytes.
+- Changed `_save_record()` to update only the state blob. Legacy records are
+  migrated on first state update by writing payload plus state while leaving
+  the old legacy blob readable as fallback.
+- Changed `_load_record()`, `_refresh_records()`, and claim scanning to prefer
+  split state blobs and fall back to legacy event blobs. If both exist, split
+  state wins.
+- Moved Blob etag tracking to the state blob for split records and retained
+  legacy etag handling for fallback records until migration.
+- Updated cleanup so split records delete state and payload blobs, while legacy
+  records still delete the legacy full-record blob.
+- Preserved fingerprint verification by recomposing the event from state plus
+  payload and comparing against the state metadata fingerprint.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_adapters.py::test_blob_state_transitions_do_not_reupload_payload_bytes tests/test_adapters.py::test_blob_store_reads_legacy_single_blob_records -q`
+  -> failed because `payload_blob_name` did not exist and state transitions
+  still wrote the legacy full-record blob.
+- Focused green run:
+  `uv run pytest tests/test_adapters.py::test_blob_state_transitions_do_not_reupload_payload_bytes tests/test_adapters.py::test_blob_store_reads_legacy_single_blob_records tests/test_adapters.py::test_blob_claim_batch_skips_retained_sent_blobs_during_scan -q`
+  -> 3 passed.
+- Focused Blob/provider run:
+  `uv run pytest tests/test_adapters.py::test_builtin_adapters_pass_reusable_provider_contract tests/test_adapters.py::test_blob_state_transitions_do_not_reupload_payload_bytes tests/test_adapters.py::test_blob_store_reads_legacy_single_blob_records tests/test_adapters.py::test_blob_claim_batch_skips_retained_sent_blobs_during_scan tests/test_failover_ordering_cleanup.py tests/test_azure_blob_and_file_sink.py -q`
+  -> 38 passed.
+- Full package gates:
+  `uv run pytest -q` -> 250 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 53 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
+
 ## Batch 68: SQL and Cosmos Claim Query Seam
 
 ### Findings Partially Accepted

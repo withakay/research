@@ -29,6 +29,8 @@ from durable_outbox.stores.blob_geo import (
     blob_metadata,
     event_blob_name,
     ordering_lock_blob_name,
+    payload_blob_name,
+    state_blob_name,
 )
 from durable_outbox.stores.cosmos import (
     CosmosConfiguration,
@@ -173,7 +175,7 @@ class FailingDeleteBlobClient(InMemoryBlobClient):
         self.fail_deletes = False
 
     async def delete_blob(self, name: str, *, if_match: str | None = None) -> bool:
-        if self.fail_deletes and name.startswith("outbox/v1/events/"):
+        if self.fail_deletes and name.startswith("outbox/v1/state/"):
             raise RuntimeError("secondary cleanup failed")
         return await super().delete_blob(name, if_match=if_match)
 
@@ -215,6 +217,30 @@ class ClaimScanCountingBlobClient(InMemoryBlobClient):
     ) -> list[BlobObject]:
         self.list_with_content_values.append(with_content)
         return await super().list_blobs(prefix=prefix, with_content=with_content)
+
+
+class PutRecordingBlobClient(InMemoryBlobClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.puts: list[tuple[str, bytes]] = []
+
+    async def put_blob(
+        self,
+        name: str,
+        content: bytes,
+        metadata: Mapping[str, str],
+        *,
+        if_none_match: bool = False,
+        if_match: str | None = None,
+    ) -> BlobObject:
+        self.puts.append((name, bytes(content)))
+        return await super().put_blob(
+            name,
+            content,
+            metadata,
+            if_none_match=if_none_match,
+            if_match=if_match,
+        )
 
 
 class CleanupCountingCosmosClient(InMemoryCosmosOutboxClient):
@@ -286,7 +312,7 @@ class FailingPutBlobClient(InMemoryBlobClient):
         if_match: str | None = None,
     ) -> Any:
         if self.remaining_event_put_failures > 0 and name.startswith(
-            "outbox/v1/events/"
+            "outbox/v1/state/"
         ):
             self.remaining_event_put_failures -= 1
             raise RuntimeError("standby mirror update failed")
@@ -314,7 +340,7 @@ class FailingNthEventPutBlobClient(InMemoryBlobClient):
         if_none_match: bool = False,
         if_match: str | None = None,
     ) -> Any:
-        if name.startswith("outbox/v1/events/"):
+        if name.startswith("outbox/v1/state/"):
             self.event_put_count += 1
             if self.event_put_count == self.fail_on_event_put:
                 raise RuntimeError("secondary accept failed")
@@ -559,7 +585,7 @@ async def test_blob_load_rejects_tampered_fingerprint() -> None:
     store = BlobOutboxStore(client=client)
     event = make_event("tamper")
     await store.put(event)
-    blob = await client.get_blob(event_blob_name(event.event_id))
+    blob = await client.get_blob(state_blob_name(event.event_id))
     assert blob is not None
     await client.put_blob(
         blob.name,
@@ -578,13 +604,12 @@ async def test_blob_verification_recomputes_fingerprint_for_tampered_content() -
     store = BlobOutboxStore(client=client)
     event = make_event("tamper-content")
     await store.put(event)
-    blob = await client.get_blob(event_blob_name(event.event_id))
+    blob = await client.get_blob(payload_blob_name(event.event_id))
     assert blob is not None
-    decoded = json.loads(blob.content)
-    decoded["event"]["payload"] = "dGFtcGVyZWQ="
+    tampered_payload = b"tampered"
     await client.put_blob(
         blob.name,
-        json.dumps(decoded).encode(),
+        tampered_payload,
         blob.metadata,
         if_match=blob.etag,
     )
@@ -603,7 +628,7 @@ async def test_blob_store_can_use_keyed_event_fingerprints() -> None:
 
     await store.put(event)
 
-    blob = await client.get_blob(event_blob_name(event.event_id))
+    blob = await client.get_blob(state_blob_name(event.event_id))
     assert blob is not None
     fingerprint = blob.metadata["event_fingerprint"]
     assert fingerprint != _event_fingerprint(event)
@@ -629,8 +654,8 @@ async def test_blob_fingerprint_cache_is_store_local_by_key() -> None:
     await first_store.put(event)
     await second_store.put(event)
 
-    first_blob = await first_client.get_blob(event_blob_name(event.event_id))
-    second_blob = await second_client.get_blob(event_blob_name(event.event_id))
+    first_blob = await first_client.get_blob(state_blob_name(event.event_id))
+    second_blob = await second_client.get_blob(state_blob_name(event.event_id))
     assert first_blob is not None
     assert second_blob is not None
     assert (
@@ -648,7 +673,7 @@ async def test_blob_refresh_drops_stale_fingerprint_cache_for_missing_blob() -> 
     original = make_event("reuse-after-refresh")
     replacement = replace(original, payload=b"replacement")
     await store.put(original)
-    blob = await client.get_blob(event_blob_name(original.event_id))
+    blob = await client.get_blob(state_blob_name(original.event_id))
     assert blob is not None
     assert await client.delete_blob(blob.name, if_match=blob.etag)
 
@@ -693,11 +718,10 @@ async def test_blob_decode_requires_created_and_expires_timestamps() -> None:
     store = BlobOutboxStore(client=client)
     event = make_event("missing-created")
     await store.put(event)
-    record = store.records[event.event_id]
-    encoded = json.loads(_encode_record(record))
-    encoded["event"]["created_at"] = None
-    blob = await client.get_blob(event_blob_name(event.event_id))
+    blob = await client.get_blob(state_blob_name(event.event_id))
     assert blob is not None
+    encoded = json.loads(blob.content)
+    encoded["event"]["created_at"] = None
     await client.put_blob(
         blob.name,
         json.dumps(encoded).encode(),
@@ -753,7 +777,7 @@ async def test_blob_refresh_evicts_records_deleted_from_backend() -> None:
     event = make_event("deleted-from-backend")
     await first.put(event)
     await second._refresh_records()
-    blob = await client.get_blob(event_blob_name(event.event_id))
+    blob = await client.get_blob(state_blob_name(event.event_id))
     assert blob is not None
 
     deleted = await client.delete_blob(blob.name)
@@ -837,9 +861,9 @@ async def test_dual_region_blob_put_does_not_cache_secondary_accept_failure() ->
 
     assert store.primary.records[event.event_id].accepted is True
     assert store.secondary.records[event.event_id].accepted is False
-    secondary_blob = await secondary_client.get_blob(event_blob_name(event.event_id))
+    secondary_blob = await secondary_client.get_blob(state_blob_name(event.event_id))
     assert secondary_blob is not None
-    assert _decode_record(secondary_blob.content).accepted is False
+    assert secondary_blob.metadata["accepted"] == "false"
 
 
 @pytest.mark.asyncio
@@ -1411,7 +1435,7 @@ async def test_blob_cleanup_sent_parallelizes_deletes_with_batch_limit() -> None
 
     assert deleted == 3
     assert client.max_in_flight_deletes == 2
-    assert await client.get_blob(event_blob_name(events[3].event_id)) is not None
+    assert await client.get_blob(state_blob_name(events[3].event_id)) is not None
 
 
 @pytest.mark.asyncio
@@ -1442,8 +1466,60 @@ async def test_blob_claim_batch_skips_retained_sent_blobs_during_scan() -> None:
         "pending-claim-1",
         "pending-claim-2",
     }
-    assert client.list_with_content_values == [False]
-    assert client.get_blob_calls == 2
+    assert client.list_with_content_values == [False, False]
+    assert client.get_blob_calls == 4
+
+
+@pytest.mark.asyncio
+async def test_blob_state_transitions_do_not_reupload_payload_bytes() -> None:
+    now = datetime.now(UTC)
+    client = PutRecordingBlobClient()
+    store = BlobOutboxStore(client=client, clock=FixedClock(now))
+    payload = b"x" * 4096
+    event = replace(make_event("split-storage"), payload=payload)
+
+    await store.put(event)
+    claimed = (await store.claim_batch(limit=1))[0]
+    await store.mark_sent(
+        claimed,
+        PublishResult(partition=0, offset=1, published_at=now),
+    )
+
+    payload_name = payload_blob_name(event.event_id)
+    state_name = state_blob_name(event.event_id)
+    payload_puts = [content for name, content in client.puts if name == payload_name]
+    state_puts = [content for name, content in client.puts if name == state_name]
+
+    assert payload_puts == [payload]
+    assert len(state_puts) >= 3
+    assert all(payload not in content for content in state_puts)
+    assert all(len(content) < len(payload) for content in state_puts)
+    assert await client.get_blob(payload_name) is not None
+    assert await client.get_blob(state_name) is not None
+    assert await client.get_blob(event_blob_name(event.event_id)) is None
+
+
+@pytest.mark.asyncio
+async def test_blob_store_reads_legacy_single_blob_records() -> None:
+    now = datetime.now(UTC)
+    client = InMemoryBlobClient()
+    event = make_event("legacy-single-blob")
+    record = StoredEvent(event=event, accepted_at=now)
+    metadata = dict(blob_metadata(event, environment="default"))
+    metadata["event_fingerprint"] = _event_fingerprint(event)
+    await client.put_blob(
+        event_blob_name(event.event_id),
+        _encode_record(record),
+        metadata,
+    )
+    store = BlobOutboxStore(client=client, clock=FixedClock(now))
+
+    claimed = await store.claim_batch(limit=1)
+
+    assert [claim.event.event_id for claim in claimed] == [event.event_id]
+    assert claimed[0].event.payload == event.payload
+    assert await client.get_blob(state_blob_name(event.event_id)) is not None
+    assert await client.get_blob(payload_blob_name(event.event_id)) is not None
 
 
 @pytest.mark.parametrize(
