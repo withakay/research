@@ -16,3 +16,4 @@ Refactor durable-outbox-python from one package with optional provider extras in
 - [ ] 001.13-07_extract-file-sink-plugin
 - [ ] 001.13-08_extract-sql-store-plugin
 - [ ] 001.13-09_document-provider-plugin-authoring
+- [ ] 001.13-10_extract-remaining-providers-into-packages
