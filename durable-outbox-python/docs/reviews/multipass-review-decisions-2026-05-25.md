@@ -2184,6 +2184,92 @@ verification evidence.
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
 
+## Batch 70: Failover Replay Paging And Page Concurrency
+
+### Findings Partially Accepted
+
+- **P-P1-1:** failover replay still claimed up to the caller's full `limit`
+  into one list and published serially. The review's full recommendation asks
+  for provider-backed streaming or cursor pagination; this batch implements the
+  bounded store-page and concurrent page-publish layer first, while leaving
+  real backend cursor work under the SQL/Cosmos/Blob provider tracks.
+
+### Fixes Implemented
+
+- Added `replay_page_size` and `max_concurrency` to `FailoverReplayer`.
+  `max_concurrency` defaults to `1` for compatibility, while callers can opt
+  into parallel page publishing.
+- Changed `replay_once()` to fetch bounded pages, pass already-seen event IDs
+  to the store, and stop when the page is short or the requested limit has been
+  consumed.
+- Added `exclude_event_ids` to the durable store failover replay contract and
+  implemented it across memory, Blob, dual-region Blob, SQL, Cosmos, and
+  failure-injection test wrappers.
+- Preserved per-ordering-scope serialization inside a replay page and made
+  replay candidate selection skip later events in the same ordering scope for a
+  single claim pass.
+- Kept failed replay publishes in their existing `IN_FLIGHT` safety state; this
+  batch does not mark them pending or hide replay ambiguity.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_failover_ordering_cleanup.py::test_failover_replay_fetches_bounded_pages_without_replaying_seen_events tests/test_failover_ordering_cleanup.py::test_failover_replay_publishes_page_concurrently -q`
+  -> failed because `FailoverReplayer` did not yet accept replay paging
+  controls.
+- Focused green run:
+  `uv run pytest tests/test_failover_ordering_cleanup.py::test_failover_replay_fetches_bounded_pages_without_replaying_seen_events tests/test_failover_ordering_cleanup.py::test_failover_replay_publishes_page_concurrently -q`
+  -> 2 passed.
+- Full package gates:
+  `uv run pytest -q` -> 252 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 53 files already formatted;
+  `uv run ty check` -> all checks passed.
+
+## Batch 71: SQL And Cosmos Replay Candidate Seam
+
+### Findings Partially Accepted
+
+- **P-P0-2 / P-P0-5 / P-P1-1:** SQL and Cosmos normal claims already delegate
+  to `claim_batch_pending()`, but failover replay still called
+  `client.list_records()` and then sorted/filtered every row in the store
+  layer. Real backend clients remain open under **A-P0-1**, but the store
+  contract now needs a replay-specific query seam that those clients can
+  implement with indexed predicates.
+
+### Fixes Implemented
+
+- Added `list_failover_replay_candidates(failover_started_at, limit,
+  exclude_event_ids)` to the SQL and Cosmos client protocols.
+- Implemented the new method on `InMemorySqlOutboxClient` and
+  `InMemoryCosmosOutboxClient` with the same TTL, status, exclusion, and
+  ordering-scope filtering expected from provider implementations.
+- Changed SQL and Cosmos `failover_replay_candidates()` to delegate candidate
+  selection to the client method instead of calling `list_records()` directly.
+- Preserved the store-level compare-and-swap claim/rollback logic after
+  candidate selection, so shared-client race behavior and interruption rollback
+  semantics remain unchanged.
+- Kept **A-P0-1**, **P-P0-2**, and **P-P0-5** open for real pyodbc/Cosmos SDK
+  clients and provider-specific atomic claim/query implementations.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_adapters.py::test_sql_and_cosmos_failover_replay_uses_replay_candidate_list -q`
+  -> failed because both stores still called `list_records()`.
+- Focused green run:
+  `uv run pytest tests/test_adapters.py::test_sql_and_cosmos_failover_replay_uses_replay_candidate_list tests/test_adapters.py::test_sql_and_cosmos_claim_reuses_claim_candidate_list -q`
+  -> 4 passed.
+- Focused adapter/replay run:
+  `uv run pytest tests/test_adapters.py::test_builtin_adapters_pass_reusable_provider_contract tests/test_failover_ordering_cleanup.py tests/test_adapters.py::test_sql_and_cosmos_failover_replay_uses_replay_candidate_list tests/test_adapters.py::test_sql_and_cosmos_claim_reuses_claim_candidate_list -q`
+  -> 33 passed.
+- Full package gates:
+  `uv run pytest -q` -> 254 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 53 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
+
 ## Batch 69: Blob Split Payload and State Layout
 
 ### Findings Accepted

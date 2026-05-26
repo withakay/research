@@ -64,7 +64,7 @@ from durable_outbox.testing.provider_contract import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Collection, Mapping
 
 
 class InterruptingClock(FixedClock):
@@ -124,6 +124,7 @@ class CountingCosmosClient(InMemoryCosmosOutboxClient):
         super().__init__()
         self.list_records_calls = 0
         self.claim_batch_pending_calls = 0
+        self.failover_replay_candidate_calls = 0
 
     async def list_records(self) -> Any:
         self.list_records_calls += 1
@@ -143,12 +144,27 @@ class CountingCosmosClient(InMemoryCosmosOutboxClient):
             claim_timeout=claim_timeout,
         )
 
+    async def list_failover_replay_candidates(
+        self,
+        *,
+        failover_started_at: datetime,
+        limit: int,
+        exclude_event_ids: Collection[str] = (),
+    ) -> Any:
+        self.failover_replay_candidate_calls += 1
+        return await super().list_failover_replay_candidates(
+            failover_started_at=failover_started_at,
+            limit=limit,
+            exclude_event_ids=exclude_event_ids,
+        )
+
 
 class CountingSqlClient(InMemorySqlOutboxClient):
     def __init__(self) -> None:
         super().__init__()
         self.list_records_calls = 0
         self.claim_batch_pending_calls = 0
+        self.failover_replay_candidate_calls = 0
 
     async def list_records(self) -> Any:
         self.list_records_calls += 1
@@ -166,6 +182,20 @@ class CountingSqlClient(InMemorySqlOutboxClient):
             limit=limit,
             now=now,
             claim_timeout=claim_timeout,
+        )
+
+    async def list_failover_replay_candidates(
+        self,
+        *,
+        failover_started_at: datetime,
+        limit: int,
+        exclude_event_ids: Collection[str] = (),
+    ) -> Any:
+        self.failover_replay_candidate_calls += 1
+        return await super().list_failover_replay_candidates(
+            failover_started_at=failover_started_at,
+            limit=limit,
+            exclude_event_ids=exclude_event_ids,
         )
 
 
@@ -1858,6 +1888,43 @@ async def test_sql_and_cosmos_claim_reuses_claim_candidate_list(
     assert [claim.event.event_id for claim in claimed] == ["candidate-list-first"]
     assert client(store).list_records_calls == 0
     assert client(store).claim_batch_pending_calls == 1
+
+
+@pytest.mark.parametrize(
+    ("store", "client"),
+    [
+        (
+            CosmosStrongOutboxStore(
+                CosmosConfiguration(consistency="Strong", regions=("westus", "eastus")),
+                client=CountingCosmosClient(),
+            ),
+            lambda store: store.client,
+        ),
+        (
+            AzureSqlSyncOutboxStore(client=CountingSqlClient()),
+            lambda store: store.client,
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_sql_and_cosmos_failover_replay_uses_replay_candidate_list(
+    store: Any,
+    client: Any,
+) -> None:
+    first = make_event("replay-candidate-list-first")
+    second = make_event("replay-candidate-list-second")
+    await store.put(first)
+    await store.put(second)
+
+    claimed = await store.failover_replay_candidates(
+        failover_started_at=datetime.now(UTC),
+        limit=1,
+        exclude_event_ids={first.event_id},
+    )
+
+    assert [claim.event.event_id for claim in claimed] == [second.event_id]
+    assert client(store).list_records_calls == 0
+    assert client(store).failover_replay_candidate_calls == 1
 
 
 @pytest.mark.parametrize(

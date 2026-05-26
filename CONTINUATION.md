@@ -8,27 +8,27 @@ Work in `/Users/jack/Code/withakay/research`. Stay inside `durable-outbox-python
 
 Current state:
 
-- Latest completed batch: P-P3-1, Blob split payload/state layout.
-- Latest full gates for this batch:
-  - `uv run pytest -q` -> `250 passed, 2 skipped`
+- Latest completed batch: SQL/Cosmos failover replay candidate seam.
+- Latest full gates:
+  - `uv run pytest -q` -> `254 passed, 2 skipped`
   - `uv run ruff check .` -> passed
   - `uv run ruff format --check .` -> passed
   - `uv run ty check` -> passed
   - `uv build` -> passed
 - Most recent commits:
+  - `06c369f perf(durable-outbox): page failover replay batches`
+  - `053ca5d perf(durable-outbox): split blob payload and state writes`
   - `abf2108 perf(durable-outbox): delegate sql cosmos claim queries`
   - `75a7f40 feat(durable-outbox): wire settings and trace propagation`
-  - `b6188f4 perf(durable-outbox): avoid blob content scans while claiming`
-  - `4fb031e feat(durable-outbox): bound cleanup work per tick`
 
-P-P3-1 implementation notes:
+Recent implementation notes:
 
+- `FailoverReplayer` now fetches bounded replay pages, supports opt-in page publish concurrency, and passes already-seen event IDs to stores.
+- Store failover replay candidate methods accept `exclude_event_ids`.
+- SQL and Cosmos normal claim paths delegate to `claim_batch_pending()`.
+- SQL and Cosmos failover replay paths delegate to `list_failover_replay_candidates()` instead of `list_records()`.
 - Blob records now use split storage for new writes: raw payload bytes in `payload_blob_name(event_id)` and mutable state JSON in `state_blob_name(event_id)`.
-- `event_blob_name(event_id)` remains the legacy full-record path and is still readable.
-- State transitions update only the small state JSON and do not reupload payload bytes.
-- Legacy records migrate on first state update by writing payload plus state while keeping the legacy blob as fallback.
-- Cleanup removes split state and payload blobs; legacy cleanup remains supported.
-- Decisions and verification are documented in `docs/reviews/multipass-review-decisions-2026-05-25.md`.
+- Decisions and verification are documented in `durable-outbox-python/docs/reviews/multipass-review-decisions-2026-05-25.md`.
 
 Remaining direct review IDs:
 
@@ -41,6 +41,9 @@ Suggested next move:
 
 1. Confirm a clean worktree and rerun the remaining-ID script.
 2. Pick the next bounded item. Likely candidates are:
-   - `P-P1-1` failover replay streaming/concurrency, but check dependencies on provider pagination first.
+   - `A-P0-1`: real SQL pyodbc and Azure Cosmos client modules, or a smaller production-client validation seam.
+   - `P-P0-2`: SQL Server atomic claim/replay queries behind the existing client seams.
+   - `P-P0-5`: Cosmos partition-scoped claim/replay queries behind the existing client seams.
+   - `P-P1-1`: true async-iterator/cursor replay for providers. Current work is bounded page lists plus concurrent page publish, not full provider streaming.
 3. Treat `A-P0-1`, `P-P0-2`, and `P-P0-5` as larger provider-client/query-track work; use subagents before implementing.
 4. For every accepted finding: write or preserve red tests, implement, run focused gates, run full gates, update the decisions doc, then commit conventionally.

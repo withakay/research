@@ -98,6 +98,14 @@ class CosmosOutboxClient(Protocol):
         claim_timeout: timedelta,
     ) -> Sequence[CosmosStoredEvent]: ...
 
+    async def list_failover_replay_candidates(
+        self,
+        *,
+        failover_started_at: datetime,
+        limit: int,
+        exclude_event_ids: Collection[str] = (),
+    ) -> Sequence[CosmosStoredEvent]: ...
+
     async def list_cleanup_candidates(
         self,
         *,
@@ -172,6 +180,39 @@ class InMemoryCosmosOutboxClient:
                 records.append(clone)
             if claimable_seen >= limit:
                 break
+        return tuple(records)
+
+    async def list_failover_replay_candidates(
+        self,
+        *,
+        failover_started_at: datetime,
+        limit: int,
+        exclude_event_ids: Collection[str] = (),
+    ) -> Sequence[CosmosStoredEvent]:
+        require_positive_limit(limit)
+        records: list[CosmosStoredEvent] = []
+        locked_ordering_scopes: set[str] = set()
+        for record in sorted(
+            self.records.values(), key=lambda item: item.event.created_at
+        ):
+            if len(records) >= limit:
+                break
+            if record.event.event_id in exclude_event_ids:
+                continue
+            if record.status not in {
+                OutboxStatus.PENDING,
+                OutboxStatus.IN_FLIGHT,
+                OutboxStatus.SENT,
+            }:
+                continue
+            if record.event.expires_at < failover_started_at:
+                continue
+            scoped_key = ordering_scope(record.event)
+            if scoped_key is not None and scoped_key in locked_ordering_scopes:
+                continue
+            records.append(_clone_record(record))
+            if scoped_key is not None:
+                locked_ordering_scopes.add(scoped_key)
         return tuple(records)
 
     async def list_cleanup_candidates(
@@ -412,8 +453,10 @@ class CosmosStrongOutboxStore:
     ) -> list[ClaimedEvent]:
         require_positive_limit(limit)
         candidates: list[ClaimedEvent] = []
-        records = sorted(
-            await self.client.list_records(), key=lambda item: item.event.created_at
+        records = await self.client.list_failover_replay_candidates(
+            failover_started_at=failover_started_at,
+            limit=limit,
+            exclude_event_ids=exclude_event_ids,
         )
         claimed_originals: list[tuple[CosmosStoredEvent, CosmosStoredEvent]] = []
         locked_ordering_scopes: set[str] = set()
