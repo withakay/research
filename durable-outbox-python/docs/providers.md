@@ -62,7 +62,10 @@ bounded candidate selection over configured or previously observed partition
 keys. Candidate selection is intentionally partition-scoped: the client passes a
 single `partition_key` to each Cosmos query and never enables cross-partition
 querying. Query methods still return candidates only; claim ownership remains in
-the store's `_etag` compare-and-swap `replace()` path.
+the store's `_etag` compare-and-swap `replace()` path. Replay candidate
+streaming consumes Cosmos SDK query pages with a bounded k-way merge across
+known partitions, keeping at most one active item per partition before the store
+claims each replay event.
 
 The client persists observed data partitions into a control-partition registry
 and loads that registry before candidate queries. Operators can also seed
@@ -137,10 +140,11 @@ cursor or stream claimed rows can additionally expose
 iterator. The replayer consumes that stream in bounded in-memory pages and uses
 the same concurrent publish path, avoiding repeated list/exclusion calls.
 The built-in SQL and Cosmos stores expose this streaming shape. SQL uses its
-atomic replay-claim capability when the client provides one; otherwise SQL and
-Cosmos stream over their provider-side replay candidate seams. Deeper
-backend-native replay cursors, such as a SQL batch-token rollback cursor or
-Cosmos continuation-token cursor, remain provider-specific optimizations.
+atomic replay-claim capability when the client provides one. Cosmos uses its
+client replay iterator when available, and `AzureCosmosOutboxClient` drives that
+iterator from SDK query pages rather than collecting all partition results
+first. Deeper backend-native replay cursors, such as a SQL batch-token rollback
+cursor, remain provider-specific optimizations.
 
 ## Kafka
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from hashlib import sha256
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from uuid import uuid4
 
 from durable_outbox.core.admin import AdminActionStatus
@@ -122,6 +122,17 @@ class CosmosOutboxClient(Protocol):
     async def set_cleanup_freeze(self, reason: str) -> None: ...
 
     async def clear_cleanup_freeze(self) -> None: ...
+
+
+@runtime_checkable
+class CosmosReplayStreamClient(Protocol):
+    def iter_failover_replay_candidates(
+        self,
+        *,
+        failover_started_at: datetime,
+        limit: int,
+        exclude_event_ids: Collection[str] = (),
+    ) -> AsyncIterator[CosmosStoredEvent]: ...
 
 
 class InMemoryCosmosOutboxClient:
@@ -477,6 +488,29 @@ class CosmosStrongOutboxStore:
         yielded = 0
         excluded_event_ids: set[str] = set()
         locked_ordering_scopes: set[str] = set()
+        if isinstance(self.client, CosmosReplayStreamClient):
+            async for record in self.client.iter_failover_replay_candidates(
+                failover_started_at=failover_started_at,
+                limit=limit,
+                exclude_event_ids=excluded_event_ids,
+            ):
+                if yielded >= limit:
+                    break
+                claimed = await self._claim_failover_replay_records(
+                    (record,),
+                    failover_started_at=failover_started_at,
+                    limit=1,
+                    exclude_event_ids=excluded_event_ids,
+                    locked_ordering_scopes=locked_ordering_scopes,
+                )
+                if not claimed:
+                    excluded_event_ids.add(record.event.event_id)
+                    continue
+                for candidate in claimed:
+                    excluded_event_ids.add(candidate.event.event_id)
+                    yielded += 1
+                    yield candidate
+            return
         while yielded < limit:
             records = await self.client.list_failover_replay_candidates(
                 failover_started_at=failover_started_at,

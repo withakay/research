@@ -2983,3 +2983,62 @@ verification evidence.
   remains covered by the opt-in live SQL gate, not by the default local suite.
 - A longer-lived SQL replay cursor with explicit backend batch-token rollback
   remains a possible optimization for very large replay runs.
+
+## Batch 84: Azure Cosmos Paged Replay Streaming
+
+### Findings Partially Accepted
+
+- **P-P0-5 / P-P1-1:** `CosmosStrongOutboxStore` exposed the replay streaming
+  shape, but Azure Cosmos replay candidates still came from a materializing
+  `list_failover_replay_candidates()` client method. The store could avoid the
+  legacy list-returning method, but the client still collected decoded results
+  from known partitions before yielding anything.
+
+### Fixes Implemented
+
+- Added `AzureCosmosOutboxClient.iter_failover_replay_candidates()`.
+- Changed `AzureCosmosOutboxClient.list_failover_replay_candidates()` to collect
+  from that iterator for compatibility.
+- Added a paged-query protocol path so Azure SDK query objects with `by_page()`
+  are consumed page-by-page; async-iterable-only query results remain supported
+  as a fallback.
+- Implemented a bounded k-way merge across known partition query streams,
+  ordered by `(created_at, event_id)`, without sorting all partition results.
+- Kept the replay ordering-scope lock set across the iterator call, so a single
+  replay batch still does not yield multiple events for the same ordered scope.
+- Updated `CosmosStrongOutboxStore.iter_failover_replay_candidates()` to prefer
+  client-level replay iterators when available, then claim records one at a
+  time through the existing rollback-safe CAS helper.
+- Extended the fake Cosmos query object with `by_page()` so tests exercise the
+  SDK paging shape rather than only plain async item iteration.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_cosmos_azure.py::test_azure_cosmos_streams_replay_candidates_without_materializing_partitions tests/test_failover_ordering_cleanup.py::test_cosmos_streaming_replay_uses_client_iterator -q`
+  -> failed because `AzureCosmosOutboxClient` had no replay iterator and the
+  store still called the client's list method.
+- Focused green run:
+  `uv run pytest tests/test_cosmos_azure.py::test_azure_cosmos_streams_replay_candidates_without_materializing_partitions tests/test_cosmos_azure.py::test_azure_cosmos_replay_stream_stops_before_later_pages tests/test_failover_ordering_cleanup.py::test_cosmos_streaming_replay_uses_client_iterator -q`
+  -> 3 passed.
+- Focused Cosmos/replay regression run:
+  `uv run pytest tests/test_cosmos_azure.py tests/test_failover_ordering_cleanup.py tests/test_adapters.py::test_provider_failover_replay_candidates_rolls_back_on_interruption -q`
+  -> 56 passed.
+- Focused lint/type gates:
+  `uv run ruff check durable_outbox/stores/cosmos.py durable_outbox/stores/cosmos_azure.py tests/test_cosmos_azure.py tests/test_failover_ordering_cleanup.py`
+  -> all checks passed;
+  `uv run ruff format --check durable_outbox/stores/cosmos.py durable_outbox/stores/cosmos_azure.py tests/test_cosmos_azure.py tests/test_failover_ordering_cleanup.py`
+  -> 4 files already formatted;
+  `uv run ty check` -> all checks passed.
+- Full package gates:
+  `uv run pytest -q` -> 301 passed, 7 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 59 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
+
+### Deferred
+
+- Live Azure Cosmos execution of SDK `by_page()` behavior and continuation
+  semantics remains covered by the opt-in live Cosmos gate, not by the default
+  local suite.

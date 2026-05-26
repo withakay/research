@@ -22,6 +22,7 @@ from durable_outbox.stores.blob_geo import (
 )
 from durable_outbox.stores.cosmos import (
     CosmosConfiguration,
+    CosmosStoredEvent,
     CosmosStrongOutboxStore,
     InMemoryCosmosOutboxClient,
 )
@@ -152,6 +153,33 @@ class StreamingCosmosStore(CosmosStrongOutboxStore):
         _ = failover_started_at, limit, exclude_event_ids
         self.legacy_calls += 1
         raise AssertionError("Cosmos streaming replay should not use list candidates")
+
+
+class ClientStreamingCosmosClient(InMemoryCosmosOutboxClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.stream_calls = 0
+
+    async def list_failover_replay_candidates(self, **kwargs: object) -> Any:
+        _ = kwargs
+        raise AssertionError("store should use Cosmos client streaming replay")
+
+    async def iter_failover_replay_candidates(
+        self,
+        *,
+        failover_started_at: datetime,
+        limit: int,
+        exclude_event_ids: Collection[str] = (),
+    ) -> AsyncIterator[CosmosStoredEvent]:
+        self.stream_calls += 1
+        records = await InMemoryCosmosOutboxClient.list_failover_replay_candidates(
+            self,
+            failover_started_at=failover_started_at,
+            limit=limit,
+            exclude_event_ids=exclude_event_ids,
+        )
+        for record in records:
+            yield record
 
 
 def test_failover_replayer_requires_rpo_zero_by_default() -> None:
@@ -436,6 +464,32 @@ async def test_sql_and_cosmos_failover_replay_expose_streaming_store(
     assert summary.errored == 0
     assert store.legacy_calls == 0
     assert len({event.event_id for event in sink.published}) == 3
+
+
+@pytest.mark.asyncio
+async def test_cosmos_streaming_replay_uses_client_iterator() -> None:
+    client = ClientStreamingCosmosClient()
+    store = CosmosStrongOutboxStore(
+        CosmosConfiguration(consistency="Strong", regions=("westus", "eastus")),
+        client=client,
+    )
+    sink = FakeSink()
+    for index in range(3):
+        await store.put(make_event(f"cosmos-client-streamed-replay-{index}"))
+
+    summary = await FailoverReplayer(
+        store,
+        sink,
+        replay_page_size=2,
+        max_concurrency=2,
+    ).replay_once(
+        failover_started_at=datetime.now(UTC),
+        limit=3,
+    )
+
+    assert summary.replayed == 3
+    assert summary.errored == 0
+    assert client.stream_calls == 1
 
 
 @pytest.mark.asyncio

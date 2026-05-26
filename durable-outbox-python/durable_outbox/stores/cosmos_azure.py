@@ -3,10 +3,11 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-from collections.abc import AsyncIterable, Collection, Mapping, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Collection, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
-from typing import Any, Protocol, cast
+from typing import Any, Protocol, cast, runtime_checkable
 
 from durable_outbox.core.claim import claim_order_key, is_claimable_record
 from durable_outbox.core.duplicates import raise_if_incompatible_duplicate
@@ -112,10 +113,24 @@ class CosmosContainerLike(Protocol):
     ) -> AsyncIterable[Mapping[str, object]]: ...
 
 
+@runtime_checkable
+class CosmosPagedQueryLike(Protocol):
+    def by_page(
+        self,
+        continuation_token: str | None = None,
+    ) -> AsyncIterator[AsyncIterator[Mapping[str, object]]]: ...
+
+
 class CosmosAccountClientLike(Protocol):
     async def read_account(self) -> Mapping[str, object]: ...
 
     async def close(self) -> None: ...
+
+
+@dataclass(slots=True)
+class _PartitionReplayStream:
+    items: AsyncIterator[Mapping[str, object]]
+    current: CosmosStoredEvent | None
 
 
 class AzureCosmosOutboxClient:
@@ -305,6 +320,27 @@ class AzureCosmosOutboxClient:
         exclude_event_ids: Collection[str] = (),
     ) -> Sequence[CosmosStoredEvent]:
         require_positive_limit(limit)
+        return tuple(
+            [
+                record
+                async for record in self.iter_failover_replay_candidates(
+                    failover_started_at=failover_started_at,
+                    limit=limit,
+                    exclude_event_ids=exclude_event_ids,
+                )
+            ]
+        )
+
+    async def iter_failover_replay_candidates(
+        self,
+        *,
+        failover_started_at: datetime,
+        limit: int,
+        exclude_event_ids: Collection[str] = (),
+        page_size: int = 100,
+    ) -> AsyncIterator[CosmosStoredEvent]:
+        require_positive_limit(limit)
+        require_positive_limit(page_size, field_name="page_size")
         parameters = [
             _query_parameter("@pending_status", OutboxStatus.PENDING.value),
             _query_parameter("@in_flight_status", OutboxStatus.IN_FLIGHT.value),
@@ -315,31 +351,40 @@ class AzureCosmosOutboxClient:
             ),
             _query_parameter("@exclude_event_ids", tuple(sorted(exclude_event_ids))),
         ]
-        records: list[CosmosStoredEvent] = []
+        yielded = 0
         locked_ordering_scopes: set[str] = set()
-        for record in sorted(
-            await self._query_known_partitions(
-                _REPLAY_CANDIDATES_QUERY,
+        streams = [
+            stream
+            async for stream in self._iter_replay_partition_streams(
                 parameters=parameters,
-                max_item_count=limit,
-            ),
-            key=lambda item: item.event.created_at,
-        ):
-            if len(records) >= limit:
-                break
-            if not _replay_candidate(
-                record,
+                page_size=min(limit, page_size),
                 failover_started_at=failover_started_at,
                 exclude_event_ids=exclude_event_ids,
-            ):
+                locked_ordering_scopes=locked_ordering_scopes,
+            )
+            if stream.current is not None
+        ]
+        while streams and yielded < limit:
+            stream = min(streams, key=_partition_stream_key)
+            current = stream.current
+            if current is None:
+                streams.remove(stream)
                 continue
-            scoped_key = ordering_scope(record.event)
-            if scoped_key is not None and scoped_key in locked_ordering_scopes:
-                continue
-            records.append(record)
+            yield current
+            yielded += 1
+            scoped_key = ordering_scope(current.event)
             if scoped_key is not None:
                 locked_ordering_scopes.add(scoped_key)
-        return tuple(records)
+            if yielded >= limit:
+                break
+            stream.current = await self._next_replay_candidate(
+                stream.items,
+                failover_started_at=failover_started_at,
+                exclude_event_ids=exclude_event_ids,
+                locked_ordering_scopes=locked_ordering_scopes,
+            )
+            if stream.current is None:
+                streams.remove(stream)
 
     async def list_cleanup_candidates(
         self,
@@ -603,6 +648,68 @@ class AzureCosmosOutboxClient:
                 records.append(record)
         return tuple(records)
 
+    async def _iter_replay_partition_streams(
+        self,
+        *,
+        parameters: list[dict[str, object]],
+        page_size: int,
+        failover_started_at: datetime,
+        exclude_event_ids: Collection[str],
+        locked_ordering_scopes: set[str],
+    ) -> AsyncIterator[_PartitionReplayStream]:
+        if self.use_partition_registry:
+            await self.load_registered_partition_keys()
+        for partition_key in sorted(self.known_partition_keys):
+            partition_parameters = [
+                *parameters,
+                _query_parameter("@partition_key", partition_key),
+            ]
+            items = self.container.query_items(
+                query=_REPLAY_CANDIDATES_QUERY,
+                parameters=partition_parameters,
+                partition_key=partition_key,
+                max_item_count=page_size,
+            )
+            iterator = _iter_query_items(items)
+            yield _PartitionReplayStream(
+                items=iterator,
+                current=await self._next_replay_candidate(
+                    iterator,
+                    failover_started_at=failover_started_at,
+                    exclude_event_ids=exclude_event_ids,
+                    locked_ordering_scopes=locked_ordering_scopes,
+                ),
+            )
+
+    async def _next_replay_candidate(
+        self,
+        items: AsyncIterator[Mapping[str, object]],
+        *,
+        failover_started_at: datetime,
+        exclude_event_ids: Collection[str],
+        locked_ordering_scopes: set[str],
+    ) -> CosmosStoredEvent | None:
+        async for item in items:
+            record = decode_cosmos_item(item)
+            self.partition_keys_by_event_id[record.event.event_id] = (
+                record.partition_key
+            )
+            await self._remember_partition_key_value(
+                record.partition_key,
+                persist=False,
+            )
+            if not _replay_candidate(
+                record,
+                failover_started_at=failover_started_at,
+                exclude_event_ids=exclude_event_ids,
+            ):
+                continue
+            scoped_key = ordering_scope(record.event)
+            if scoped_key is not None and scoped_key in locked_ordering_scopes:
+                continue
+            return record
+        return None
+
     async def get_cleanup_freeze_reason(self) -> str | None:
         try:
             item = await self.container.read_item(
@@ -835,6 +942,26 @@ def _partition_key_from_registry_item(item: Mapping[str, object]) -> str | None:
     if isinstance(partition_key, str):
         return partition_key
     raise RetryableStoreError("Cosmos partition registry item is missing partition_key")
+
+
+def _partition_stream_key(
+    stream: _PartitionReplayStream,
+) -> tuple[datetime, str]:
+    if stream.current is None:
+        return (datetime.max.replace(tzinfo=UTC), "")
+    return (stream.current.event.created_at, stream.current.event.event_id)
+
+
+async def _iter_query_items(
+    items: AsyncIterable[Mapping[str, object]],
+) -> AsyncIterator[Mapping[str, object]]:
+    if isinstance(items, CosmosPagedQueryLike):
+        async for page in items.by_page():
+            async for item in page:
+                yield item
+        return
+    async for item in items:
+        yield item
 
 
 def _partition_key_from_event_index_item(

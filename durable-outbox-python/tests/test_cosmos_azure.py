@@ -40,6 +40,7 @@ class FakeContainer:
         self.replaced: list[tuple[str, dict[str, object], dict[str, object]]] = []
         self.deleted: list[tuple[str, str]] = []
         self.upserted: list[dict[str, object]] = []
+        self.paged_queries: list[FakePagedQuery] = []
         self.next_etag = 1
         self.fail_replace = False
 
@@ -104,7 +105,7 @@ class FakeContainer:
         partition_key: str,
         max_item_count: int | None = None,
         **kwargs: object,
-    ) -> AsyncIterator[dict[str, object]]:
+    ) -> FakePagedQuery:
         self.queries.append(
             {
                 "query": query,
@@ -114,12 +115,40 @@ class FakeContainer:
                 "kwargs": kwargs,
             }
         )
+        paged_query = FakePagedQuery(
+            self.query_results.get(partition_key, []),
+            page_size=max_item_count or 1,
+        )
+        self.paged_queries.append(paged_query)
+        return paged_query
 
-        async def results() -> AsyncIterator[dict[str, object]]:
-            for item in self.query_results.get(partition_key, []):
-                yield dict(item)
 
-        return results()
+class FakePagedQuery:
+    def __init__(self, items: list[dict[str, object]], *, page_size: int = 1) -> None:
+        self.items = items
+        self.page_size = page_size
+        self.pages_yielded = 0
+
+    async def __aiter__(self) -> AsyncIterator[dict[str, object]]:
+        for item in self.items:
+            yield dict(item)
+
+    async def by_page(
+        self,
+        continuation_token: str | None = None,
+    ) -> AsyncIterator[AsyncIterator[dict[str, object]]]:
+        start = int(continuation_token or "0")
+        for index in range(start, len(self.items), self.page_size):
+            self.pages_yielded += 1
+            page = self.items[index : index + self.page_size]
+
+            async def page_items(
+                values: list[dict[str, object]] = page,
+            ) -> AsyncIterator[dict[str, object]]:
+                for item in values:
+                    yield dict(item)
+
+            yield page_items()
 
 
 class ResourceNotFoundError(Exception):
@@ -609,6 +638,107 @@ async def test_azure_cosmos_replay_uses_partition_scoped_queries() -> None:
     assert "@exclude_event_ids" in {
         item["name"] for item in container.queries[0]["parameters"]
     }
+
+
+@pytest.mark.asyncio
+async def test_azure_cosmos_streams_replay_candidates_without_materializing_partitions() -> (
+    None
+):
+    now = datetime(2026, 5, 26, 12, 0, tzinfo=UTC)
+    earlier = _record(
+        "cosmos-stream-earlier",
+        partition_key="durable.outbox.outputs#2",
+        created_at=now - timedelta(minutes=3),
+    )
+    later = _record(
+        "cosmos-stream-later",
+        partition_key="durable.outbox.outputs#1",
+        created_at=now - timedelta(minutes=2),
+    )
+    skipped_same_scope = _record(
+        "cosmos-stream-same-scope",
+        partition_key="durable.outbox.outputs#2",
+        created_at=now - timedelta(minutes=1),
+        ordering_key="customer-1",
+    )
+    first_same_scope = _record(
+        "cosmos-stream-first-scope",
+        partition_key="durable.outbox.outputs#1",
+        created_at=now - timedelta(minutes=4),
+        ordering_key="customer-1",
+    )
+    container = FakeContainer()
+    container.query_results = {
+        "durable.outbox.outputs#1": [
+            encode_cosmos_item(first_same_scope) | {"_etag": '"1"'},
+            encode_cosmos_item(later) | {"_etag": '"2"'},
+        ],
+        "durable.outbox.outputs#2": [
+            encode_cosmos_item(earlier) | {"_etag": '"3"'},
+            encode_cosmos_item(skipped_same_scope) | {"_etag": '"4"'},
+        ],
+    }
+    client = AzureCosmosOutboxClient(
+        container,
+        use_partition_registry=False,
+        known_partition_keys=("durable.outbox.outputs#1", "durable.outbox.outputs#2"),
+    )
+
+    records = [
+        record
+        async for record in client.iter_failover_replay_candidates(
+            failover_started_at=now,
+            limit=3,
+            exclude_event_ids={"already-seen"},
+        )
+    ]
+
+    assert [record.event.event_id for record in records] == [
+        "cosmos-stream-first-scope",
+        "cosmos-stream-earlier",
+        "cosmos-stream-later",
+    ]
+    assert [query["partition_key"] for query in container.queries] == [
+        "durable.outbox.outputs#1",
+        "durable.outbox.outputs#2",
+    ]
+    assert all(query["max_item_count"] == 3 for query in container.queries)
+
+
+@pytest.mark.asyncio
+async def test_azure_cosmos_replay_stream_stops_before_later_pages() -> None:
+    now = datetime(2026, 5, 26, 12, 0, tzinfo=UTC)
+    container = FakeContainer()
+    container.query_results = {
+        "durable.outbox.outputs#0": [
+            encode_cosmos_item(
+                _record(
+                    f"cosmos-stream-page-{index}",
+                    partition_key="durable.outbox.outputs#0",
+                    created_at=now + timedelta(seconds=index),
+                )
+            )
+            | {"_etag": f'"{index}"'}
+            for index in range(5)
+        ]
+    }
+    client = AzureCosmosOutboxClient(
+        container,
+        use_partition_registry=False,
+        known_partition_keys=("durable.outbox.outputs#0",),
+    )
+
+    records = [
+        record
+        async for record in client.iter_failover_replay_candidates(
+            failover_started_at=now,
+            limit=1,
+            page_size=1,
+        )
+    ]
+
+    assert [record.event.event_id for record in records] == ["cosmos-stream-page-0"]
+    assert container.paged_queries[0].pages_yielded == 1
 
 
 @pytest.mark.asyncio
