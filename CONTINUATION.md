@@ -8,9 +8,9 @@ Work in `/Users/jack/Code/withakay/research`. Stay inside `durable-outbox-python
 
 Current state:
 
-- Latest completed batch: Azure Cosmos partition-scoped candidate queries.
+- Latest completed batch: SQL pyodbc atomic claim mutation.
 - Latest full gates:
-  - `uv run pytest -q` -> `282 passed, 2 skipped`
+  - `uv run pytest -q` -> `284 passed, 2 skipped`
   - `uv run ruff check .` -> passed
   - `uv run ruff format --check .` -> passed
   - `uv run ty check` -> passed
@@ -33,9 +33,10 @@ Recent implementation notes:
 - `PyodbcSqlOutboxClient` now exists as a lazy optional SQL provider slice for
   persistence primitives, SQL durability checks, cleanup freeze state, strict
   row encode/decode, and bounded candidate queries for normal claim, failover
-  replay, and cleanup. It is intentionally not in the provider-contract matrix
-  yet because claim mutation still uses per-row optimistic `replace()` rather
-  than a single SQL `UPDATE ... OUTPUT` claim statement.
+  replay, and cleanup. Normal dispatcher claim now uses an optional SQL Server
+  `UPDATE ... OUTPUT INSERTED.*` atomic claim path when the pyodbc client is
+  wired. Replay claim remains candidate-plus-CAS so rollback semantics are not
+  weakened.
 - `FailoverReplayer` now fetches bounded replay pages, supports opt-in page publish concurrency, and passes already-seen event IDs to stores.
 - Store failover replay candidate methods accept `exclude_event_ids`.
 - SQL and Cosmos normal claim paths delegate to `claim_batch_pending()`.
@@ -55,7 +56,8 @@ Suggested next move:
 1. Confirm a clean worktree and rerun the remaining-ID script.
 2. Pick the next bounded item. Likely candidates are:
    - `A-P0-1`: add live-account integration tests for SQL/Cosmos provider clients when credentials/services are available.
-   - `P-P0-2`: SQL Server single-statement atomic claim mutation behind the existing pyodbc client.
+   - `P-P0-2`: live SQL Server integration and any provider-native replay
+     claim/rollback design after the pyodbc normal-claim atomic path.
    - `P-P0-5`: persisted Cosmos partition discovery/registry plus restart-safe
      event-id uniqueness, building on the current partition-scoped query seam.
    - `P-P1-1`: true async-iterator/cursor replay for providers. Current work is bounded page lists plus concurrent page publish, not full provider streaming.

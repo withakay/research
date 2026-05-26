@@ -143,6 +143,21 @@ class PyodbcSqlOutboxClient:
             claim_timeout,
         )
 
+    async def claim_batch_pending_atomic(
+        self,
+        *,
+        limit: int,
+        now: datetime,
+        claim_timeout: timedelta,
+    ) -> Sequence[SqlStoredEvent]:
+        require_positive_limit(limit)
+        return await asyncio.to_thread(
+            self._claim_batch_pending_atomic_sync,
+            limit,
+            now,
+            claim_timeout,
+        )
+
     async def list_failover_replay_candidates(
         self,
         *,
@@ -270,6 +285,28 @@ class PyodbcSqlOutboxClient:
                 now,
                 now - claim_timeout,
                 now - claim_timeout,
+            )
+            records = _fetch_records(cursor)
+            connection.commit()
+            return records
+        finally:
+            connection.close()
+
+    def _claim_batch_pending_atomic_sync(
+        self,
+        limit: int,
+        now: datetime,
+        claim_timeout: timedelta,
+    ) -> Sequence[SqlStoredEvent]:
+        connection = self.connection_factory()
+        try:
+            cursor = connection.cursor()
+            cursor.execute(
+                _atomic_claim_batch_pending_sql(self.table_name),
+                now - claim_timeout,
+                limit,
+                now,
+                now,
             )
             records = _fetch_records(cursor)
             connection.commit()
@@ -548,6 +585,54 @@ def _claim_batch_pending_sql(table_name: str) -> str:
         ") SELECT * FROM fresh_ordering_blockers "
         "UNION ALL SELECT * FROM claimable "
         "ORDER BY topic, ordering_key_hash, ordering_sequence, created_at_utc"
+    )
+
+
+def _atomic_claim_batch_pending_sql(table_name: str) -> str:
+    return (
+        "DECLARE @stale_claimed_at DATETIME2 = ?; "
+        "DECLARE @claim_limit INT = ?; "
+        "DECLARE @now DATETIME2 = ?; "
+        "DECLARE @claimed_at DATETIME2 = ?; "
+        "WITH claimable AS ("
+        "SELECT candidate.event_id, candidate.topic, candidate.ordering_key_hash, "
+        "candidate.ordering_sequence, candidate.created_at_utc, candidate.publishing_mode, "
+        "ROW_NUMBER() OVER (PARTITION BY "
+        "CASE WHEN candidate.publishing_mode != 'ORDERED' "
+        "OR candidate.ordering_key_hash IS NULL "
+        "THEN candidate.event_id ELSE candidate.topic + ':' + "
+        "candidate.ordering_key_hash END "
+        "ORDER BY candidate.topic, candidate.ordering_key_hash, "
+        "COALESCE(candidate.ordering_sequence, 0), "
+        "candidate.created_at_utc, candidate.event_id) AS ordering_rank "
+        f"FROM {table_name} AS candidate WITH (READPAST, UPDLOCK, ROWLOCK) "
+        "WHERE ((candidate.status = 'PENDING' AND "
+        "(candidate.next_attempt_utc IS NULL OR candidate.next_attempt_utc <= @now)) "
+        "OR (candidate.status = 'IN_FLIGHT' "
+        "AND candidate.claimed_at_utc <= @stale_claimed_at)) "
+        "AND NOT EXISTS ("
+        f"SELECT 1 FROM {table_name} AS fresh_ordering_blockers "
+        "WITH (READPAST, UPDLOCK, ROWLOCK) "
+        "WHERE fresh_ordering_blockers.status = 'IN_FLIGHT' "
+        "AND fresh_ordering_blockers.claimed_at_utc > @stale_claimed_at "
+        "AND fresh_ordering_blockers.publishing_mode = 'ORDERED' "
+        "AND candidate.publishing_mode = 'ORDERED' "
+        "AND fresh_ordering_blockers.ordering_key_hash IS NOT NULL "
+        "AND fresh_ordering_blockers.topic = candidate.topic "
+        "AND fresh_ordering_blockers.ordering_key_hash = "
+        "candidate.ordering_key_hash)"
+        "), selected_claims AS ("
+        "SELECT TOP (@claim_limit) event_id FROM claimable "
+        "WHERE publishing_mode != 'ORDERED' "
+        "OR ordering_key_hash IS NULL OR ordering_rank = 1 "
+        "ORDER BY topic, ordering_key_hash, COALESCE(ordering_sequence, 0), "
+        "created_at_utc, event_id"
+        ") "
+        "UPDATE target SET status = 'IN_FLIGHT', claim_id = NEWID(), "
+        "claimed_at_utc = @claimed_at, attempt_count = attempt_count + 1 "
+        "OUTPUT INSERTED.* "
+        f"FROM {table_name} AS target "
+        "INNER JOIN selected_claims ON selected_claims.event_id = target.event_id"
     )
 
 

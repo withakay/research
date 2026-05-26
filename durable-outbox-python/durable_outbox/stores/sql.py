@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from uuid import uuid4
 
 from durable_outbox.core.admin import AdminActionStatus
@@ -158,6 +158,17 @@ class SqlOutboxClient(Protocol):
     async def set_cleanup_freeze(self, reason: str) -> None: ...
 
     async def clear_cleanup_freeze(self) -> None: ...
+
+
+@runtime_checkable
+class SqlAtomicClaimClient(Protocol):
+    async def claim_batch_pending_atomic(
+        self,
+        *,
+        limit: int,
+        now: datetime,
+        claim_timeout: timedelta,
+    ) -> Sequence[SqlStoredEvent]: ...
 
 
 class InMemorySqlOutboxClient:
@@ -333,10 +344,19 @@ class _SqlOutboxStoreBase:
         )
 
     async def claim_batch(self, *, limit: int) -> list[ClaimedEvent]:
+        now = self.clock.utcnow()
+        if isinstance(self.client, SqlAtomicClaimClient):
+            return _claimed_events_from_atomic_records(
+                await self.client.claim_batch_pending_atomic(
+                    limit=limit,
+                    now=now,
+                    claim_timeout=self.claim_timeout,
+                )
+            )
         return await self._claim_from_candidates(
             await self.client.claim_batch_pending(
                 limit=limit,
-                now=self.clock.utcnow(),
+                now=now,
                 claim_timeout=self.claim_timeout,
             ),
             limit=limit,
@@ -621,6 +641,25 @@ class _SqlOutboxStoreBase:
             now=now,
             claim_timeout=self.claim_timeout,
         )
+
+
+def _claimed_events_from_atomic_records(
+    records: Sequence[SqlStoredEvent],
+) -> list[ClaimedEvent]:
+    claimed: list[ClaimedEvent] = []
+    for record in records:
+        if record.claim_token is None:
+            raise RetryableStoreError(
+                "atomic SQL claim returned a row without claim_id"
+            )
+        claimed.append(
+            ClaimedEvent(
+                event=record.event,
+                claim_token=record.claim_token,
+                attempt_count=record.attempt_count,
+            )
+        )
+    return claimed
 
 
 def _mark_sent_if_claimed(

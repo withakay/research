@@ -14,12 +14,17 @@ from durable_outbox.core.model import (
     PublishingMode,
     PublishResult,
 )
-from durable_outbox.stores.sql import SQL_TABLE_NAME, SqlStoredEvent
+from durable_outbox.stores.sql import (
+    SQL_TABLE_NAME,
+    AzureSqlSyncOutboxStore,
+    SqlStoredEvent,
+)
 from durable_outbox.stores.sql_pyodbc import (
     PyodbcSqlOutboxClient,
     decode_sql_record,
     encode_sql_record,
 )
+from durable_outbox.testing import FixedClock
 from durable_outbox.testing.provider_contract import make_event
 
 
@@ -258,6 +263,81 @@ async def test_pyodbc_cleanup_freeze_state_round_trips() -> None:
         in connection.statements[1][0]
     )
     assert "DELETE FROM [durable_outbox_cleanup_state]" in connection.statements[2][0]
+
+
+@pytest.mark.asyncio
+async def test_pyodbc_atomic_claim_updates_and_outputs_claimed_rows() -> None:
+    connection = FakeConnection()
+    now = datetime.now(UTC)
+    event = make_event("sql-atomic-claim")
+    expected_claim_id = "00000000-0000-4000-8000-000000000001"
+    row = encode_sql_record(
+        SqlStoredEvent(
+            event=event,
+            version=3,
+            status=OutboxStatus.IN_FLIGHT,
+            claim_token=expected_claim_id,
+            claimed_at=now,
+            attempt_count=1,
+        )
+    )
+    connection.rows.append(row)
+    client = PyodbcSqlOutboxClient(lambda: connection)
+
+    records = await client.claim_batch_pending_atomic(
+        limit=25,
+        now=now,
+        claim_timeout=timedelta(minutes=5),
+    )
+
+    sql, params = connection.statements[0]
+    assert "UPDATE target" in sql
+    assert "OUTPUT INSERTED.*" in sql
+    assert "NEWID()" in sql
+    assert "WITH (READPAST, UPDLOCK, ROWLOCK)" in sql
+    assert "fresh_ordering_blockers" in sql
+    assert "fresh_ordering_blockers.publishing_mode = 'ORDERED'" in sql
+    assert "candidate.publishing_mode = 'ORDERED'" in sql
+    assert "publishing_mode != 'ORDERED'" in sql
+    assert "COALESCE(candidate.ordering_sequence, 0)" in sql
+    assert "created_at_utc, candidate.event_id" in sql
+    assert "ROW_NUMBER() OVER" in sql
+    assert params == (now - timedelta(minutes=5), 25, now, now)
+    assert [record.event.event_id for record in records] == [event.event_id]
+    assert records[0].claim_token == expected_claim_id
+
+
+@pytest.mark.asyncio
+async def test_sql_store_uses_pyodbc_atomic_claim_without_replace() -> None:
+    connection = FakeConnection()
+    now = datetime.now(UTC)
+    event = make_event("sql-store-atomic-claim")
+    expected_claim_id = "00000000-0000-4000-8000-000000000002"
+    connection.rows.append(
+        encode_sql_record(
+            SqlStoredEvent(
+                event=event,
+                version=2,
+                status=OutboxStatus.IN_FLIGHT,
+                claim_token=expected_claim_id,
+                claimed_at=now,
+                attempt_count=1,
+            )
+        )
+    )
+    client = PyodbcSqlOutboxClient(lambda: connection)
+    store = AzureSqlSyncOutboxStore(
+        client=client,
+        clock=FixedClock(now),
+    )
+
+    claims = await store.claim_batch(limit=1)
+
+    assert [(claim.event.event_id, claim.claim_token) for claim in claims] == [
+        (event.event_id, expected_claim_id)
+    ]
+    assert len(connection.statements) == 1
+    assert "UPDATE target" in connection.statements[0][0]
 
 
 @pytest.mark.asyncio

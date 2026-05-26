@@ -2575,3 +2575,56 @@ verification evidence.
   a unique-key policy, secondary index item, or partition-key-aware public API.
 - Live Azure Cosmos integration tests remain open for SDK query shape, ETag
   conflict behavior, restart behavior, and partition completeness.
+
+## Batch 76: SQL pyodbc Atomic Claim Mutation
+
+### Findings Partially Accepted
+
+- **P-P0-2 / A-P0-1:** the pyodbc SQL client had bounded provider-side
+  candidate queries, but normal dispatcher claim still selected rows and then
+  mutated them one at a time through optimistic `replace()`. The review called
+  for the SQL Server `UPDATE ... OUTPUT` claim shape from the proposal.
+
+### Fixes Implemented
+
+- Added an optional `SqlAtomicClaimClient` runtime protocol with
+  `claim_batch_pending_atomic(limit, now, claim_timeout)`.
+- Updated SQL stores to use the atomic claim capability when the client exposes
+  it, while keeping the existing candidate-plus-CAS path for in-memory and other
+  clients.
+- Implemented `PyodbcSqlOutboxClient.claim_batch_pending_atomic()` with a
+  single SQL Server statement that:
+  - selects due `PENDING` and stale `IN_FLIGHT` rows using
+    `READPAST`, `UPDLOCK`, and `ROWLOCK`;
+  - excludes fresh ordered in-flight blockers;
+  - scopes ordering blockers and ranking to `publishing_mode = 'ORDERED'` so
+    unordered rows with incidental keys are not blocked;
+  - ranks ordered rows deterministically so one row per ordering key is claimed
+    per batch;
+  - updates selected rows to `IN_FLIGHT`, sets `claim_id = NEWID()`, increments
+    `attempt_count`, and returns `OUTPUT INSERTED.*`.
+- Kept failover replay claiming on the existing candidate-plus-CAS path because
+  its interruption rollback semantics still need a provider-native design.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_sql_pyodbc.py::test_pyodbc_atomic_claim_updates_and_outputs_claimed_rows tests/test_sql_pyodbc.py::test_sql_store_uses_pyodbc_atomic_claim_without_replace -q`
+  -> failed because the pyodbc client lacked the atomic claim method and the
+  store used the candidate path.
+- Focused green run:
+  `uv run ruff format durable_outbox/stores/sql.py durable_outbox/stores/sql_pyodbc.py tests/test_sql_pyodbc.py && uv run ruff check durable_outbox/stores/sql.py durable_outbox/stores/sql_pyodbc.py tests/test_sql_pyodbc.py && uv run ruff format --check durable_outbox/stores/sql.py durable_outbox/stores/sql_pyodbc.py tests/test_sql_pyodbc.py && uv run ty check && uv run pytest tests/test_sql_pyodbc.py tests/test_adapters.py::test_sql_and_cosmos_claim_reuses_claim_candidate_list -q`
+  -> 19 passed.
+- Full package gates:
+  `uv run pytest -q` -> 284 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 57 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
+
+### Deferred
+
+- Live SQL Server integration tests remain required for exact T-SQL behavior
+  across real rowversion, `NEWID()`, and lock-hint semantics.
+- Failover replay still needs a provider-native streaming or atomic replay
+  claim design that preserves rollback-on-interruption behavior.
