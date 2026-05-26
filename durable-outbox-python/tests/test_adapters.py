@@ -16,6 +16,7 @@ from durable_outbox.core.errors import (
 )
 from durable_outbox.core.model import OutboxStatus, PublishResult
 from durable_outbox.core.store import DurableOutboxStore
+from durable_outbox.stores import blob_geo
 from durable_outbox.stores.blob_geo import (
     MAX_BLOB_PAYLOAD_BYTES,
     BlobOutboxStore,
@@ -346,6 +347,24 @@ async def test_blob_put_rejects_incompatible_duplicate() -> None:
 
     with pytest.raises(DuplicateEventConflictError, match="topic"):
         await store.put(incompatible)
+
+
+@pytest.mark.asyncio
+async def test_blob_claim_batch_avoids_full_record_clone_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = BlobOutboxStore.for_testing()
+    event = make_event("blob-claim-no-clone")
+    await store.put(event)
+
+    def fail_clone(_record: StoredEvent) -> StoredEvent:
+        raise AssertionError("claim_batch should snapshot mutated fields only")
+
+    monkeypatch.setattr(blob_geo, "_clone_record", fail_clone)
+
+    claimed = await store.claim_batch(limit=1)
+
+    assert [claim.event.event_id for claim in claimed] == [event.event_id]
 
 
 @pytest.mark.asyncio

@@ -92,6 +92,15 @@ class BlobObject:
     etag: str
 
 
+@dataclass(frozen=True, slots=True)
+class _ClaimMutationSnapshot:
+    status: OutboxStatus
+    claim_token: str | None
+    claimed_at: datetime | None
+    attempt_count: int
+    etag: str | None
+
+
 class BlobClientProtocol(Protocol):
     async def get_blob(self, name: str) -> BlobObject | None: ...
 
@@ -338,7 +347,11 @@ class BlobOutboxStore:
             lease = await self._acquire_ordering_lease(record.event, now=now)
             if ordering_key is not None and lease is None:
                 continue
-            previous = _clone_record(record)
+            event_id = record.event.event_id
+            previous = _claim_mutation_snapshot(
+                record,
+                etag=self._record_etags.get(event_id),
+            )
             token = str(uuid4())
             record.status = OutboxStatus.IN_FLIGHT
             record.claim_token = token
@@ -347,7 +360,11 @@ class BlobOutboxStore:
             try:
                 await self._save_record(record)
             except BlobPreconditionFailedError:
-                self.records[record.event.event_id] = previous
+                _restore_claim_mutation(record, previous)
+                if previous.etag is None:
+                    self._record_etags.pop(event_id, None)
+                else:
+                    self._record_etags[event_id] = previous.etag
                 if lease is not None:
                     await self.ordering_lock_backend.release(lease)
                 continue
@@ -1122,6 +1139,30 @@ def _copy_blob(blob: BlobObject) -> BlobObject:
         metadata=dict(blob.metadata),
         etag=blob.etag,
     )
+
+
+def _claim_mutation_snapshot(
+    record: StoredEvent,
+    *,
+    etag: str | None,
+) -> _ClaimMutationSnapshot:
+    return _ClaimMutationSnapshot(
+        status=record.status,
+        claim_token=record.claim_token,
+        claimed_at=record.claimed_at,
+        attempt_count=record.attempt_count,
+        etag=etag,
+    )
+
+
+def _restore_claim_mutation(
+    record: StoredEvent,
+    snapshot: _ClaimMutationSnapshot,
+) -> None:
+    record.status = snapshot.status
+    record.claim_token = snapshot.claim_token
+    record.claimed_at = snapshot.claimed_at
+    record.attempt_count = snapshot.attempt_count
 
 
 def _is_prepared(record: StoredEvent | None) -> bool:

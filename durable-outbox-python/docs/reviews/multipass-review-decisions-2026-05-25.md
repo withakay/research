@@ -1893,3 +1893,48 @@ verification evidence.
   `uv run ruff format --check .` -> 53 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 62: Blob Claim Snapshot Rollback
+
+### Findings Accepted
+
+- **P-P2-3:** `BlobOutboxStore.claim_batch` cloned each candidate record before
+  attempting its conditional save, even on the normal successful path where only
+  claim fields need rollback protection.
+
+### Fixes Implemented
+
+- Added a narrow `_ClaimMutationSnapshot` containing only the fields mutated
+  during Blob claiming: `status`, `claim_token`, `claimed_at`, `attempt_count`,
+  and the cached etag.
+- Replaced the speculative `_clone_record(record)` in `claim_batch` with the
+  small snapshot and restored only those fields plus etag on
+  `BlobPreconditionFailedError`.
+- Kept full-record cloning in other paths where records are copied across
+  region boundaries or restored after larger failover replay mutations.
+- Added a regression test that monkeypatches `_clone_record` to fail and proves
+  a successful Blob claim no longer depends on the full clone helper.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_adapters.py::test_blob_claim_batch_avoids_full_record_clone_on_success -q`
+  -> failed because `claim_batch` called `_clone_record(record)`.
+- Focused green run:
+  `uv run pytest tests/test_adapters.py::test_blob_claim_batch_avoids_full_record_clone_on_success -q`
+  -> 1 passed.
+- Focused adapter/provider run:
+  `uv run pytest tests/test_adapters.py::test_blob_claim_batch_avoids_full_record_clone_on_success tests/test_adapters.py::test_builtin_adapters_pass_reusable_provider_contract tests/test_failover_ordering_cleanup.py -q`
+  -> 28 passed.
+- Focused lint/type/format:
+  `uv run ruff check durable_outbox/stores/blob_geo.py tests/test_adapters.py`
+  -> all checks passed;
+  `uv run ruff format --check durable_outbox/stores/blob_geo.py tests/test_adapters.py`
+  -> 2 files already formatted;
+  `uv run ty check` -> all checks passed.
+- Full package gates:
+  `uv run pytest -q` -> 226 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 53 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
