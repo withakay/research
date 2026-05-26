@@ -2184,6 +2184,58 @@ verification evidence.
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
 
+## Batch 72: SQL pyodbc Provider Slice
+
+### Findings Partially Accepted
+
+- **A-P0-1:** SQL still had no importable pyodbc-backed provider module. The
+  review calls for full SQL Server semantics including atomic claim and replay
+  queries; this batch implements the first honest production-client slice
+  without claiming provider-contract completeness.
+
+### Fixes Implemented
+
+- Added `durable_outbox.stores.sql_pyodbc.PyodbcSqlOutboxClient` with lazy
+  optional `pyodbc` import and an actionable `durable-outbox[sql]` error when
+  the extra is missing.
+- Added `PyodbcSqlConnectionSettings`, strict table-name validation, and lazy
+  store-package exports for `PyodbcSqlOutboxClient` and its settings dataclass.
+- Added SQL row encode/decode helpers for `SqlStoredEvent` values, including
+  event envelope fields, headers, payload bytes, status fields, publish result
+  fields, error fields, and row-version decoding.
+- Implemented parameterized pyodbc-backed `get`, `upsert_new`, `replace`,
+  `delete`, cleanup-freeze state methods, `sp_wait_for_database_copy_sync`, and
+  synchronized-secondary count checks.
+- Kept `claim_batch_pending`, `list_failover_replay_candidates`, and
+  `list_cleanup_candidates` explicitly unsupported in this client for now.
+  Those methods need the SQL Server atomic query work tracked by **P-P0-2** and
+  **P-P1-1** before the pyodbc client should be added to the provider-contract
+  matrix.
+- Documented the SQL provider scope and its current limitations in
+  `docs/providers.md`.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_sql_pyodbc.py -q`
+  -> failed at collection because `durable_outbox.stores.sql_pyodbc` did not
+  exist.
+- Focused green run:
+  `uv run pytest tests/test_sql_pyodbc.py -q`
+  -> 11 passed.
+- Export/lint/type gates:
+  `uv run pytest tests/test_sql_pyodbc.py tests/test_adapters.py::test_store_package_exports_are_importable -q`
+  -> 12 passed;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 55 files already formatted;
+  `uv run ty check` -> all checks passed.
+- Full package gates:
+  `uv run pytest -q` -> 265 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 55 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
+
 ## Batch 70: Failover Replay Paging And Page Concurrency
 
 ### Findings Partially Accepted

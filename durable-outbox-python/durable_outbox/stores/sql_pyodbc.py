@@ -1,0 +1,633 @@
+from __future__ import annotations
+
+# ruff: noqa: S608
+import asyncio
+import base64
+import json
+import re
+from collections.abc import Callable, Collection, Mapping, Sequence
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from importlib import import_module
+from typing import TYPE_CHECKING, Any, Protocol, Self, cast
+
+from durable_outbox.core.errors import (
+    ClaimConflictError,
+    ConfigurationError,
+    RetryableStoreError,
+)
+from durable_outbox.core.model import OutboxEvent, OutboxStatus, PublishingMode
+from durable_outbox.core.validation import require_positive_limit
+from durable_outbox.stores.sql import (
+    SQL_TABLE_NAME,
+    SqlStoredEvent,
+)
+
+if TYPE_CHECKING:
+    from durable_outbox.core.model import PublishResult
+
+_SQL_EXTRA_MESSAGE = "SQL support requires the sql extra: install durable-outbox[sql]"
+_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_CLEANUP_FREEZE_KEY = "cleanup-freeze"
+
+
+class PyodbcCursorLike(Protocol):
+    rowcount: int
+
+    def execute(self, sql: str, *params: object) -> Self: ...
+
+    def fetchone(self) -> object | None: ...
+
+
+class PyodbcConnectionLike(Protocol):
+    def cursor(self) -> PyodbcCursorLike: ...
+
+    def commit(self) -> None: ...
+
+    def close(self) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class PyodbcSqlConnectionSettings:
+    connection_string: str
+    table_name: str = SQL_TABLE_NAME
+    cleanup_state_table_name: str = "durable_outbox_cleanup_state"
+    connect_timeout_seconds: int = 30
+
+
+class PyodbcSqlOutboxClient:
+    """pyodbc-backed SQL client for persistence and RPO checks.
+
+    Claim and replay candidate queries intentionally remain out of this first
+    adapter slice; they require SQL Server-specific atomic UPDATE/OUTPUT query
+    semantics before this client should be used as a full provider contract.
+    """
+
+    def __init__(
+        self,
+        connection_factory: Callable[[], PyodbcConnectionLike],
+        *,
+        table_name: str = SQL_TABLE_NAME,
+        cleanup_state_table_name: str = "durable_outbox_cleanup_state",
+        partner_server: str | None = None,
+        partner_database: str | None = None,
+    ) -> None:
+        self.connection_factory = connection_factory
+        self.table_name = _quote_identifier(table_name)
+        self.cleanup_state_table_name = _quote_identifier(cleanup_state_table_name)
+        self.partner_server = partner_server
+        self.partner_database = partner_database
+
+    @classmethod
+    def from_connection_string(
+        cls,
+        connection_string: str,
+        *,
+        table_name: str = SQL_TABLE_NAME,
+        cleanup_state_table_name: str = "durable_outbox_cleanup_state",
+        connect_timeout_seconds: int = 30,
+        partner_server: str | None = None,
+        partner_database: str | None = None,
+    ) -> PyodbcSqlOutboxClient:
+        module = _import_pyodbc()
+
+        def connect() -> PyodbcConnectionLike:
+            connection = module.connect(
+                connection_string,
+                timeout=connect_timeout_seconds,
+            )
+            return cast("PyodbcConnectionLike", connection)
+
+        return cls(
+            connect,
+            table_name=table_name,
+            cleanup_state_table_name=cleanup_state_table_name,
+            partner_server=partner_server,
+            partner_database=partner_database,
+        )
+
+    async def get(self, event_id: str) -> SqlStoredEvent | None:
+        return await asyncio.to_thread(self._get_sync, event_id)
+
+    async def upsert_new(self, record: SqlStoredEvent) -> SqlStoredEvent:
+        return await asyncio.to_thread(self._upsert_new_sync, record)
+
+    async def replace(
+        self,
+        record: SqlStoredEvent,
+        *,
+        expected_version: int,
+    ) -> SqlStoredEvent:
+        return await asyncio.to_thread(self._replace_sync, record, expected_version)
+
+    async def list_records(self) -> Sequence[SqlStoredEvent]:
+        raise ConfigurationError(
+            "PyodbcSqlOutboxClient does not support full-table list_records(); "
+            "use provider-specific query methods"
+        )
+
+    async def claim_batch_pending(
+        self,
+        *,
+        limit: int,
+        now: datetime,
+        claim_timeout: timedelta,
+    ) -> Sequence[SqlStoredEvent]:
+        _ = now, claim_timeout
+        require_positive_limit(limit)
+        raise ConfigurationError(
+            "PyodbcSqlOutboxClient claim_batch_pending requires the atomic "
+            "SQL claim-query implementation"
+        )
+
+    async def list_failover_replay_candidates(
+        self,
+        *,
+        failover_started_at: datetime,
+        limit: int,
+        exclude_event_ids: Collection[str] = (),
+    ) -> Sequence[SqlStoredEvent]:
+        _ = failover_started_at, exclude_event_ids
+        require_positive_limit(limit)
+        raise ConfigurationError(
+            "PyodbcSqlOutboxClient list_failover_replay_candidates requires the "
+            "SQL replay-query implementation"
+        )
+
+    async def list_cleanup_candidates(
+        self,
+        *,
+        now: datetime,
+        safety_margin: timedelta,
+        limit: int | None = None,
+    ) -> Sequence[SqlStoredEvent]:
+        _ = now, safety_margin, limit
+        raise ConfigurationError(
+            "PyodbcSqlOutboxClient list_cleanup_candidates requires the SQL "
+            "cleanup-query implementation"
+        )
+
+    async def delete(self, event_id: str) -> None:
+        await asyncio.to_thread(self._delete_sync, event_id)
+
+    async def wait_for_database_copy_sync(self) -> None:
+        await asyncio.to_thread(self._wait_for_database_copy_sync)
+
+    async def synchronized_secondary_count(self) -> int:
+        return await asyncio.to_thread(self._synchronized_secondary_count)
+
+    async def get_cleanup_freeze_reason(self) -> str | None:
+        return await asyncio.to_thread(self._get_cleanup_freeze_reason)
+
+    async def set_cleanup_freeze(self, reason: str) -> None:
+        await asyncio.to_thread(self._set_cleanup_freeze, reason)
+
+    async def clear_cleanup_freeze(self) -> None:
+        await asyncio.to_thread(self._clear_cleanup_freeze)
+
+    def _get_sync(self, event_id: str) -> SqlStoredEvent | None:
+        connection = self.connection_factory()
+        try:
+            cursor = connection.cursor()
+            cursor.execute(
+                f"SELECT TOP (1) * FROM {self.table_name} WHERE event_id = ?",
+                event_id,
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            return decode_sql_record(_row_mapping(row))
+        finally:
+            connection.close()
+
+    def _upsert_new_sync(self, record: SqlStoredEvent) -> SqlStoredEvent:
+        connection = self.connection_factory()
+        try:
+            cursor = connection.cursor()
+            values = encode_sql_record(record)
+            cursor.execute(
+                _insert_sql(self.table_name),
+                *(_insert_parameters(values)),
+            )
+            row = cursor.fetchone()
+            connection.commit()
+            if row is None:
+                return record
+            return decode_sql_record(_row_mapping(row))
+        finally:
+            connection.close()
+
+    def _replace_sync(
+        self,
+        record: SqlStoredEvent,
+        expected_version: int,
+    ) -> SqlStoredEvent:
+        connection = self.connection_factory()
+        try:
+            cursor = connection.cursor()
+            values = encode_sql_record(record)
+            cursor.execute(
+                _update_sql(self.table_name),
+                *(_update_parameters(values, expected_version=expected_version)),
+            )
+            row = cursor.fetchone()
+            if cursor.rowcount == 0 or row is None:
+                raise ClaimConflictError("record version precondition failed")
+            connection.commit()
+            return decode_sql_record(_row_mapping(row))
+        finally:
+            connection.close()
+
+    def _delete_sync(self, event_id: str) -> None:
+        connection = self.connection_factory()
+        try:
+            cursor = connection.cursor()
+            cursor.execute(
+                f"DELETE FROM {self.table_name} WHERE event_id = ?",
+                event_id,
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+    def _wait_for_database_copy_sync(self) -> None:
+        if self.partner_server is None or self.partner_database is None:
+            raise ConfigurationError(
+                "partner_server and partner_database are required for "
+                "sp_wait_for_database_copy_sync"
+            )
+        connection = self.connection_factory()
+        try:
+            cursor = connection.cursor()
+            cursor.execute(
+                "EXEC sys.sp_wait_for_database_copy_sync "
+                "@partner_server = ?, @partner_database = ?",
+                self.partner_server,
+                self.partner_database,
+            )
+            connection.commit()
+        except Exception as exc:
+            raise RetryableStoreError("database copy sync wait failed") from exc
+        finally:
+            connection.close()
+
+    def _synchronized_secondary_count(self) -> int:
+        connection = self.connection_factory()
+        try:
+            cursor = connection.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) AS synchronized_secondaries "
+                "FROM sys.dm_hadr_database_replica_states "
+                "WHERE is_local = 0 AND synchronization_state_desc = "
+                "'SYNCHRONIZED'"
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return 0
+            value = _row_mapping(row).get("synchronized_secondaries", 0)
+            if not isinstance(value, int):
+                raise RetryableStoreError("synchronized secondary count must be int")
+            return value
+        finally:
+            connection.close()
+
+    def _get_cleanup_freeze_reason(self) -> str | None:
+        connection = self.connection_factory()
+        try:
+            cursor = connection.cursor()
+            cursor.execute(
+                f"SELECT reason FROM {self.cleanup_state_table_name} "
+                "WHERE control_key = ?",
+                _CLEANUP_FREEZE_KEY,
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            value = _row_mapping(row).get("reason")
+            if value is None or isinstance(value, str):
+                return value
+            raise RetryableStoreError("cleanup freeze reason must be a string")
+        finally:
+            connection.close()
+
+    def _set_cleanup_freeze(self, reason: str) -> None:
+        connection = self.connection_factory()
+        try:
+            cursor = connection.cursor()
+            cursor.execute(
+                f"MERGE {self.cleanup_state_table_name} AS target "
+                "USING (SELECT ? AS control_key, ? AS reason) AS source "
+                "ON target.control_key = source.control_key "
+                "WHEN MATCHED THEN UPDATE SET reason = source.reason "
+                "WHEN NOT MATCHED THEN INSERT (control_key, reason) "
+                "VALUES (source.control_key, source.reason);",
+                _CLEANUP_FREEZE_KEY,
+                reason,
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+    def _clear_cleanup_freeze(self) -> None:
+        connection = self.connection_factory()
+        try:
+            cursor = connection.cursor()
+            cursor.execute(
+                f"DELETE FROM {self.cleanup_state_table_name} WHERE control_key = ?",
+                _CLEANUP_FREEZE_KEY,
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+
+def encode_sql_record(record: SqlStoredEvent) -> dict[str, object]:
+    event = record.event
+    publish_result = record.publish_result
+    return {
+        "event_id": event.event_id,
+        "status": record.status.value,
+        "topic": event.topic,
+        "kafka_key": event.key,
+        "headers_json": _encode_headers(event.headers),
+        "payload": event.payload,
+        "schema_id": event.schema_id,
+        "schema_version": event.schema_version,
+        "ordering_key": event.ordering_key,
+        "ordering_key_hash": _ordering_key_hash(event.ordering_key),
+        "ordering_sequence": event.ordering_sequence,
+        "publishing_mode": event.publishing_mode.value,
+        "created_at_utc": event.created_at,
+        "expires_at_utc": event.expires_at,
+        "accepted_at_utc": record.accepted_at,
+        "next_attempt_utc": record.next_attempt_at,
+        "attempt_count": record.attempt_count,
+        "claim_id": record.claim_token,
+        "claimed_at_utc": record.claimed_at,
+        "sent_at_utc": record.sent_at,
+        "kafka_partition": publish_result.partition if publish_result else None,
+        "kafka_offset": publish_result.offset if publish_result else None,
+        "published_at_utc": publish_result.published_at if publish_result else None,
+        "publish_metadata_json": (
+            json.dumps(dict(publish_result.metadata), sort_keys=True)
+            if publish_result
+            else None
+        ),
+        "failed_at_utc": record.failed_at,
+        "last_error_type": record.last_error_type,
+        "last_error": record.last_error,
+        "row_version": record.version,
+    }
+
+
+def decode_sql_record(row: Mapping[str, object]) -> SqlStoredEvent:
+    publish_result = _decode_publish_result(row)
+    event = OutboxEvent(
+        event_id=_required_str(row, "event_id"),
+        topic=_required_str(row, "topic"),
+        payload=_required_bytes(row, "payload"),
+        key=_optional_bytes(row, "kafka_key"),
+        headers=_decode_headers(_optional_str(row, "headers_json")),
+        created_at=_required_datetime(row, "created_at_utc"),
+        expires_at=_required_datetime(row, "expires_at_utc"),
+        ordering_key=_optional_str(row, "ordering_key"),
+        ordering_sequence=_optional_int(row, "ordering_sequence"),
+        publishing_mode=PublishingMode(
+            _optional_str(row, "publishing_mode") or "UNORDERED"
+        ),
+        schema_id=_optional_str(row, "schema_id"),
+        schema_version=_optional_str(row, "schema_version"),
+    )
+    return SqlStoredEvent(
+        event=event,
+        version=_version_value(row.get("row_version")),
+        status=OutboxStatus(_required_str(row, "status")),
+        accepted_at=_optional_datetime(row, "accepted_at_utc"),
+        attempt_count=_required_int(row, "attempt_count"),
+        claim_token=_optional_str(row, "claim_id"),
+        claimed_at=_optional_datetime(row, "claimed_at_utc"),
+        next_attempt_at=_optional_datetime(row, "next_attempt_utc"),
+        sent_at=_optional_datetime(row, "sent_at_utc"),
+        publish_result=publish_result,
+        failed_at=_optional_datetime(row, "failed_at_utc"),
+        last_error_type=_optional_str(row, "last_error_type"),
+        last_error=_optional_str(row, "last_error"),
+    )
+
+
+def _import_pyodbc() -> Any:
+    try:
+        module: Any = import_module("pyodbc")
+    except ModuleNotFoundError as exc:
+        raise ConfigurationError(_SQL_EXTRA_MESSAGE) from exc
+    return module
+
+
+def _quote_identifier(value: str) -> str:
+    if not _IDENTIFIER_PATTERN.fullmatch(value):
+        raise ConfigurationError(f"invalid SQL identifier: {value!r}")
+    return f"[{value}]"
+
+
+def _insert_sql(table_name: str) -> str:
+    return (
+        f"INSERT INTO {table_name} "
+        "(event_id, status, topic, kafka_key, headers_json, payload, schema_id, "
+        "schema_version, ordering_key_hash, ordering_sequence, created_at_utc, "
+        "expires_at_utc, next_attempt_utc, attempt_count, claimed_by, claim_id, "
+        "claimed_at_utc, sent_at_utc, kafka_partition, kafka_offset, failed_at_utc, "
+        "last_error_type, last_error) "
+        "OUTPUT INSERTED.* VALUES "
+        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+
+
+def _update_sql(table_name: str) -> str:
+    return (
+        f"UPDATE {table_name} SET status = ?, next_attempt_utc = ?, "
+        "attempt_count = ?, claim_id = ?, claimed_at_utc = ?, sent_at_utc = ?, "
+        "kafka_partition = ?, kafka_offset = ?, failed_at_utc = ?, "
+        "last_error_type = ?, last_error = ? OUTPUT INSERTED.* "
+        "WHERE event_id = ? AND row_version = ?"
+    )
+
+
+def _insert_parameters(values: Mapping[str, object]) -> tuple[object, ...]:
+    return (
+        values["event_id"],
+        values["status"],
+        values["topic"],
+        values["kafka_key"],
+        values["headers_json"],
+        values["payload"],
+        values["schema_id"],
+        values["schema_version"],
+        values["ordering_key_hash"],
+        values["ordering_sequence"],
+        values["created_at_utc"],
+        values["expires_at_utc"],
+        values["next_attempt_utc"],
+        values["attempt_count"],
+        values["claim_id"],
+        values["claimed_at_utc"],
+        values["sent_at_utc"],
+        values["kafka_partition"],
+        values["kafka_offset"],
+        values["failed_at_utc"],
+        values["last_error_type"],
+        values["last_error"],
+    )
+
+
+def _update_parameters(
+    values: Mapping[str, object],
+    *,
+    expected_version: int,
+) -> tuple[object, ...]:
+    return (
+        values["status"],
+        values["next_attempt_utc"],
+        values["attempt_count"],
+        values["claim_id"],
+        values["claimed_at_utc"],
+        values["sent_at_utc"],
+        values["kafka_partition"],
+        values["kafka_offset"],
+        values["failed_at_utc"],
+        values["last_error_type"],
+        values["last_error"],
+        values["event_id"],
+        expected_version,
+    )
+
+
+def _row_mapping(row: object) -> Mapping[str, object]:
+    if isinstance(row, Mapping):
+        return cast("Mapping[str, object]", row)
+    raise RetryableStoreError("pyodbc row mapping is required")
+
+
+def _encode_headers(headers: Mapping[str, bytes]) -> str:
+    values = {
+        name: base64.b64encode(value).decode("ascii")
+        for name, value in sorted(headers.items())
+    }
+    return json.dumps(values, sort_keys=True, separators=(",", ":"))
+
+
+def _decode_headers(value: str | None) -> dict[str, bytes]:
+    if value is None:
+        return {}
+    decoded = json.loads(value)
+    if not isinstance(decoded, dict):
+        raise RetryableStoreError("headers_json must decode to an object")
+    headers: dict[str, bytes] = {}
+    for name, header_value in decoded.items():
+        if not isinstance(name, str) or not isinstance(header_value, str):
+            raise RetryableStoreError("headers_json entries must be strings")
+        headers[name] = base64.b64decode(header_value.encode("ascii"))
+    return headers
+
+
+def _decode_publish_result(row: Mapping[str, object]) -> PublishResult | None:
+    published_at = _optional_datetime(row, "published_at_utc") or _optional_datetime(
+        row, "sent_at_utc"
+    )
+    if published_at is None:
+        return None
+    from durable_outbox.core.model import PublishResult
+
+    metadata_json = _optional_str(row, "publish_metadata_json")
+    metadata = _decode_str_mapping(metadata_json)
+    return PublishResult(
+        partition=_optional_int(row, "kafka_partition"),
+        offset=_optional_int(row, "kafka_offset"),
+        published_at=published_at,
+        metadata=metadata,
+    )
+
+
+def _decode_str_mapping(value: str | None) -> dict[str, str]:
+    if value is None:
+        return {}
+    decoded = json.loads(value)
+    if not isinstance(decoded, dict):
+        raise RetryableStoreError("publish metadata must decode to an object")
+    result: dict[str, str] = {}
+    for key, item in decoded.items():
+        if not isinstance(key, str) or not isinstance(item, str):
+            raise RetryableStoreError("publish metadata entries must be strings")
+        result[key] = item
+    return result
+
+
+def _ordering_key_hash(ordering_key: str | None) -> str | None:
+    if ordering_key is None:
+        return None
+    from hashlib import sha256
+
+    return sha256(ordering_key.encode("utf-8")).hexdigest()
+
+
+def _version_value(value: object) -> int:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, bytes):
+        return int.from_bytes(value, byteorder="big")
+    raise RetryableStoreError("row_version must be int or bytes")
+
+
+def _required_str(row: Mapping[str, object], field_name: str) -> str:
+    value = row.get(field_name)
+    if not isinstance(value, str):
+        raise RetryableStoreError(f"{field_name} must be a string")
+    return value
+
+
+def _optional_str(row: Mapping[str, object], field_name: str) -> str | None:
+    value = row.get(field_name)
+    if value is None or isinstance(value, str):
+        return value
+    raise RetryableStoreError(f"{field_name} must be a string")
+
+
+def _required_bytes(row: Mapping[str, object], field_name: str) -> bytes:
+    value = row.get(field_name)
+    if isinstance(value, bytes):
+        return value
+    raise RetryableStoreError(f"{field_name} must be bytes")
+
+
+def _optional_bytes(row: Mapping[str, object], field_name: str) -> bytes | None:
+    value = row.get(field_name)
+    if value is None or isinstance(value, bytes):
+        return value
+    raise RetryableStoreError(f"{field_name} must be bytes")
+
+
+def _required_datetime(row: Mapping[str, object], field_name: str) -> datetime:
+    value = row.get(field_name)
+    if isinstance(value, datetime):
+        return value
+    raise RetryableStoreError(f"{field_name} must be a datetime")
+
+
+def _optional_datetime(row: Mapping[str, object], field_name: str) -> datetime | None:
+    value = row.get(field_name)
+    if value is None or isinstance(value, datetime):
+        return value
+    raise RetryableStoreError(f"{field_name} must be a datetime")
+
+
+def _required_int(row: Mapping[str, object], field_name: str) -> int:
+    value = row.get(field_name)
+    if isinstance(value, int):
+        return value
+    raise RetryableStoreError(f"{field_name} must be an int")
+
+
+def _optional_int(row: Mapping[str, object], field_name: str) -> int | None:
+    value = row.get(field_name)
+    if value is None or isinstance(value, int):
+        return value
+    raise RetryableStoreError(f"{field_name} must be an int")

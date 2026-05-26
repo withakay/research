@@ -57,6 +57,15 @@ Cosmos RPO=0 requires strong consistency, more than one region, and single-write
 
 Azure SQL RPO=0 requires committing the outbox row and then completing `sp_wait_for_database_copy_sync` against the active secondary before returning success. SQL Server Always On RPO=0 requires synchronous commit with the required synchronized secondaries configured.
 
+`PyodbcSqlOutboxClient` provides the first production SQL client slice behind
+the `sql` optional extra. It covers lazy pyodbc import, row encode/decode,
+parameterized insert/update/delete/get primitives, cleanup freeze state, and
+the SQL durability checks used by `AzureSqlSyncOutboxStore` and
+`SqlAlwaysOnOutboxStore`. It is not yet a full provider-contract client:
+SQL-backed `claim_batch_pending`, failover replay candidate queries, and cleanup
+candidate queries still need provider-side atomic query implementations before
+the client should be used as the default production SQL provider.
+
 ## Kafka
 
 The Kafka sink enforces certified producer defaults such as `acks=all` and

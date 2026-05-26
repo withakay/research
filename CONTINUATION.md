@@ -8,21 +8,25 @@ Work in `/Users/jack/Code/withakay/research`. Stay inside `durable-outbox-python
 
 Current state:
 
-- Latest completed batch: SQL/Cosmos failover replay candidate seam.
+- Latest completed batch: SQL pyodbc provider slice.
 - Latest full gates:
-  - `uv run pytest -q` -> `254 passed, 2 skipped`
+  - `uv run pytest -q` -> `265 passed, 2 skipped`
   - `uv run ruff check .` -> passed
   - `uv run ruff format --check .` -> passed
   - `uv run ty check` -> passed
   - `uv build` -> passed
 - Most recent commits:
+  - `1ac5ed3 perf(durable-outbox): delegate replay candidate queries`
   - `06c369f perf(durable-outbox): page failover replay batches`
   - `053ca5d perf(durable-outbox): split blob payload and state writes`
   - `abf2108 perf(durable-outbox): delegate sql cosmos claim queries`
-  - `75a7f40 feat(durable-outbox): wire settings and trace propagation`
 
 Recent implementation notes:
 
+- `PyodbcSqlOutboxClient` now exists as a lazy optional SQL provider slice for
+  persistence primitives, SQL durability checks, cleanup freeze state, and
+  strict row encode/decode. It is intentionally not in the provider-contract
+  matrix yet because atomic SQL claim/replay queries are still open.
 - `FailoverReplayer` now fetches bounded replay pages, supports opt-in page publish concurrency, and passes already-seen event IDs to stores.
 - Store failover replay candidate methods accept `exclude_event_ids`.
 - SQL and Cosmos normal claim paths delegate to `claim_batch_pending()`.
@@ -41,7 +45,7 @@ Suggested next move:
 
 1. Confirm a clean worktree and rerun the remaining-ID script.
 2. Pick the next bounded item. Likely candidates are:
-   - `A-P0-1`: real SQL pyodbc and Azure Cosmos client modules, or a smaller production-client validation seam.
+   - `A-P0-1`: complete the real SQL pyodbc client query methods, or start the narrower Azure Cosmos client module slice.
    - `P-P0-2`: SQL Server atomic claim/replay queries behind the existing client seams.
    - `P-P0-5`: Cosmos partition-scoped claim/replay queries behind the existing client seams.
    - `P-P1-1`: true async-iterator/cursor replay for providers. Current work is bounded page lists plus concurrent page publish, not full provider streaming.

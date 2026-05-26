@@ -8,6 +8,8 @@ __all__ = [
     "CosmosStrongOutboxStore",
     "DualRegionBlobOutboxStore",
     "MemoryOutboxStore",
+    "PyodbcSqlConnectionSettings",
+    "PyodbcSqlOutboxClient",
     "SqlAlwaysOnOutboxStore",
 ]
 
@@ -41,6 +43,16 @@ def __getattr__(name: str) -> Any:
         from durable_outbox.stores.memory import MemoryOutboxStore
 
         return MemoryOutboxStore
+    if name in {"PyodbcSqlConnectionSettings", "PyodbcSqlOutboxClient"}:
+        from durable_outbox.stores.sql_pyodbc import (
+            PyodbcSqlConnectionSettings,
+            PyodbcSqlOutboxClient,
+        )
+
+        return {
+            "PyodbcSqlConnectionSettings": PyodbcSqlConnectionSettings,
+            "PyodbcSqlOutboxClient": PyodbcSqlOutboxClient,
+        }[name]
     if name in {"AzureSqlSyncOutboxStore", "SqlAlwaysOnOutboxStore"}:
         from durable_outbox.stores.sql import (
             AzureSqlSyncOutboxStore,
