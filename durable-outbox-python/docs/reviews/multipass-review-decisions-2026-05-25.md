@@ -3137,3 +3137,89 @@ verification evidence.
   metadata-only scan and split payload/state work keep that bounded enough for
   the current implementation, but live Azurite/Azure Blob replay certification
   remains part of the opt-in integration track.
+
+## Batch 87: Provider Completion Audit And Bounded Claims
+
+### Findings Accepted
+
+- **A-P0-1 / P-P0-2:** the pyodbc SQL client had real persistence and atomic
+  normal/replay claim paths, but `upsert_new()` still issued a plain
+  `INSERT ... OUTPUT INSERTED.*`. A concurrent producer that lost the initial
+  `get()` race could hit the SQL uniqueness boundary instead of receiving the
+  existing compatible event.
+- **A-P0-1:** the SQL store trusted the row returned by `upsert_new()`. If an
+  idempotent provider returned an existing row from a concurrent insert, the
+  store still needed to validate compatibility against the caller's event.
+- **P-P0-5:** Cosmos claim selection was partition-scoped, but the Azure client
+  consumed the full async query result for every known partition. Cosmos
+  `max_item_count` is a page-size hint, not a hard result cap.
+- **P-P1-1:** Aspire/Azurite coverage exercised normal Blob dispatch to a local
+  file and Kafka, but not failover replay of pending and previously sent Blob
+  events.
+
+### Fixes Implemented
+
+- Changed `PyodbcSqlOutboxClient.upsert_new()` to first select by `event_id`
+  under `UPDLOCK, HOLDLOCK`. Existing rows are returned without an insert;
+  missing rows are inserted on the same connection before commit.
+- Changed the SQL store put path to run duplicate compatibility validation after
+  `upsert_new()` returns, closing the concurrent insert-or-return-existing race.
+- Split Azure Cosmos known-partition candidate querying into an async iterator
+  and kept claim reads hard-bounded to at most `limit` records per partition
+  while preserving cross-partition fresh-ordering-blocker collection.
+- Added a fake paged-query assertion that Cosmos claim does not consume later
+  pages when `limit=1`.
+- Added an Aspire/Azurite integration test that writes one event that becomes
+  `SENT`, leaves another `PENDING`, and verifies `FailoverReplayer` publishes
+  both to `FileSink` through the Blob store.
+- Updated stale SQL and Cosmos provider docstrings so they no longer describe
+  already-implemented claim/replay features as future work.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_sql_pyodbc.py::test_pyodbc_upsert_new_returns_existing_duplicate_without_insert tests/test_sql_pyodbc.py::test_sql_store_validates_duplicate_returned_from_upsert_race tests/test_cosmos_azure.py::test_azure_cosmos_claim_stops_after_bounded_query_page -q`
+  -> failed because pyodbc inserted first, the SQL store did not validate the
+  upsert-returned duplicate, and Cosmos claim consumed more than one fake SDK
+  page.
+- Focused green run:
+  `uv run pytest tests/test_sql_pyodbc.py::test_pyodbc_upsert_new_inserts_encoded_record tests/test_sql_pyodbc.py::test_pyodbc_upsert_new_returns_existing_duplicate_without_insert tests/test_sql_pyodbc.py::test_sql_store_validates_duplicate_returned_from_upsert_race tests/test_cosmos_azure.py::test_azure_cosmos_claim_stops_after_bounded_query_page -q`
+  -> 4 passed.
+- Focused provider/replay regression run:
+  `uv run pytest tests/test_sql_pyodbc.py tests/test_cosmos_azure.py tests/test_failover_ordering_cleanup.py tests/integration/test_aspire_azurite_kafka.py -q`
+  -> 75 passed, 3 skipped.
+- Focused lint/type gates:
+  `uv run ruff check durable_outbox/stores/sql.py durable_outbox/stores/sql_pyodbc.py durable_outbox/stores/cosmos_azure.py tests/test_sql_pyodbc.py tests/test_cosmos_azure.py tests/integration/test_aspire_azurite_kafka.py`
+  -> all checks passed;
+  `uv run ty check`
+  -> all checks passed.
+- Full package gates:
+  `uv run pytest -q`
+  -> 305 passed, 8 skipped;
+  `uv run ruff check .`
+  -> all checks passed;
+  `uv run ruff format --check .`
+  -> 59 files already formatted;
+  `uv run ty check`
+  -> all checks passed;
+  `uv build`
+  -> source distribution and wheel built successfully.
+- Aspire run:
+  `ASPIRE_CONTAINER_RUNTIME=podman ./demos/scripts/run_aspire_azurite_kafka_demo.sh`
+  -> AppHost built and reported `resource_health.blobs=Healthy` and
+  `resource_health.kafka=Healthy`, but the
+  `durable-outbox-integration-tests` resource finished with exit code 1. The
+  wrapper log pointed at Aspire CLI log `cli_20260526T185048_740fd18b.log`;
+  that log shows repeated `rdkafka` broker-down messages before the test
+  resource starts, but does not include pytest stdout/stderr.
+
+### Deferred
+
+- Live SQL Server and Azure Cosmos certification still require external
+  provider credentials and remain opt-in.
+- Aspire still needs either richer resource-log capture in the demo script or
+  Kafka readiness/connection-string remediation before it can be counted as a
+  passing local Azurite/Kafka certification gate in this environment.
+- Blob replay streaming still materializes a refreshed provider snapshot before
+  yielding candidates; this is now documented as an optimization gap rather
+  than a core `FailoverReplayer` streaming defect.

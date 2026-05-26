@@ -128,9 +128,11 @@ class FakePagedQuery:
         self.items = items
         self.page_size = page_size
         self.pages_yielded = 0
+        self.items_yielded = 0
 
     async def __aiter__(self) -> AsyncIterator[dict[str, object]]:
         for item in self.items:
+            self.items_yielded += 1
             yield dict(item)
 
     async def by_page(
@@ -146,6 +148,7 @@ class FakePagedQuery:
                 values: list[dict[str, object]] = page,
             ) -> AsyncIterator[dict[str, object]]:
                 for item in values:
+                    self.items_yielded += 1
                     yield dict(item)
 
             yield page_items()
@@ -850,6 +853,45 @@ async def test_azure_cosmos_queries_load_registered_partitions_before_querying()
         "__control__",
         registered_partition,
     ]
+
+
+@pytest.mark.asyncio
+async def test_azure_cosmos_claim_stops_after_bounded_query_page() -> None:
+    now = datetime(2026, 5, 26, 12, 0, tzinfo=UTC)
+    partition_key = "durable.outbox.outputs#bounded"
+    first = _record(
+        "bounded-claim-first",
+        partition_key=partition_key,
+        created_at=now - timedelta(minutes=3),
+    )
+    second = _record(
+        "bounded-claim-second",
+        partition_key=partition_key,
+        created_at=now - timedelta(minutes=2),
+    )
+    container = FakeContainer()
+    container.query_results = {
+        partition_key: [
+            encode_cosmos_item(first) | {"_etag": '"1"'},
+            encode_cosmos_item(second) | {"_etag": '"2"'},
+        ],
+    }
+    client = AzureCosmosOutboxClient(
+        container,
+        use_partition_registry=False,
+        known_partition_keys=(partition_key,),
+    )
+
+    records = await client.claim_batch_pending(
+        limit=1,
+        now=now,
+        claim_timeout=timedelta(minutes=5),
+    )
+
+    assert [record.event.event_id for record in records] == ["bounded-claim-first"]
+    assert container.queries[0]["max_item_count"] == 1
+    assert container.paged_queries[0].pages_yielded == 1
+    assert container.paged_queries[0].items_yielded == 1
 
 
 def _record(

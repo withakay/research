@@ -8,18 +8,17 @@ Work in `/Users/jack/Code/withakay/research`. Stay inside `durable-outbox-python
 
 Current state:
 
-- Latest completed batch: Blob replay streaming store.
+- Latest completed batch: Provider completion audit and bounded claims.
 - Latest full gates:
-  - `uv run pytest -q` -> `302 passed, 7 skipped`
+  - `uv run pytest -q` -> `305 passed, 8 skipped`
   - `uv run ruff check .` -> passed
   - `uv run ruff format --check .` -> passed
   - `uv run ty check` -> passed
   - `uv build` -> passed
-- Most recent commits:
-  - `1ac5ed3 perf(durable-outbox): delegate replay candidate queries`
-  - `06c369f perf(durable-outbox): page failover replay batches`
-  - `053ca5d perf(durable-outbox): split blob payload and state writes`
-  - `abf2108 perf(durable-outbox): delegate sql cosmos claim queries`
+- Latest focused gates:
+  - `uv run pytest tests/test_sql_pyodbc.py tests/test_cosmos_azure.py tests/test_failover_ordering_cleanup.py tests/integration/test_aspire_azurite_kafka.py -q` -> `75 passed, 3 skipped`
+  - `uv run ruff check durable_outbox/stores/sql.py durable_outbox/stores/sql_pyodbc.py durable_outbox/stores/cosmos_azure.py tests/test_sql_pyodbc.py tests/test_cosmos_azure.py tests/integration/test_aspire_azurite_kafka.py` -> passed
+  - `uv run ty check` -> passed
 
 Recent implementation notes:
 
@@ -62,25 +61,36 @@ Recent implementation notes:
 - SQL and Cosmos failover replay paths delegate to `list_failover_replay_candidates()` instead of `list_records()`.
 - Blob records now use split storage for new writes: raw payload bytes in `payload_blob_name(event_id)` and mutable state JSON in `state_blob_name(event_id)`.
 - Decisions and verification are documented in `durable-outbox-python/docs/reviews/multipass-review-decisions-2026-05-25.md`.
+- Recent subagent review found and fixed two provider gaps: pyodbc
+  `upsert_new()` now uses `UPDLOCK, HOLDLOCK` insert-or-return-existing
+  semantics, and Azure Cosmos claim candidate reads are hard-bounded per
+  partition instead of consuming every SDK query page.
+- An Aspire/Azurite integration test now covers `FailoverReplayer` replaying
+  both `PENDING` and previously `SENT` Blob events to `FileSink`.
 
 Remaining direct review IDs:
 
 - `A-P0-1`
-- `P-P0-2`
-- `P-P0-5`
 - `P-P1-1`
 
 Suggested next move:
 
 1. Confirm a clean worktree and rerun the remaining-ID script.
 2. Pick the next bounded item. Likely candidates are:
-   - `A-P0-1`: run and expand live-account SQL/Cosmos integration tests when credentials/services are available.
-   - `P-P0-2`: live SQL Server integration for normal and replay atomic claim
-     SQL against real rowversion, `NEWID()`, and lock-hint behavior.
-   - `P-P0-5`: live Cosmos integration coverage for the partition registry,
-     event index, conditional commits, and repair behavior.
-   - `P-P1-1`: built-in stores now expose replay streaming; deeper backend
-     cursor work is optional SQL batch-token optimization plus live-service
-     certification.
-3. Treat `A-P0-1`, `P-P0-2`, and `P-P0-5` as larger provider-client/query-track work; use subagents before implementing.
+   - `A-P0-1`: run live-account SQL/Cosmos integration tests when credentials/services are available.
+   - `P-P1-1`: built-in stores now expose replay streaming; remaining work is
+     live-service certification plus optional deeper Blob provider streaming and
+     SQL batch-token cursor optimization.
+3. Treat remaining provider certification as evidence-gathering unless new
+   review identifies a concrete code gap.
 4. For every accepted finding: write or preserve red tests, implement, run focused gates, run full gates, update the decisions doc, then commit conventionally.
+
+Aspire note:
+
+- `ASPIRE_CONTAINER_RUNTIME=podman ./demos/scripts/run_aspire_azurite_kafka_demo.sh`
+  currently starts the AppHost and reports healthy Blob/Kafka resources, but the
+  Python integration resource exits 1. The latest wrapper log points at an
+  Aspire CLI log named `cli_20260526T185048_740fd18b.log`, which shows rdkafka
+  broker-down messages and does not include pytest stdout/stderr. Next useful
+  fix is to improve demo resource-log capture or remediate Kafka
+  readiness/connection-string handling.

@@ -136,10 +136,10 @@ class _PartitionReplayStream:
 class AzureCosmosOutboxClient:
     """Azure Cosmos point-operation client.
 
-    This slice deliberately supports point insert/read/replace/delete and
-    account validation, and bounded candidate queries over known partitions.
-    Durable partition discovery and a fully certified Cosmos provider matrix
-    remain explicit future work.
+    The client supports point insert/read/replace/delete, account validation,
+    persisted partition discovery, event-id indexing, bounded partition-scoped
+    candidate queries, and paged failover replay iteration. Live-provider
+    execution remains the certification boundary for exact Azure SDK behavior.
     """
 
     def __init__(
@@ -292,11 +292,15 @@ class AzureCosmosOutboxClient:
             ),
         ]
         for record in sorted(
-            await self._query_known_partitions(
-                _CLAIM_CANDIDATES_QUERY,
-                parameters=parameters,
-                max_item_count=limit,
-            ),
+            [
+                record
+                async for record in self._iter_known_partition_candidates(
+                    _CLAIM_CANDIDATES_QUERY,
+                    parameters=parameters,
+                    max_item_count=limit,
+                    max_records_per_partition=limit,
+                )
+            ],
             key=claim_order_key,
         ):
             if is_claimable_record(record, now=now, claim_timeout=claim_timeout):
@@ -310,6 +314,7 @@ class AzureCosmosOutboxClient:
                 claim_timeout=claim_timeout,
             ):
                 records.append(record)
+        records.sort(key=claim_order_key)
         return tuple(records)
 
     async def list_failover_replay_candidates(
@@ -622,7 +627,25 @@ class AzureCosmosOutboxClient:
         parameters: list[dict[str, object]],
         max_item_count: int | None,
     ) -> Sequence[CosmosStoredEvent]:
-        records: list[CosmosStoredEvent] = []
+        records = [
+            record
+            async for record in self._iter_known_partition_candidates(
+                query,
+                parameters=parameters,
+                max_item_count=max_item_count,
+                max_records_per_partition=None,
+            )
+        ]
+        return tuple(records)
+
+    async def _iter_known_partition_candidates(
+        self,
+        query: str,
+        *,
+        parameters: list[dict[str, object]],
+        max_item_count: int | None,
+        max_records_per_partition: int | None,
+    ) -> AsyncIterator[CosmosStoredEvent]:
         if self.use_partition_registry:
             await self.load_registered_partition_keys()
         for partition_key in sorted(self.known_partition_keys):
@@ -636,7 +659,16 @@ class AzureCosmosOutboxClient:
                 partition_key=partition_key,
                 max_item_count=max_item_count,
             )
-            async for item in items:
+            iterator = _iter_query_items(items)
+            yielded = 0
+            while (
+                max_records_per_partition is None or yielded < max_records_per_partition
+            ):
+                try:
+                    item = await anext(iterator)
+                except StopAsyncIteration:
+                    break
+                yielded += 1
                 record = decode_cosmos_item(item)
                 self.partition_keys_by_event_id[record.event.event_id] = (
                     record.partition_key
@@ -645,8 +677,7 @@ class AzureCosmosOutboxClient:
                     record.partition_key,
                     persist=False,
                 )
-                records.append(record)
-        return tuple(records)
+                yield record
 
     async def _iter_replay_partition_streams(
         self,

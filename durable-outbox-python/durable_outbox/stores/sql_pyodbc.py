@@ -60,10 +60,10 @@ class PyodbcSqlConnectionSettings:
 class PyodbcSqlOutboxClient:
     """pyodbc-backed SQL client for persistence and RPO checks.
 
-    Claim and replay candidate selection use provider-side bounded queries.
-    Claim mutation still happens through the store's per-row optimistic
-    ``replace()`` path; this is not yet a single-statement SQL
-    ``UPDATE ... OUTPUT`` claim implementation.
+    Normal dispatch claims and failover replay claims use SQL Server
+    ``UPDATE ... OUTPUT`` statements when this client is wired into the built-in
+    SQL stores. Bounded candidate query methods remain available for custom
+    store flows and tests.
     """
 
     def __init__(
@@ -244,6 +244,14 @@ class PyodbcSqlOutboxClient:
         connection = self.connection_factory()
         try:
             cursor = connection.cursor()
+            cursor.execute(
+                _select_for_upsert_sql(self.table_name),
+                record.event.event_id,
+            )
+            row = cursor.fetchone()
+            if row is not None:
+                connection.commit()
+                return decode_sql_record(_row_mapping(row))
             values = encode_sql_record(record)
             cursor.execute(
                 _insert_sql(self.table_name),
@@ -599,6 +607,13 @@ def _insert_sql(table_name: str) -> str:
         "OUTPUT INSERTED.* VALUES "
         "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, "
         "?, ?, ?, ?, ?, ?)"
+    )
+
+
+def _select_for_upsert_sql(table_name: str) -> str:
+    return (
+        f"SELECT TOP (1) * FROM {table_name} WITH (UPDLOCK, HOLDLOCK) "
+        "WHERE event_id = ?"
     )
 
 

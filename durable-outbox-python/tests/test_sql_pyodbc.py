@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
@@ -7,7 +8,11 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from durable_outbox.core import ConfigurationError
-from durable_outbox.core.errors import ClaimConflictError, RetryableStoreError
+from durable_outbox.core.errors import (
+    ClaimConflictError,
+    DuplicateEventConflictError,
+    RetryableStoreError,
+)
 from durable_outbox.core.model import (
     OutboxEvent,
     OutboxStatus,
@@ -120,6 +125,16 @@ class AtomicReplayClient(InMemorySqlOutboxClient):
         )
 
 
+class RaceInsertClient(InMemorySqlOutboxClient):
+    async def get(self, event_id: str) -> SqlStoredEvent | None:
+        _ = event_id
+        return None
+
+    async def upsert_new(self, record: SqlStoredEvent) -> SqlStoredEvent:
+        existing = make_event(record.event.event_id)
+        return SqlStoredEvent(event=existing, accepted_at=record.accepted_at, version=1)
+
+
 def test_sql_pyodbc_module_does_not_import_pyodbc_at_import_time() -> None:
     module = import_module("durable_outbox.stores.sql_pyodbc")
 
@@ -191,7 +206,7 @@ async def test_pyodbc_upsert_new_inserts_encoded_record() -> None:
     connection = FakeConnection()
     event = make_event("sql-insert")
     row = encode_sql_record(SqlStoredEvent(event=event, version=1))
-    connection.rows.append(row)
+    connection.rows.extend([None, row])
     client = PyodbcSqlOutboxClient(
         lambda: connection,
         table_name=SQL_TABLE_NAME,
@@ -200,14 +215,45 @@ async def test_pyodbc_upsert_new_inserts_encoded_record() -> None:
     inserted = await client.upsert_new(SqlStoredEvent(event=event))
 
     sql, params = connection.statements[0]
-    assert "INSERT INTO [durable_outbox_events]" in sql
-    assert "OUTPUT INSERTED.*" in sql
-    assert sql.count("?") == len(params)
-    assert event.event_id not in sql
-    assert params[0] == event.event_id
+    assert "WITH (UPDLOCK, HOLDLOCK)" in sql
+    insert_sql, insert_params = connection.statements[1]
+    assert "INSERT INTO [durable_outbox_events]" in insert_sql
+    assert "OUTPUT INSERTED.*" in insert_sql
+    assert insert_sql.count("?") == len(insert_params)
+    assert event.event_id not in insert_sql
+    assert params == (event.event_id,)
+    assert insert_params[0] == event.event_id
     assert inserted.version == 1
     assert connection.commits == 1
     assert connection.closed is True
+
+
+@pytest.mark.asyncio
+async def test_pyodbc_upsert_new_returns_existing_duplicate_without_insert() -> None:
+    connection = FakeConnection()
+    event = make_event("sql-existing")
+    connection.rows.append(encode_sql_record(SqlStoredEvent(event=event, version=7)))
+    client = PyodbcSqlOutboxClient(lambda: connection)
+
+    stored = await client.upsert_new(SqlStoredEvent(event=event))
+
+    assert stored.event == event
+    assert stored.version == 7
+    assert len(connection.statements) == 1
+    sql, params = connection.statements[0]
+    assert "WITH (UPDLOCK, HOLDLOCK)" in sql
+    assert "INSERT INTO" not in sql
+    assert params == (event.event_id,)
+    assert connection.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_sql_store_validates_duplicate_returned_from_upsert_race() -> None:
+    store = AzureSqlSyncOutboxStore(client=RaceInsertClient())
+    event = replace(make_event("sql-race-incompatible"), payload=b"incoming")
+
+    with pytest.raises(DuplicateEventConflictError):
+        await store.put(event)
 
 
 @pytest.mark.asyncio

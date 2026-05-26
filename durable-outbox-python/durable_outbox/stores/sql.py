@@ -353,6 +353,7 @@ class _SqlOutboxStoreBase:
             record = await self.client.upsert_new(record)
         else:
             raise_if_incompatible_duplicate(record.event, event)
+        raise_if_incompatible_duplicate(record.event, event)
         await self._after_put_acceptance_boundary()
         return AcceptedReceipt(
             event_id=event.event_id,
