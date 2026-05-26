@@ -121,20 +121,50 @@ class CountingCosmosClient(InMemoryCosmosOutboxClient):
     def __init__(self) -> None:
         super().__init__()
         self.list_records_calls = 0
+        self.claim_batch_pending_calls = 0
 
     async def list_records(self) -> Any:
         self.list_records_calls += 1
         return await super().list_records()
+
+    async def claim_batch_pending(
+        self,
+        *,
+        limit: int,
+        now: datetime,
+        claim_timeout: timedelta,
+    ) -> Any:
+        self.claim_batch_pending_calls += 1
+        return await super().claim_batch_pending(
+            limit=limit,
+            now=now,
+            claim_timeout=claim_timeout,
+        )
 
 
 class CountingSqlClient(InMemorySqlOutboxClient):
     def __init__(self) -> None:
         super().__init__()
         self.list_records_calls = 0
+        self.claim_batch_pending_calls = 0
 
     async def list_records(self) -> Any:
         self.list_records_calls += 1
         return await super().list_records()
+
+    async def claim_batch_pending(
+        self,
+        *,
+        limit: int,
+        now: datetime,
+        claim_timeout: timedelta,
+    ) -> Any:
+        self.claim_batch_pending_calls += 1
+        return await super().claim_batch_pending(
+            limit=limit,
+            now=now,
+            claim_timeout=claim_timeout,
+        )
 
 
 class FailingDeleteBlobClient(InMemoryBlobClient):
@@ -1750,7 +1780,8 @@ async def test_sql_and_cosmos_claim_reuses_claim_candidate_list(
     claimed = await store.claim_batch(limit=10)
 
     assert [claim.event.event_id for claim in claimed] == ["candidate-list-first"]
-    assert client(store).list_records_calls == 1
+    assert client(store).list_records_calls == 0
+    assert client(store).claim_batch_pending_calls == 1
 
 
 @pytest.mark.parametrize(

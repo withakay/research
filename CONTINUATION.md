@@ -8,25 +8,25 @@ Work in `/Users/jack/Code/withakay/research`. Stay inside `durable-outbox-python
 
 Current state:
 
-- Latest completed batch: A-P3-1, settings and trace propagation wiring.
-- Latest full gates for A-P3-1:
+- Latest completed batch: SQL/Cosmos claim query seam for P-P0-2/P-P0-5.
+- Latest full gates for this batch:
   - `uv run pytest -q` -> `248 passed, 2 skipped`
   - `uv run ruff check .` -> passed
   - `uv run ruff format --check .` -> passed
   - `uv run ty check` -> passed
   - `uv build` -> passed
 - Most recent commits:
+  - `75a7f40 feat(durable-outbox): wire settings and trace propagation`
   - `b6188f4 perf(durable-outbox): avoid blob content scans while claiming`
   - `4fb031e feat(durable-outbox): bound cleanup work per tick`
   - `4a52984 perf(durable-outbox): index in-flight ordering keys`
-  - `5a551b6 test(durable-outbox): capture ordering index expectations`
 
-A-P3-1 implementation notes:
+SQL/Cosmos claim query seam notes:
 
-- CleanupPolicy is no longer aspirational; it is consumed by `CleanupScheduler`.
-- `OutboxSettings.from_env()` loads `DURABLE_OUTBOX_*` host settings and `cleanup_policy()` builds the scheduler policy.
-- `TraceContext.traceparent()` encodes W3C traceparent values.
-- `KafkaSink` and `KafkaSink.from_config()` accept an optional tracer and inject traceparent when the event did not already provide one.
+- `SqlOutboxClient` and `CosmosOutboxClient` now expose `claim_batch_pending(limit, now, claim_timeout)`.
+- SQL/Cosmos stores call that seam instead of calling `list_records()` directly for claim candidate selection.
+- In-memory clients implement the seam over their dictionaries and include fresh ordered `IN_FLIGHT` blockers for ordering correctness.
+- This is not the real backend work: `P-P0-2` and `P-P0-5` remain partially open until pyodbc/Cosmos SDK clients implement indexed provider queries.
 - Decisions and verification are documented in `docs/reviews/multipass-review-decisions-2026-05-25.md`.
 
 Remaining direct review IDs:

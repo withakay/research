@@ -90,6 +90,14 @@ class CosmosOutboxClient(Protocol):
 
     async def list_records(self) -> Sequence[CosmosStoredEvent]: ...
 
+    async def claim_batch_pending(
+        self,
+        *,
+        limit: int,
+        now: datetime,
+        claim_timeout: timedelta,
+    ) -> Sequence[CosmosStoredEvent]: ...
+
     async def list_cleanup_candidates(
         self,
         *,
@@ -144,6 +152,27 @@ class InMemoryCosmosOutboxClient:
 
     async def list_records(self) -> Sequence[CosmosStoredEvent]:
         return tuple(_clone_record(record) for record in self.records.values())
+
+    async def claim_batch_pending(
+        self,
+        *,
+        limit: int,
+        now: datetime,
+        claim_timeout: timedelta,
+    ) -> Sequence[CosmosStoredEvent]:
+        require_positive_limit(limit)
+        records: list[CosmosStoredEvent] = []
+        claimable_seen = 0
+        for record in sorted(self.records.values(), key=claim_order_key):
+            clone = _clone_record(record)
+            if is_claimable_record(clone, now=now, claim_timeout=claim_timeout):
+                records.append(clone)
+                claimable_seen += 1
+            elif _fresh_ordering_blocker(clone, now=now, claim_timeout=claim_timeout):
+                records.append(clone)
+            if claimable_seen >= limit:
+                break
+        return tuple(records)
 
     async def list_cleanup_candidates(
         self,
@@ -262,8 +291,21 @@ class CosmosStrongOutboxStore:
 
     async def claim_batch(self, *, limit: int) -> list[ClaimedEvent]:
         return await self._claim_from_candidates(
-            await self._claim_ordered_records(),
+            await self.client.claim_batch_pending(
+                limit=limit,
+                now=self.clock.utcnow(),
+                claim_timeout=self.claim_timeout,
+            ),
             limit=limit,
+        )
+
+    async def _claim_ordered_records(self) -> list[CosmosStoredEvent]:
+        return list(
+            await self.client.claim_batch_pending(
+                limit=1000,
+                now=self.clock.utcnow(),
+                claim_timeout=self.claim_timeout,
+            )
         )
 
     async def _claim_from_candidates(
@@ -515,9 +557,6 @@ class CosmosStrongOutboxStore:
                 continue
         raise RetryableStoreError("record update lost too many version races")
 
-    async def _claim_ordered_records(self) -> list[CosmosStoredEvent]:
-        return sorted(await self.client.list_records(), key=claim_order_key)
-
     def _eligible_for_claim(self, record: CosmosStoredEvent, now: datetime) -> bool:
         return is_claimable_record(
             record,
@@ -540,6 +579,20 @@ def _hash(value: str) -> str:
 def _hash_bucket(value: str, *, buckets: int) -> int:
     digest = sha256(value.encode("utf-8")).digest()
     return int.from_bytes(digest[:8], "big") % buckets
+
+
+def _fresh_ordering_blocker(
+    record: CosmosStoredEvent,
+    *,
+    now: datetime,
+    claim_timeout: timedelta,
+) -> bool:
+    return (
+        ordering_scope(record.event) is not None
+        and record.status is OutboxStatus.IN_FLIGHT
+        and record.claimed_at is not None
+        and record.claimed_at + claim_timeout > now
+    )
 
 
 def _mark_sent_if_claimed(

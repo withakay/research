@@ -2183,3 +2183,45 @@ verification evidence.
   `uv run ruff format --check .` -> 53 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 68: SQL and Cosmos Claim Query Seam
+
+### Findings Partially Accepted
+
+- **P-P0-2 / P-P0-5:** SQL and Cosmos claim paths were still owned by the
+  store layer through `client.list_records()` followed by Python-side sorting
+  and per-record claim attempts. Real pyodbc/Cosmos SDK implementations remain
+  under **A-P0-1**, but the store contract first needs a provider-facing claim
+  seam that real clients can implement with indexed queries.
+
+### Fixes Implemented
+
+- Added `claim_batch_pending(limit, now, claim_timeout)` to the SQL and Cosmos
+  client protocols.
+- Changed `AzureSqlSyncOutboxStore`, `SqlAlwaysOnOutboxStore`, and
+  `CosmosStrongOutboxStore` claim paths to delegate candidate selection to the
+  client method instead of calling `list_records()` directly.
+- Implemented the method on the in-memory SQL and Cosmos clients as a
+  fake-friendly stand-in for future provider queries. The implementation returns
+  ordered claimable records plus fresh ordered `IN_FLIGHT` blockers needed for
+  ordering-key correctness.
+- Preserved the existing `_claim_from_candidates()` compare-and-swap flow so
+  shared-client single-winner behavior and conflict handling remain unchanged.
+- Kept **P-P0-2** and **P-P0-5** partially open for real backend clients:
+  pyodbc should implement this seam with SQL Server `READPAST`/`UPDLOCK`
+  semantics, and Azure Cosmos should implement it with partition-aware queries.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_adapters.py::test_sql_and_cosmos_claim_reuses_claim_candidate_list -q`
+  -> failed because both stores still called `list_records()`.
+- Focused green run:
+  `uv run pytest tests/test_adapters.py::test_sql_and_cosmos_claim_reuses_claim_candidate_list tests/test_adapters.py::test_cosmos_claim_is_single_winner_with_shared_client_snapshots tests/test_adapters.py::test_sql_claim_is_single_winner_with_shared_client_snapshots tests/test_adapters.py::test_builtin_adapters_pass_reusable_provider_contract -q`
+  -> 9 passed.
+- Full package gates:
+  `uv run pytest -q` -> 248 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 53 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
