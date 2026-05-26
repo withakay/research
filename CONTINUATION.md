@@ -8,9 +8,9 @@ Work in `/Users/jack/Code/withakay/research`. Stay inside `durable-outbox-python
 
 Current state:
 
-- Latest completed batch: Azure Cosmos paged replay streaming.
+- Latest completed batch: Blob replay streaming store.
 - Latest full gates:
-  - `uv run pytest -q` -> `301 passed, 7 skipped`
+  - `uv run pytest -q` -> `302 passed, 7 skipped`
   - `uv run ruff check .` -> passed
   - `uv run ruff format --check .` -> passed
   - `uv run ty check` -> passed
@@ -53,6 +53,7 @@ Recent implementation notes:
 - SQL and Cosmos stores now expose that streaming replay shape, so the replayer
   does not fall back to the legacy list-returning method for those built-in
   providers.
+- Blob and dual-region Blob stores now also expose that streaming replay shape.
 - `AzureCosmosOutboxClient` now exposes `iter_failover_replay_candidates()` and
   streams replay candidates from SDK query pages with a bounded cross-partition
   merge instead of materializing all known partition results before yielding.
@@ -78,8 +79,8 @@ Suggested next move:
      SQL against real rowversion, `NEWID()`, and lock-hint behavior.
    - `P-P0-5`: live Cosmos integration coverage for the partition registry,
      event index, conditional commits, and repair behavior.
-   - `P-P1-1`: deeper backend-native replay cursors are now mostly reduced to
-     optional SQL long-lived batch-token replay cursor work; Cosmos has a paged
-     SDK replay iterator but still needs live-service certification.
+   - `P-P1-1`: built-in stores now expose replay streaming; deeper backend
+     cursor work is optional SQL batch-token optimization plus live-service
+     certification.
 3. Treat `A-P0-1`, `P-P0-2`, and `P-P0-5` as larger provider-client/query-track work; use subagents before implementing.
 4. For every accepted finding: write or preserve red tests, implement, run focused gates, run full gates, update the decisions doc, then commit conventionally.

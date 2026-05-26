@@ -3085,3 +3085,55 @@ verification evidence.
 
 - The live replay certification assertions are present but were skipped locally
   because no SQL Server or Azure Cosmos credentials were configured.
+
+## Batch 86: Blob Replay Streaming Store
+
+### Findings Accepted
+
+- **P-P1-1:** SQL and Cosmos now exposed `iter_failover_replay_candidates()`,
+  but Blob and dual-region Blob still only exposed the list-returning replay
+  candidate method. `FailoverReplayer` therefore had to use the paged fallback
+  for Blob providers.
+
+### Fixes Implemented
+
+- Added `BlobOutboxStore.iter_failover_replay_candidates()`.
+- Added `DualRegionBlobOutboxStore.iter_failover_replay_candidates()` which
+  performs mirror/prepared reconciliation and delegates to the active region's
+  stream.
+- The Blob stream refreshes the provider snapshot once, claims and yields one
+  event at a time, preserves ordering-scope locks across the iterator call, and
+  restores the current record if a save fails before the claim is yielded.
+- Documented that all built-in Blob, SQL, and Cosmos store families now expose
+  the streaming replay shape.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_failover_ordering_cleanup.py::test_blob_failover_replay_exposes_streaming_store -q`
+  -> failed because Blob fell back to legacy `failover_replay_candidates()`.
+- Focused green run:
+  `uv run pytest tests/test_failover_ordering_cleanup.py::test_blob_failover_replay_exposes_streaming_store -q`
+  -> 1 passed.
+- Focused Blob/replay regression run:
+  `uv run pytest tests/test_failover_ordering_cleanup.py tests/test_adapters.py::test_provider_failover_replay_candidates_rolls_back_on_interruption -q`
+  -> 34 passed.
+- Focused lint/type gates:
+  `uv run ruff check durable_outbox/stores/blob_geo.py tests/test_failover_ordering_cleanup.py`
+  -> all checks passed;
+  `uv run ruff format --check durable_outbox/stores/blob_geo.py tests/test_failover_ordering_cleanup.py`
+  -> 2 files already formatted;
+  `uv run ty check` -> all checks passed.
+- Full package gates:
+  `uv run pytest -q` -> 302 passed, 7 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 59 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
+
+### Deferred
+
+- Blob streaming still relies on the provider snapshot refresh path. The earlier
+  metadata-only scan and split payload/state work keep that bounded enough for
+  the current implementation, but live Azurite/Azure Blob replay certification
+  remains part of the opt-in integration track.

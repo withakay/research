@@ -520,6 +520,61 @@ class BlobOutboxStore:
             raise
         return candidates
 
+    async def iter_failover_replay_candidates(
+        self,
+        *,
+        failover_started_at: datetime,
+        limit: int,
+    ) -> AsyncIterator[ClaimedEvent]:
+        require_positive_limit(limit)
+        await self._refresh_records()
+        yielded = 0
+        locked_ordering_scopes: set[str] = set()
+        for record in sorted(
+            self.records.values(), key=lambda item: item.event.created_at
+        ):
+            if yielded >= limit:
+                break
+            if not record.accepted:
+                continue
+            if record.status not in {
+                OutboxStatus.PENDING,
+                OutboxStatus.IN_FLIGHT,
+                OutboxStatus.SENT,
+            }:
+                continue
+            if record.event.expires_at < failover_started_at:
+                continue
+            scoped_key = ordering_scope(record.event)
+            if scoped_key is not None and scoped_key in locked_ordering_scopes:
+                continue
+            event_id = record.event.event_id
+            original = _clone_record(record)
+            token = str(uuid4())
+            source_status = record.status
+            record.status = OutboxStatus.IN_FLIGHT
+            record.claim_token = token
+            record.claimed_at = self.clock.utcnow()
+            record.attempt_count += 1
+            try:
+                await self._save_record(record)
+            except BlobPreconditionFailedError:
+                self.records[event_id] = original
+                continue
+            except BaseException:
+                self.records[event_id] = original
+                await self._save_record(original)
+                raise
+            if scoped_key is not None:
+                locked_ordering_scopes.add(scoped_key)
+            yielded += 1
+            yield ClaimedEvent(
+                event=record.event,
+                claim_token=token,
+                attempt_count=record.attempt_count,
+                source_status=source_status,
+            )
+
     async def freeze_cleanup(self, *, reason: str) -> None:
         await self.client.put_blob(
             cleanup_freeze_blob_name(self.environment),
@@ -1193,6 +1248,20 @@ class DualRegionBlobOutboxStore:
             limit=limit,
             exclude_event_ids=exclude_event_ids,
         )
+
+    async def iter_failover_replay_candidates(
+        self,
+        *,
+        failover_started_at: datetime,
+        limit: int,
+    ) -> AsyncIterator[ClaimedEvent]:
+        await self.reconcile_mirror_updates()
+        await self.reconcile_prepared()
+        async for claimed in self._active.iter_failover_replay_candidates(
+            failover_started_at=failover_started_at,
+            limit=limit,
+        ):
+            yield claimed
 
     async def freeze_cleanup(self, *, reason: str) -> None:
         self.cleanup_frozen = True
