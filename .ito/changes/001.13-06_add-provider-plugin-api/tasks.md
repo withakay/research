@@ -3,7 +3,7 @@
 - [x] 1.2 Add `available_stores()` and `available_sinks()` helpers.
 - [x] 1.3 Convert missing plugin, duplicate plugin, and invalid factory outcomes to `ConfigurationError`.
 - [x] 1.4 Export the plugin API from `durable_outbox` or document its submodule import path.
-- [ ] 1.5 Document plugin package authoring and configuration examples.
+- [x] 1.5 Document plugin package authoring and configuration examples.
 
 ## 2. Verification
 - [ ] 2.1 Add tests for successful store and sink plugin loading.
