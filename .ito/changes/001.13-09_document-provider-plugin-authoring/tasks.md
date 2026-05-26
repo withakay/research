@@ -30,7 +30,7 @@ ______________________________________________________________________
 - **Done When**: Tests fail before the guide exists and pass once the guide is complete.
 - **Requirements**: durable-outbox-plugin-authoring:plugin-authoring-guide, durable-outbox-plugin-authoring:plugin-installation-modes, durable-outbox-plugin-authoring:plugin-verification
 - **Updated At**: 2026-05-26
-- **Status**: [>] in-progress
+- **Status**: [x] complete
 
 ### Task 1.2: Write Plugin Authoring Guide
 
