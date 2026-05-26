@@ -2671,3 +2671,47 @@ verification evidence.
   the async iterator path reduces backend work in production.
 - SQL/Cosmos/Blob provider integration tests remain required to prove cursor
   behavior under real backends and concurrent replay workers.
+
+## Batch 78: Azure Cosmos Partition Registry
+
+### Findings Partially Accepted
+
+- **P-P0-5 / A-P0-1:** partition-scoped Cosmos queries were implemented over
+  configured or observed partition keys, but a fresh worker still had no
+  backend-backed way to discover partitions written by a previous process.
+
+### Fixes Implemented
+
+- Added a control-partition registry for `AzureCosmosOutboxClient` data
+  partitions.
+- Persisted observed partition keys with `upsert_item()` after point insert,
+  point get, replace, and explicit `add_known_partition_key()` calls.
+- Loaded registered partitions from the `__control__` partition before
+  claim/replay/cleanup candidate queries.
+- Kept data candidate queries partition-scoped; registry discovery itself is a
+  single control-partition query, not a cross-partition scan.
+- Left `add_known_partition_key_local()` available for tests or callers that
+  deliberately want process-local knowledge without writing the registry.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_cosmos_azure.py::test_azure_cosmos_insert_persists_partition_registry_item tests/test_cosmos_azure.py::test_azure_cosmos_queries_load_registered_partitions_before_querying -q`
+  -> failed because partition registry writes and loads did not exist.
+- Focused green run:
+  `uv run ruff format durable_outbox/stores/cosmos_azure.py tests/test_cosmos_azure.py && uv run ruff check durable_outbox/stores/cosmos_azure.py tests/test_cosmos_azure.py && uv run ruff format --check durable_outbox/stores/cosmos_azure.py tests/test_cosmos_azure.py && uv run ty check && uv run pytest tests/test_cosmos_azure.py -q`
+  -> 15 passed.
+- Full package gates:
+  `uv run pytest -q` -> 287 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 57 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
+
+### Deferred
+
+- Cosmos event-id uniqueness remains partition-local unless deployments provide
+  a unique-key policy, secondary index item, or partition-key-aware public API.
+- Live Azure Cosmos integration tests remain required to prove registry query
+  behavior, restart duplicate handling, ETag conflicts, and partition
+  completeness against the real SDK/service.

@@ -25,6 +25,8 @@ _AZURE_EXTRA_MESSAGE = (
 )
 _CONTROL_PARTITION_KEY = "__control__"
 _CLEANUP_FREEZE_ID = "cleanup-freeze"
+_PARTITION_REGISTRY_KIND = "partition_registry"
+_PARTITION_REGISTRY_ID_PREFIX = "partition#"
 _CLAIM_CANDIDATES_QUERY = """
 SELECT * FROM c
 WHERE c.pk = @partition_key
@@ -60,6 +62,12 @@ AND c.expires_at_epoch_ms >= @failover_started_at_epoch_ms
 AND NOT ARRAY_CONTAINS(@exclude_event_ids, c.event_id)
 ORDER BY c.created_at_epoch_ms
 """
+_PARTITION_REGISTRY_QUERY = """
+SELECT * FROM c
+WHERE c.pk = @partition_key
+AND c.kind = @kind
+ORDER BY c.partition_key
+"""
 
 
 def _query_parameter(name: str, value: object) -> dict[str, object]:
@@ -72,6 +80,8 @@ class CosmosContainerLike(Protocol):
     ) -> Mapping[str, object]: ...
 
     async def create_item(self, body: dict[str, object]) -> Mapping[str, object]: ...
+
+    async def upsert_item(self, body: dict[str, object]) -> Mapping[str, object]: ...
 
     async def replace_item(
         self,
@@ -115,11 +125,13 @@ class AzureCosmosOutboxClient:
         *,
         account_client: CosmosAccountClientLike | None = None,
         known_partition_keys: Collection[str] = (),
+        use_partition_registry: bool = True,
     ) -> None:
         self.container = container
         self.account_client = account_client
         self.partition_keys_by_event_id: dict[str, str] = {}
         self.known_partition_keys: set[str] = set(known_partition_keys)
+        self.use_partition_registry = use_partition_registry
 
     @classmethod
     def from_connection_string(
@@ -169,13 +181,13 @@ class AzureCosmosOutboxClient:
                 return None
             raise
         record = decode_cosmos_item(item)
-        self._remember_partition_key(record)
+        await self._remember_partition_key(record)
         return record
 
     async def insert(self, record: CosmosStoredEvent) -> CosmosStoredEvent:
         item = await self.container.create_item(encode_cosmos_item(record))
         stored = decode_cosmos_item(item)
-        self._remember_partition_key(stored)
+        await self._remember_partition_key(stored)
         return stored
 
     async def replace(
@@ -200,7 +212,7 @@ class AzureCosmosOutboxClient:
                 raise ClaimConflictError("record etag precondition failed") from exc
             raise
         stored = decode_cosmos_item(item)
-        self._remember_partition_key(stored)
+        await self._remember_partition_key(stored)
         return stored
 
     async def list_records(self) -> Sequence[CosmosStoredEvent]:
@@ -340,12 +352,60 @@ class AzureCosmosOutboxClient:
         ):
             self.known_partition_keys.discard(partition_key)
 
-    def add_known_partition_key(self, partition_key: str) -> None:
+    async def add_known_partition_key(self, partition_key: str) -> None:
+        await self._remember_partition_key_value(partition_key, persist=True)
+
+    def add_known_partition_key_local(self, partition_key: str) -> None:
         self.known_partition_keys.add(partition_key)
 
-    def _remember_partition_key(self, record: CosmosStoredEvent) -> None:
+    async def _remember_partition_key(self, record: CosmosStoredEvent) -> None:
         self.partition_keys_by_event_id[record.event.event_id] = record.partition_key
-        self.known_partition_keys.add(record.partition_key)
+        await self._remember_partition_key_value(record.partition_key, persist=True)
+
+    async def _remember_partition_key_value(
+        self,
+        partition_key: str,
+        *,
+        persist: bool,
+    ) -> None:
+        if partition_key in self.known_partition_keys:
+            return
+        self.known_partition_keys.add(partition_key)
+        if persist and self.use_partition_registry:
+            await self._persist_partition_key(partition_key)
+
+    async def _persist_partition_key(self, partition_key: str) -> None:
+        try:
+            await self.container.upsert_item(
+                {
+                    "id": f"{_PARTITION_REGISTRY_ID_PREFIX}{partition_key}",
+                    "pk": _CONTROL_PARTITION_KEY,
+                    "kind": _PARTITION_REGISTRY_KIND,
+                    "partition_key": partition_key,
+                }
+            )
+        except Exception as exc:
+            raise RetryableStoreError(
+                "Cosmos partition registry update failed"
+            ) from exc
+
+    async def load_registered_partition_keys(self) -> Sequence[str]:
+        records: list[str] = []
+        items = self.container.query_items(
+            query=_PARTITION_REGISTRY_QUERY,
+            parameters=[
+                _query_parameter("@kind", _PARTITION_REGISTRY_KIND),
+                _query_parameter("@partition_key", _CONTROL_PARTITION_KEY),
+            ],
+            partition_key=_CONTROL_PARTITION_KEY,
+        )
+        async for item in items:
+            partition_key = _partition_key_from_registry_item(item)
+            if partition_key is None:
+                continue
+            await self._remember_partition_key_value(partition_key, persist=False)
+            records.append(partition_key)
+        return tuple(records)
 
     async def _query_known_partitions(
         self,
@@ -355,6 +415,8 @@ class AzureCosmosOutboxClient:
         max_item_count: int | None,
     ) -> Sequence[CosmosStoredEvent]:
         records: list[CosmosStoredEvent] = []
+        if self.use_partition_registry:
+            await self.load_registered_partition_keys()
         for partition_key in sorted(self.known_partition_keys):
             partition_parameters = [
                 *parameters,
@@ -368,7 +430,13 @@ class AzureCosmosOutboxClient:
             )
             async for item in items:
                 record = decode_cosmos_item(item)
-                self._remember_partition_key(record)
+                self.partition_keys_by_event_id[record.event.event_id] = (
+                    record.partition_key
+                )
+                await self._remember_partition_key_value(
+                    record.partition_key,
+                    persist=False,
+                )
                 records.append(record)
         return tuple(records)
 
@@ -595,6 +663,15 @@ def _replay_candidate(
         }
         and record.event.expires_at >= failover_started_at
     )
+
+
+def _partition_key_from_registry_item(item: Mapping[str, object]) -> str | None:
+    if item.get("kind") != _PARTITION_REGISTRY_KIND:
+        return None
+    partition_key = item.get("partition_key")
+    if isinstance(partition_key, str):
+        return partition_key
+    raise RetryableStoreError("Cosmos partition registry item is missing partition_key")
 
 
 def _encode_bytes(value: bytes) -> str:

@@ -64,13 +64,16 @@ single `partition_key` to each Cosmos query and never enables cross-partition
 querying. Query methods still return candidates only; claim ownership remains in
 the store's `_etag` compare-and-swap `replace()` path.
 
-This is still not a full provider-contract client. Deployments must provide or
-discover a complete set of active partition keys across process restarts, and
-Cosmos `id` uniqueness is only partition-local unless the container is created
-with an appropriate unique-key/index strategy. Live Cosmos integration tests for
-SDK query behavior, partition completeness, restart duplicate handling, and ETag
-conflicts remain required before treating this adapter as certified provider
-complete.
+The client persists observed data partitions into a control-partition registry
+and loads that registry before candidate queries. Operators can also seed
+partitions explicitly with `add_known_partition_key()` for pre-created buckets or
+ordered-key partitions that have not yet been observed by the current process.
+
+This is still not a full provider-contract client. Cosmos `id` uniqueness is
+only partition-local unless the container is created with an appropriate
+unique-key/index strategy. Live Cosmos integration tests for SDK query behavior,
+registry completeness, restart duplicate handling, and ETag conflicts remain
+required before treating this adapter as certified provider complete.
 
 ## SQL
 

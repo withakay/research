@@ -38,6 +38,7 @@ class FakeContainer:
         self.created: list[dict[str, object]] = []
         self.replaced: list[tuple[str, dict[str, object], dict[str, object]]] = []
         self.deleted: list[tuple[str, str]] = []
+        self.upserted: list[dict[str, object]] = []
         self.next_etag = 1
         self.fail_replace = False
 
@@ -52,6 +53,15 @@ class FakeContainer:
         self.next_etag += 1
         self.items[(partition_key, item_id)] = stored
         self.created.append(body)
+        return dict(stored)
+
+    async def upsert_item(self, body: dict[str, object]) -> dict[str, object]:
+        partition_key = str(body["pk"])
+        item_id = str(body["id"])
+        stored = dict(body)
+        stored["_etag"] = '"registry"'
+        self.items[(partition_key, item_id)] = stored
+        self.upserted.append(body)
         return dict(stored)
 
     async def replace_item(
@@ -265,6 +275,28 @@ async def test_azure_cosmos_insert_get_replace_and_delete_use_partition_key() ->
 
 
 @pytest.mark.asyncio
+async def test_azure_cosmos_insert_persists_partition_registry_item() -> None:
+    container = FakeContainer()
+    client = AzureCosmosOutboxClient(container)
+
+    await client.insert(
+        CosmosStoredEvent(
+            event=make_event("cosmos-registry-insert"),
+            partition_key="durable.outbox.outputs#0",
+        )
+    )
+
+    assert container.upserted == [
+        {
+            "id": "partition#durable.outbox.outputs#0",
+            "pk": "__control__",
+            "kind": "partition_registry",
+            "partition_key": "durable.outbox.outputs#0",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_azure_cosmos_replace_conflict_maps_to_claim_conflict() -> None:
     container = FakeContainer()
     client = AzureCosmosOutboxClient(container)
@@ -354,6 +386,7 @@ async def test_azure_cosmos_claim_uses_partition_scoped_queries() -> None:
     }
     client = AzureCosmosOutboxClient(
         container,
+        use_partition_registry=False,
         known_partition_keys=("durable.outbox.outputs#1", "durable.outbox.outputs#0"),
     )
 
@@ -414,6 +447,7 @@ async def test_azure_cosmos_replay_uses_partition_scoped_queries() -> None:
     }
     client = AzureCosmosOutboxClient(
         container,
+        use_partition_registry=False,
         known_partition_keys=("durable.outbox.outputs#ordered",),
     )
 
@@ -455,6 +489,7 @@ async def test_azure_cosmos_cleanup_uses_partition_scoped_queries() -> None:
     }
     client = AzureCosmosOutboxClient(
         container,
+        use_partition_registry=False,
         known_partition_keys=("durable.outbox.outputs#0",),
     )
 
@@ -496,7 +531,49 @@ async def test_azure_cosmos_queries_return_empty_without_known_partitions() -> N
         )
         == ()
     )
-    assert container.queries == []
+    assert [query["partition_key"] for query in container.queries] == [
+        "__control__",
+        "__control__",
+        "__control__",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_azure_cosmos_queries_load_registered_partitions_before_querying() -> (
+    None
+):
+    now = datetime(2026, 5, 26, 12, 0, tzinfo=UTC)
+    registered_partition = "durable.outbox.outputs#registry"
+    claimable = _record(
+        "registered-claimable",
+        partition_key=registered_partition,
+        created_at=now - timedelta(minutes=3),
+    )
+    container = FakeContainer()
+    container.query_results = {
+        "__control__": [
+            {
+                "id": f"partition#{registered_partition}",
+                "pk": "__control__",
+                "kind": "partition_registry",
+                "partition_key": registered_partition,
+            }
+        ],
+        registered_partition: [encode_cosmos_item(claimable) | {"_etag": '"1"'}],
+    }
+    client = AzureCosmosOutboxClient(container)
+
+    records = await client.claim_batch_pending(
+        limit=1,
+        now=now,
+        claim_timeout=timedelta(minutes=5),
+    )
+
+    assert [record.event.event_id for record in records] == ["registered-claimable"]
+    assert [query["partition_key"] for query in container.queries] == [
+        "__control__",
+        registered_partition,
+    ]
 
 
 def _record(
