@@ -41,7 +41,7 @@ ______________________________________________________________________
 - **Done When**: Tests fail until Kafka, memory, Blob, and Cosmos provider packages exist and register plugins.
 - **Requirements**: durable-outbox-provider-packages:first-party-provider-package-matrix, durable-outbox-provider-packages:provider-package-plugin-registration
 - **Updated At**: 2026-05-26
-- **Status**: [>] in-progress
+- **Status**: [x] complete
 
 ______________________________________________________________________
 
