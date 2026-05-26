@@ -21,6 +21,7 @@ from durable_outbox.core.validation import require_positive_limit
 from durable_outbox.stores.sql import (
     SQL_REPLAY_INDEX_NAME,
     SQL_TABLE_NAME,
+    SqlReplayClaimedRecord,
     SqlStoredEvent,
 )
 
@@ -170,6 +171,25 @@ class PyodbcSqlOutboxClient:
             self._list_failover_replay_candidates_sync,
             failover_started_at,
             limit,
+            tuple(sorted(exclude_event_ids)),
+        )
+
+    async def claim_failover_replay_batch_atomic(
+        self,
+        *,
+        failover_started_at: datetime,
+        limit: int,
+        now: datetime,
+        claim_timeout: timedelta,
+        exclude_event_ids: set[str],
+    ) -> Sequence[SqlReplayClaimedRecord]:
+        require_positive_limit(limit)
+        return await asyncio.to_thread(
+            self._claim_failover_replay_batch_atomic_sync,
+            failover_started_at,
+            limit,
+            now,
+            claim_timeout,
             tuple(sorted(exclude_event_ids)),
         )
 
@@ -329,6 +349,35 @@ class PyodbcSqlOutboxClient:
             )
             cursor.execute(sql, failover_started_at, *params, limit)
             records = _fetch_records(cursor)
+            connection.commit()
+            return records
+        finally:
+            connection.close()
+
+    def _claim_failover_replay_batch_atomic_sync(
+        self,
+        failover_started_at: datetime,
+        limit: int,
+        now: datetime,
+        claim_timeout: timedelta,
+        exclude_event_ids: tuple[str, ...],
+    ) -> Sequence[SqlReplayClaimedRecord]:
+        connection = self.connection_factory()
+        try:
+            cursor = connection.cursor()
+            sql, params = _atomic_failover_replay_claim_sql(
+                self.table_name,
+                exclude_event_ids=exclude_event_ids,
+            )
+            cursor.execute(
+                sql,
+                failover_started_at,
+                now - claim_timeout,
+                *params,
+                limit,
+                now,
+            )
+            records = _fetch_replay_claimed_records(cursor)
             connection.commit()
             return records
         finally:
@@ -666,6 +715,56 @@ def _failover_replay_candidates_sql(
     )
 
 
+def _atomic_failover_replay_claim_sql(
+    table_name: str,
+    *,
+    exclude_event_ids: tuple[str, ...],
+) -> tuple[str, tuple[str, ...]]:
+    exclusion = ""
+    if exclude_event_ids:
+        placeholders = ", ".join("?" for _ in exclude_event_ids)
+        exclusion = f" AND candidate.event_id NOT IN ({placeholders})"
+    return (
+        "WITH replay_candidates AS ("
+        "SELECT candidate.event_id, candidate.topic, candidate.ordering_key_hash, "
+        "candidate.created_at_utc, "
+        "ROW_NUMBER() OVER ("
+        "PARTITION BY CASE WHEN candidate.ordering_key_hash IS NULL "
+        "THEN candidate.event_id ELSE candidate.topic + ':' + "
+        "candidate.ordering_key_hash END "
+        "ORDER BY candidate.created_at_utc, candidate.event_id) AS ordering_rank "
+        f"FROM {table_name} AS candidate "
+        f"WITH (READPAST, UPDLOCK, ROWLOCK, INDEX({SQL_REPLAY_INDEX_NAME})) "
+        "WHERE candidate.expires_at_utc >= ? "
+        "AND candidate.status IN ('PENDING', 'IN_FLIGHT', 'SENT') "
+        "AND NOT EXISTS ("
+        f"SELECT 1 FROM {table_name} AS fresh_ordering_blockers "
+        "WITH (READPAST, UPDLOCK, ROWLOCK) "
+        "WHERE fresh_ordering_blockers.status = 'IN_FLIGHT' "
+        "AND fresh_ordering_blockers.claimed_at_utc > ? "
+        "AND fresh_ordering_blockers.publishing_mode = 'ORDERED' "
+        "AND candidate.publishing_mode = 'ORDERED' "
+        "AND fresh_ordering_blockers.ordering_key_hash IS NOT NULL "
+        "AND fresh_ordering_blockers.event_id != candidate.event_id "
+        "AND fresh_ordering_blockers.topic = candidate.topic "
+        "AND fresh_ordering_blockers.ordering_key_hash = "
+        "candidate.ordering_key_hash) "
+        f"{exclusion}"
+        "), selected_replay_claims AS ("
+        "SELECT TOP (?) event_id FROM replay_candidates "
+        "WHERE ordering_key_hash IS NULL OR ordering_rank = 1 "
+        "ORDER BY created_at_utc, event_id"
+        ") "
+        "UPDATE target SET status = 'IN_FLIGHT', claim_id = NEWID(), "
+        "claimed_at_utc = ?, attempt_count = attempt_count + 1 "
+        "OUTPUT INSERTED.*, DELETED.status AS source_status "
+        f"FROM {table_name} AS target "
+        "INNER JOIN selected_replay_claims "
+        "ON selected_replay_claims.event_id = target.event_id",
+        exclude_event_ids,
+    )
+
+
 def _cleanup_candidates_sql(table_name: str, *, bounded: bool = False) -> str:
     top_clause = "TOP (?) " if bounded else ""
     return (
@@ -761,6 +860,24 @@ def _fetch_records(cursor: PyodbcCursorLike) -> tuple[SqlStoredEvent, ...]:
         if row is None:
             break
         records.append(decode_sql_record(_row_mapping(row)))
+    return tuple(records)
+
+
+def _fetch_replay_claimed_records(
+    cursor: PyodbcCursorLike,
+) -> tuple[SqlReplayClaimedRecord, ...]:
+    records: list[SqlReplayClaimedRecord] = []
+    while True:
+        row = cursor.fetchone()
+        if row is None:
+            break
+        values = _row_mapping(row)
+        records.append(
+            SqlReplayClaimedRecord(
+                record=decode_sql_record(values),
+                source_status=OutboxStatus(_required_str(values, "source_status")),
+            )
+        )
     return tuple(records)
 
 

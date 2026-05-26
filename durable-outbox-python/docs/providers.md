@@ -112,9 +112,10 @@ Normal dispatcher claims use a SQL Server single-statement
 capability. SQL Server generates `NEWID()` claim tokens inside the update,
 increments attempts, and returns already-claimed rows to the store, avoiding the
 older select-candidates-then-CAS loop for pyodbc clients. Replay claiming still
-uses candidate selection plus optimistic `replace()` so replay rollback can
-restore original state on interruption; a provider-native replay-claim/rollback
-cursor remains future work.
+uses a SQL Server `UPDATE ... OUTPUT` path when the pyodbc client is wired,
+returning the original source status alongside the claimed row so SENT replay
+warnings remain accurate. A longer-lived SQL replay cursor with explicit
+batch-token rollback remains a future optimization for very large replay runs.
 
 Live SQL certification tests are present but opt-in. Set
 `DURABLE_OUTBOX_SQL_LIVE=1` and `DURABLE_OUTBOX_SQL_CONNECTION_STRING` to run
@@ -135,11 +136,11 @@ cursor or stream claimed rows can additionally expose
 `iter_failover_replay_candidates(failover_started_at=..., limit=...)` as an async
 iterator. The replayer consumes that stream in bounded in-memory pages and uses
 the same concurrent publish path, avoiding repeated list/exclusion calls.
-The built-in SQL and Cosmos stores expose this streaming shape over their
-provider-side replay candidate seams, so `FailoverReplayer` can consume them
-without falling back to `failover_replay_candidates()`. Deeper backend-native
-replay cursors, such as a SQL batch-token rollback cursor or Cosmos
-continuation-token cursor, remain provider-specific optimizations.
+The built-in SQL and Cosmos stores expose this streaming shape. SQL uses its
+atomic replay-claim capability when the client provides one; otherwise SQL and
+Cosmos stream over their provider-side replay candidate seams. Deeper
+backend-native replay cursors, such as a SQL batch-token rollback cursor or
+Cosmos continuation-token cursor, remain provider-specific optimizations.
 
 ## Kafka
 

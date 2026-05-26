@@ -2923,3 +2923,63 @@ verification evidence.
 - Cosmos still needs a continuation-token-aware replay cursor if replay should
   stream directly from SDK pages without materializing partition results inside
   `AzureCosmosOutboxClient`.
+
+## Batch 83: SQL pyodbc Atomic Replay Claims
+
+### Findings Partially Accepted
+
+- **P-P0-2 / P-P1-1:** normal SQL dispatch claims used an atomic
+  `UPDATE ... OUTPUT` path, but failover replay still selected provider
+  candidates and then claimed each row through store-level optimistic
+  `replace()`. That left the SQL provider short of the review's provider-native
+  replay claim direction.
+
+### Fixes Implemented
+
+- Added `SqlReplayClaimedRecord`, carrying the claimed SQL row plus its original
+  `source_status`.
+- Added optional `SqlAtomicReplayClaimClient` detection in the SQL store base.
+- SQL `failover_replay_candidates()` and SQL streaming replay now use the
+  atomic replay capability when the client exposes it.
+- Added `PyodbcSqlOutboxClient.claim_failover_replay_batch_atomic()`.
+- The pyodbc SQL statement:
+  - selects replay-eligible `PENDING`, `IN_FLIGHT`, and `SENT` rows through the
+    replay index;
+  - preserves one row per ordering scope;
+  - skips ordered rows blocked by fresh in-flight rows in the same scope;
+  - updates selected rows to `IN_FLIGHT` with SQL Server `NEWID()` claim tokens;
+  - returns `OUTPUT INSERTED.*` plus `DELETED.status AS source_status`.
+- Preserved the non-pyodbc candidate-plus-CAS fallback for in-memory and custom
+  SQL clients that do not implement the atomic replay protocol.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_sql_pyodbc.py::test_pyodbc_replay_atomic_claim_outputs_source_status tests/test_sql_pyodbc.py::test_sql_store_streaming_replay_uses_atomic_replay_claim_client -q`
+  -> failed at collection because `SqlReplayClaimedRecord` and the atomic replay
+  method did not exist.
+- Focused green run:
+  `uv run pytest tests/test_sql_pyodbc.py::test_pyodbc_replay_atomic_claim_outputs_source_status tests/test_sql_pyodbc.py::test_sql_store_streaming_replay_uses_atomic_replay_claim_client tests/test_failover_ordering_cleanup.py::test_sql_and_cosmos_failover_replay_expose_streaming_store -q`
+  -> 4 passed.
+- Focused SQL/replay regression run:
+  `uv run pytest tests/test_sql_pyodbc.py tests/test_failover_ordering_cleanup.py tests/test_adapters.py::test_provider_failover_replay_candidates_rolls_back_on_interruption -q`
+  -> 52 passed.
+- Focused lint/type gates:
+  `uv run ruff check durable_outbox/stores/sql.py durable_outbox/stores/sql_pyodbc.py tests/test_sql_pyodbc.py tests/test_failover_ordering_cleanup.py`
+  -> all checks passed;
+  `uv run ruff format --check durable_outbox/stores/sql.py durable_outbox/stores/sql_pyodbc.py tests/test_sql_pyodbc.py tests/test_failover_ordering_cleanup.py`
+  -> 4 files already formatted;
+  `uv run ty check` -> all checks passed.
+- Full package gates:
+  `uv run pytest -q` -> 298 passed, 7 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 59 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
+
+### Deferred
+
+- Live SQL Server execution of the new replay `UPDATE ... OUTPUT` statement
+  remains covered by the opt-in live SQL gate, not by the default local suite.
+- A longer-lived SQL replay cursor with explicit backend batch-token rollback
+  remains a possible optimization for very large replay runs.

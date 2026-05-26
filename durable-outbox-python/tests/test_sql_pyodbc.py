@@ -17,6 +17,8 @@ from durable_outbox.core.model import (
 from durable_outbox.stores.sql import (
     SQL_TABLE_NAME,
     AzureSqlSyncOutboxStore,
+    InMemorySqlOutboxClient,
+    SqlReplayClaimedRecord,
     SqlStoredEvent,
 )
 from durable_outbox.stores.sql_pyodbc import (
@@ -29,6 +31,8 @@ from durable_outbox.testing.provider_contract import make_event
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+_ATOMIC_REPLAY_OWNER = "atomic-replay-owner"
 
 
 class FakeCursor:
@@ -75,6 +79,45 @@ class FakePyodbcRow:
 
     def __iter__(self) -> Iterator[object]:
         return iter(self.values)
+
+
+class AtomicReplayClient(InMemorySqlOutboxClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.atomic_replay_calls = 0
+
+    async def list_failover_replay_candidates(self, **kwargs: object) -> Any:
+        _ = kwargs
+        raise AssertionError("store should use SQL atomic replay claim")
+
+    async def claim_failover_replay_batch_atomic(
+        self,
+        *,
+        failover_started_at: datetime,
+        limit: int,
+        now: datetime,
+        claim_timeout: timedelta,
+        exclude_event_ids: set[str],
+    ) -> tuple[SqlReplayClaimedRecord, ...]:
+        _ = failover_started_at, limit, claim_timeout, exclude_event_ids
+        self.atomic_replay_calls += 1
+        event_id, record = next(iter(self.records.items()))
+        claimed = SqlStoredEvent(
+            event=record.event,
+            version=record.version + 1,
+            status=OutboxStatus.IN_FLIGHT,
+            accepted_at=record.accepted_at,
+            attempt_count=record.attempt_count + 1,
+            claim_token=_ATOMIC_REPLAY_OWNER,
+            claimed_at=now,
+        )
+        self.records[event_id] = claimed
+        return (
+            SqlReplayClaimedRecord(
+                record=claimed,
+                source_status=record.status,
+            ),
+        )
 
 
 def test_sql_pyodbc_module_does_not_import_pyodbc_at_import_time() -> None:
@@ -449,6 +492,63 @@ async def test_pyodbc_failover_replay_candidates_uses_replay_index_predicates() 
     assert first.event_id not in sql
     assert params == (failover_started_at, first.event_id, 10)
     assert [record.event.event_id for record in records] == [second.event_id]
+
+
+@pytest.mark.asyncio
+async def test_pyodbc_replay_atomic_claim_outputs_source_status() -> None:
+    connection = FakeConnection()
+    event = make_event("sql-replay-atomic")
+    row = encode_sql_record(
+        SqlStoredEvent(
+            event=event,
+            version=3,
+            status=OutboxStatus.IN_FLIGHT,
+            attempt_count=2,
+            claim_token=_ATOMIC_REPLAY_OWNER,
+            claimed_at=datetime(2026, 5, 26, 12, 0, tzinfo=UTC),
+        )
+    )
+    connection.rows.append(row | {"source_status": OutboxStatus.SENT.value})
+    client = PyodbcSqlOutboxClient(lambda: connection)
+
+    records = await client.claim_failover_replay_batch_atomic(
+        failover_started_at=datetime(2026, 5, 26, 11, 0, tzinfo=UTC),
+        limit=10,
+        now=datetime(2026, 5, 26, 12, 0, tzinfo=UTC),
+        claim_timeout=timedelta(minutes=5),
+        exclude_event_ids={"already-replayed"},
+    )
+
+    sql, params = connection.statements[0]
+    assert "DELETED.status AS source_status" in sql
+    assert "UPDATE target SET status = 'IN_FLIGHT'" in sql
+    assert "fresh_ordering_blockers" in sql
+    assert "already-replayed" not in sql
+    assert "already-replayed" in params
+    assert records[0].record.event.event_id == event.event_id
+    assert records[0].record.claim_token == _ATOMIC_REPLAY_OWNER
+    assert records[0].source_status is OutboxStatus.SENT
+
+
+@pytest.mark.asyncio
+async def test_sql_store_streaming_replay_uses_atomic_replay_claim_client() -> None:
+    client = AtomicReplayClient()
+    store = AzureSqlSyncOutboxStore(client=client)
+    event = make_event("sql-store-atomic-replay")
+    await store.put(event)
+
+    claimed = [
+        item
+        async for item in store.iter_failover_replay_candidates(
+            failover_started_at=datetime.now(UTC),
+            limit=1,
+        )
+    ]
+
+    assert client.atomic_replay_calls == 1
+    assert claimed[0].event.event_id == event.event_id
+    assert claimed[0].claim_token == _ATOMIC_REPLAY_OWNER
+    assert claimed[0].source_status is OutboxStatus.PENDING
 
 
 @pytest.mark.asyncio

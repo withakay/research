@@ -8,9 +8,9 @@ Work in `/Users/jack/Code/withakay/research`. Stay inside `durable-outbox-python
 
 Current state:
 
-- Latest completed batch: SQL/Cosmos replay streaming store hooks.
+- Latest completed batch: SQL pyodbc atomic replay claims.
 - Latest full gates:
-  - `uv run pytest -q` -> `296 passed, 7 skipped`
+  - `uv run pytest -q` -> `298 passed, 7 skipped`
   - `uv run ruff check .` -> passed
   - `uv run ruff format --check .` -> passed
   - `uv run ty check` -> passed
@@ -42,8 +42,9 @@ Recent implementation notes:
   row encode/decode, and bounded candidate queries for normal claim, failover
   replay, and cleanup. Normal dispatcher claim now uses an optional SQL Server
   `UPDATE ... OUTPUT INSERTED.*` atomic claim path when the pyodbc client is
-  wired. Replay claim remains candidate-plus-CAS so rollback semantics are not
-  weakened.
+  wired. Pyodbc failover replay claims now also use a SQL Server
+  `UPDATE ... OUTPUT` path that returns `DELETED.status AS source_status` for
+  replay metrics and warnings.
 - `FailoverReplayer` now fetches bounded replay pages, supports opt-in page publish concurrency, and passes already-seen event IDs to stores.
 - `FailoverReplayer` now also consumes stores that expose
   `iter_failover_replay_candidates(...)` as an async iterator, collecting only
@@ -69,12 +70,12 @@ Suggested next move:
 1. Confirm a clean worktree and rerun the remaining-ID script.
 2. Pick the next bounded item. Likely candidates are:
    - `A-P0-1`: run and expand live-account SQL/Cosmos integration tests when credentials/services are available.
-   - `P-P0-2`: live SQL Server integration and any provider-native replay
-     claim/rollback design after the pyodbc normal-claim atomic path.
+   - `P-P0-2`: live SQL Server integration for normal and replay atomic claim
+     SQL against real rowversion, `NEWID()`, and lock-hint behavior.
    - `P-P0-5`: live Cosmos integration coverage for the partition registry,
      event index, conditional commits, and repair behavior.
-   - `P-P1-1`: deeper backend-native replay cursors remain open. SQL still
-     needs a batch-token replay claim/rollback design; Cosmos still needs an
+   - `P-P1-1`: deeper backend-native replay cursors remain open. SQL may still
+     benefit from a long-lived batch-token replay cursor; Cosmos still needs an
      SDK continuation-token cursor that avoids materializing partition results
      in the client.
 3. Treat `A-P0-1`, `P-P0-2`, and `P-P0-5` as larger provider-client/query-track work; use subagents before implementing.

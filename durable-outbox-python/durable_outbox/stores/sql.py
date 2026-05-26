@@ -109,6 +109,12 @@ class SqlStoredEvent:
     last_error: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class SqlReplayClaimedRecord:
+    record: SqlStoredEvent
+    source_status: OutboxStatus
+
+
 class SqlOutboxClient(Protocol):
     async def get(self, event_id: str) -> SqlStoredEvent | None: ...
 
@@ -169,6 +175,19 @@ class SqlAtomicClaimClient(Protocol):
         now: datetime,
         claim_timeout: timedelta,
     ) -> Sequence[SqlStoredEvent]: ...
+
+
+@runtime_checkable
+class SqlAtomicReplayClaimClient(Protocol):
+    async def claim_failover_replay_batch_atomic(
+        self,
+        *,
+        failover_started_at: datetime,
+        limit: int,
+        now: datetime,
+        claim_timeout: timedelta,
+        exclude_event_ids: set[str],
+    ) -> Sequence[SqlReplayClaimedRecord]: ...
 
 
 class InMemorySqlOutboxClient:
@@ -474,6 +493,16 @@ class _SqlOutboxStoreBase:
         exclude_event_ids: Collection[str] = (),
     ) -> list[ClaimedEvent]:
         require_positive_limit(limit)
+        if isinstance(self.client, SqlAtomicReplayClaimClient):
+            return _claimed_events_from_replay_records(
+                await self.client.claim_failover_replay_batch_atomic(
+                    failover_started_at=failover_started_at,
+                    limit=limit,
+                    now=self.clock.utcnow(),
+                    claim_timeout=self.claim_timeout,
+                    exclude_event_ids=set(exclude_event_ids),
+                )
+            )
         records = await self.client.list_failover_replay_candidates(
             failover_started_at=failover_started_at,
             limit=limit,
@@ -497,6 +526,23 @@ class _SqlOutboxStoreBase:
         excluded_event_ids: set[str] = set()
         locked_ordering_scopes: set[str] = set()
         while yielded < limit:
+            if isinstance(self.client, SqlAtomicReplayClaimClient):
+                claimed = _claimed_events_from_replay_records(
+                    await self.client.claim_failover_replay_batch_atomic(
+                        failover_started_at=failover_started_at,
+                        limit=1,
+                        now=self.clock.utcnow(),
+                        claim_timeout=self.claim_timeout,
+                        exclude_event_ids=excluded_event_ids,
+                    )
+                )
+                if not claimed:
+                    break
+                for candidate in claimed:
+                    excluded_event_ids.add(candidate.event.event_id)
+                    yielded += 1
+                    yield candidate
+                continue
             records = await self.client.list_failover_replay_candidates(
                 failover_started_at=failover_started_at,
                 limit=1,
@@ -708,6 +754,26 @@ def _claimed_events_from_atomic_records(
                 event=record.event,
                 claim_token=record.claim_token,
                 attempt_count=record.attempt_count,
+            )
+        )
+    return claimed
+
+
+def _claimed_events_from_replay_records(
+    records: Sequence[SqlReplayClaimedRecord],
+) -> list[ClaimedEvent]:
+    claimed: list[ClaimedEvent] = []
+    for record in records:
+        if record.record.claim_token is None:
+            raise RetryableStoreError(
+                "atomic SQL replay claim returned a row without claim_id"
+            )
+        claimed.append(
+            ClaimedEvent(
+                event=record.record.event,
+                claim_token=record.record.claim_token,
+                attempt_count=record.record.attempt_count,
+                source_status=record.source_status,
             )
         )
     return claimed
