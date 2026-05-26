@@ -85,5 +85,5 @@ ______________________________________________________________________
 - **Done When**: All full quality gates pass.
 - **Requirements**: durable-outbox-plugin-authoring:plugin-verification, durable-outbox-packaging:consumer-documentation
 - **Updated At**: 2026-05-26
-- **Status**: [>] in-progress
+- **Status**: [x] complete
 <!-- ITO:END -->
