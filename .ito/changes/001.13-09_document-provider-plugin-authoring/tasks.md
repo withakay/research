@@ -56,7 +56,7 @@ ______________________________________________________________________
 - **Done When**: Users can discover the guide from README and provider docs.
 - **Requirements**: durable-outbox-packaging:consumer-documentation
 - **Updated At**: 2026-05-26
-- **Status**: [>] in-progress
+- **Status**: [x] complete
 
 ______________________________________________________________________
 
