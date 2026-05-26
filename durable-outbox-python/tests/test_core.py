@@ -32,7 +32,6 @@ from durable_outbox.core.claim import (
 )
 from durable_outbox.core.cleanup import CleanupPolicy, CleanupScheduler
 from durable_outbox.core.errors import DuplicateEventConflictError
-from durable_outbox.stores.blob_geo import BlobOutboxStore
 from durable_outbox.telemetry import InMemoryMetrics
 from durable_outbox.testing import FailingSink, FakeOutboxStore, FakeSink, FixedClock
 from durable_outbox.testing.failure_injection import FailingStore
@@ -43,6 +42,7 @@ from durable_outbox.testing.provider_contract import (
     run_basic_provider_contract,
     run_provider_contract,
 )
+from durable_outbox_blob_store import BlobOutboxStore
 
 if TYPE_CHECKING:
     from collections.abc import MutableMapping

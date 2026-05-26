@@ -1,3 +1,7 @@
-from durable_outbox.sinks.kafka import KafkaProducerConfig, KafkaSink
+"""Abstract sink namespace.
 
-__all__ = ["KafkaProducerConfig", "KafkaSink"]
+Concrete first-party sinks live in provider packages and are loaded through
+`durable_outbox.plugins`.
+"""
+
+__all__: list[str] = []

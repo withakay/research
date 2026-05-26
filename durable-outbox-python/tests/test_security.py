@@ -5,12 +5,12 @@ import pytest
 from durable_outbox.core import ClaimConflictError, RetryableStoreError, ValidationError
 from durable_outbox.core.dispatcher import _stored_error_message
 from durable_outbox.core.model import OutboxEvent
-from durable_outbox.stores.blob_geo import (
+from durable_outbox.testing.provider_contract import make_event
+from durable_outbox_blob_store import (
     BlobOutboxStore,
     blob_metadata,
     cleanup_freeze_blob_name,
 )
-from durable_outbox.testing.provider_contract import make_event
 
 
 @pytest.mark.parametrize(

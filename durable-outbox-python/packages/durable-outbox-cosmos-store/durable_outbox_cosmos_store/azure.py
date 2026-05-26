@@ -20,14 +20,12 @@ from durable_outbox.core.errors import (
 from durable_outbox.core.model import OutboxEvent, OutboxStatus, PublishingMode
 from durable_outbox.core.ordering import ordering_scope
 from durable_outbox.core.validation import require_positive_limit
-from durable_outbox.stores.cosmos import (
+from durable_outbox_cosmos_store.store import (
     CosmosConfiguration,
     CosmosStoredEvent,
 )
 
-_AZURE_EXTRA_MESSAGE = (
-    "Azure Cosmos support requires the azure extra: install durable-outbox[azure]"
-)
+_AZURE_EXTRA_MESSAGE = "Azure Cosmos support requires durable-outbox-cosmos-store"
 _CONTROL_PARTITION_KEY = "__control__"
 _CLEANUP_FREEZE_ID = "cleanup-freeze"
 _EVENT_INDEX_KIND = "event_index"

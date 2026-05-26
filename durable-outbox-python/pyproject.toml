@@ -38,10 +38,6 @@ Documentation = "https://github.com/withakay/research/tree/main/durable-outbox-p
 Repository = "https://github.com/withakay/research"
 Issues = "https://github.com/withakay/research/issues"
 
-[project.optional-dependencies]
-kafka = ["confluent-kafka>=2.14.0"]
-azure = ["aiohttp>=3.13.5", "azure-storage-blob>=12.29.0", "azure-cosmos>=4.15.0"]
-
 [dependency-groups]
 dev = [
     "aiohttp>=3.13.5",
@@ -101,7 +97,15 @@ ignore = [
 "tests/**/*.py" = ["B017", "ANN201", "S101"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["durable_outbox"]
+known-first-party = [
+    "durable_outbox",
+    "durable_outbox_blob_store",
+    "durable_outbox_cosmos_store",
+    "durable_outbox_file_sink",
+    "durable_outbox_kafka_sink",
+    "durable_outbox_memory_store",
+    "durable_outbox_sql_store",
+]
 
 [tool.ruff.lint.pyupgrade]
 keep-runtime-typing = true
@@ -115,7 +119,11 @@ python-version = "3.14"
 [tool.ty.src]
 include = [
     "durable_outbox",
+    "packages/durable-outbox-blob-store/durable_outbox_blob_store",
+    "packages/durable-outbox-cosmos-store/durable_outbox_cosmos_store",
     "packages/durable-outbox-file-sink/durable_outbox_file_sink",
+    "packages/durable-outbox-kafka-sink/durable_outbox_kafka_sink",
+    "packages/durable-outbox-memory-store/durable_outbox_memory_store",
     "packages/durable-outbox-sql-store/durable_outbox_sql_store",
     "tests",
 ]
@@ -125,7 +133,11 @@ members = ["packages/*"]
 
 [tool.uv.sources]
 durable-outbox = { workspace = true }
+durable-outbox-blob-store = { workspace = true }
+durable-outbox-cosmos-store = { workspace = true }
 durable-outbox-file-sink = { workspace = true }
+durable-outbox-kafka-sink = { workspace = true }
+durable-outbox-memory-store = { workspace = true }
 durable-outbox-sql-store = { workspace = true }
 
 [tool.uv.build-backend]

@@ -3,14 +3,12 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from durable_outbox.core.errors import ConfigurationError, RetryableStoreError
-from durable_outbox.stores.blob_geo import (
+from durable_outbox_blob_store.store import (
     BlobObject,
     BlobPreconditionFailedError,
 )
 
-_AZURE_EXTRA_MESSAGE = (
-    "Azure Blob support requires the azure extra: install durable-outbox[azure]"
-)
+_AZURE_EXTRA_MESSAGE = "Azure Blob support requires durable-outbox-blob-store"
 MAX_BLOB_DOWNLOAD_BYTES = 16 * 1024 * 1024
 
 

@@ -1,47 +1,7 @@
-from typing import Any
+"""Abstract store namespace.
 
-__all__ = [
-    "AzureBlobClient",
-    "AzureCosmosOutboxClient",
-    "BlobOrderingLockBackend",
-    "BlobOutboxStore",
-    "CosmosStrongOutboxStore",
-    "DualRegionBlobOutboxStore",
-    "MemoryOutboxStore",
-]
+Concrete first-party stores live in provider packages and are loaded through
+`durable_outbox.plugins`.
+"""
 
-
-def __getattr__(name: str) -> Any:
-    if name == "AzureBlobClient":
-        from durable_outbox.stores.azure_blob import AzureBlobClient
-
-        return AzureBlobClient
-    if name == "AzureCosmosOutboxClient":
-        from durable_outbox.stores.cosmos_azure import AzureCosmosOutboxClient
-
-        return AzureCosmosOutboxClient
-    if name in {
-        "BlobOrderingLockBackend",
-        "BlobOutboxStore",
-        "DualRegionBlobOutboxStore",
-    }:
-        from durable_outbox.stores.blob_geo import (
-            BlobOrderingLockBackend,
-            BlobOutboxStore,
-            DualRegionBlobOutboxStore,
-        )
-
-        return {
-            "BlobOrderingLockBackend": BlobOrderingLockBackend,
-            "BlobOutboxStore": BlobOutboxStore,
-            "DualRegionBlobOutboxStore": DualRegionBlobOutboxStore,
-        }[name]
-    if name == "CosmosStrongOutboxStore":
-        from durable_outbox.stores.cosmos import CosmosStrongOutboxStore
-
-        return CosmosStrongOutboxStore
-    if name == "MemoryOutboxStore":
-        from durable_outbox.stores.memory import MemoryOutboxStore
-
-        return MemoryOutboxStore
-    raise AttributeError(name)
+__all__: list[str] = []

@@ -5,12 +5,15 @@ from importlib.metadata import EntryPoint
 from typing import TYPE_CHECKING
 
 import pytest
-from durable_outbox_file_sink import FileSink
-from durable_outbox_sql_store import InMemorySqlOutboxClient
 
 from durable_outbox import available_sinks, available_stores, load_sink, load_store
 from durable_outbox.core.errors import ConfigurationError
 from durable_outbox.testing.provider_contract import make_event
+from durable_outbox_blob_store import BlobOutboxStore
+from durable_outbox_cosmos_store import CosmosStrongOutboxStore
+from durable_outbox_file_sink import FileSink
+from durable_outbox_memory_store import MemoryOutboxStore
+from durable_outbox_sql_store import InMemorySqlOutboxClient
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -18,9 +21,15 @@ if TYPE_CHECKING:
 
 
 def test_installed_provider_entry_points_are_discoverable() -> None:
-    assert "file" in available_sinks()
-    assert "azure-sql-sync" in available_stores()
-    assert "sql-always-on" in available_stores()
+    assert set(available_sinks()) >= {"file", "kafka"}
+    assert set(available_stores()) >= {
+        "azure-sql-sync",
+        "blob",
+        "cosmos",
+        "dual-region-blob",
+        "memory",
+        "sql-always-on",
+    }
 
 
 @pytest.mark.asyncio
@@ -46,6 +55,24 @@ def test_load_sql_stores_from_plugin_entry_points() -> None:
 
     assert azure.capabilities.store_name == "AzureSqlSyncOutboxStore"
     assert always_on.capabilities.store_name == "SqlAlwaysOnOutboxStore"
+
+
+def test_load_memory_store_from_plugin_entry_point() -> None:
+    store = load_store("memory")
+
+    assert isinstance(store, MemoryOutboxStore)
+
+
+def test_load_blob_store_from_plugin_entry_point() -> None:
+    store = load_store("blob", {"client": {}})
+
+    assert isinstance(store, BlobOutboxStore)
+
+
+def test_load_cosmos_store_from_plugin_entry_point() -> None:
+    store = load_store("cosmos", {"client": {}})
+
+    assert isinstance(store, CosmosStrongOutboxStore)
 
 
 def test_missing_plugin_raises_configuration_error() -> None:
@@ -108,6 +135,18 @@ def test_invalid_plugin_factory_result_raises_configuration_error(
 def test_extracted_provider_modules_are_not_core_compatibility_modules() -> None:
     with pytest.raises(ModuleNotFoundError):
         import_module("durable_outbox.sinks.file")
+    with pytest.raises(ModuleNotFoundError):
+        import_module("durable_outbox.sinks.kafka")
+    with pytest.raises(ModuleNotFoundError):
+        import_module("durable_outbox.stores.azure_blob")
+    with pytest.raises(ModuleNotFoundError):
+        import_module("durable_outbox.stores.blob_geo")
+    with pytest.raises(ModuleNotFoundError):
+        import_module("durable_outbox.stores.cosmos")
+    with pytest.raises(ModuleNotFoundError):
+        import_module("durable_outbox.stores.cosmos_azure")
+    with pytest.raises(ModuleNotFoundError):
+        import_module("durable_outbox.stores.memory")
     with pytest.raises(ModuleNotFoundError):
         import_module("durable_outbox.stores.sql")
     with pytest.raises(ModuleNotFoundError):

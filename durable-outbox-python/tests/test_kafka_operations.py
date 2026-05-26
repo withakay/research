@@ -21,9 +21,9 @@ from durable_outbox.operations import (
     AuditRecord,
     StatusSummary,
 )
-from durable_outbox.sinks.kafka import KafkaProducerConfig, KafkaSink
 from durable_outbox.telemetry import InMemoryMetrics, TraceContext
 from durable_outbox.testing import FixedClock
+from durable_outbox_kafka_sink import KafkaProducerConfig, KafkaSink
 
 if TYPE_CHECKING:
     from collections.abc import Callable

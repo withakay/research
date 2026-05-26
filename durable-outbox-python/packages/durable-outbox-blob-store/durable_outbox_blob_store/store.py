@@ -45,8 +45,8 @@ from durable_outbox.core.validation import (
     require_optional_positive_limit,
     require_positive_limit,
 )
-from durable_outbox.stores.memory import StoredEvent
 from durable_outbox.telemetry.metrics import MetricsAdapter, NoopMetrics
+from durable_outbox_memory_store import StoredEvent
 
 type BlobRegionName = Literal["primary", "secondary"]
 _LOGGER = logging.getLogger(__name__)

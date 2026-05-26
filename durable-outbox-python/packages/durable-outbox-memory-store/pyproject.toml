@@ -1,0 +1,30 @@
+[build-system]
+requires = ["uv_build>=0.11.8,<0.12.0"]
+build-backend = "uv_build"
+
+[project]
+name = "durable-outbox-memory-store"
+version = "0.1.0"
+description = "In-memory store plugin for durable-outbox tests and local development."
+readme = "README.md"
+requires-python = ">=3.14"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Durable Outbox Maintainers" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: AsyncIO",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
+dependencies = ["durable-outbox"]
+
+[project.entry-points."durable_outbox.stores"]
+memory = "durable_outbox_memory_store:build_memory_store"
+
+[tool.uv.build-backend]
+module-root = ""
+module-name = "durable_outbox_memory_store"
+source-include = ["LICENSE", "README.md", "pyproject.toml"]

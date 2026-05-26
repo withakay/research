@@ -231,7 +231,7 @@ def _confluent_producer_factory(config: dict[str, object]) -> KafkaProducerLike:
         module: Any = import_module("confluent_kafka")
     except ImportError as exc:
         raise ConfigurationError(
-            "Kafka sink requires the kafka extra: install durable-outbox[kafka]"
+            "Kafka sink requires durable-outbox-kafka-sink"
         ) from exc
     producer_cls = cast("type[ConfluentProducer]", module.Producer)
     return cast("KafkaProducerLike", producer_cls(config))

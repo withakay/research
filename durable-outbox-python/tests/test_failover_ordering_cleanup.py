@@ -7,11 +7,6 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from durable_outbox_sql_store import (
-    AzureSqlSyncOutboxStore,
-    InMemorySqlOutboxClient,
-    SqlAlwaysOnOutboxStore,
-)
 
 from durable_outbox.core import ConfigurationError
 from durable_outbox.core.failover import FailoverReplayer
@@ -20,20 +15,25 @@ from durable_outbox.core.model import (
     PublishingMode,
 )
 from durable_outbox.core.ordering import InMemoryOrderingLockBackend
-from durable_outbox.stores.blob_geo import (
+from durable_outbox.telemetry import InMemoryMetrics
+from durable_outbox.testing import FailingSink, FakeOutboxStore, FakeSink, FixedClock
+from durable_outbox.testing.provider_contract import make_event
+from durable_outbox_blob_store import (
     BlobOutboxStore,
     InMemoryBlobClient,
     ordering_lock_blob_name,
 )
-from durable_outbox.stores.cosmos import (
+from durable_outbox_cosmos_store import (
     CosmosConfiguration,
     CosmosStoredEvent,
     CosmosStrongOutboxStore,
     InMemoryCosmosOutboxClient,
 )
-from durable_outbox.telemetry import InMemoryMetrics
-from durable_outbox.testing import FailingSink, FakeOutboxStore, FakeSink, FixedClock
-from durable_outbox.testing.provider_contract import make_event
+from durable_outbox_sql_store import (
+    AzureSqlSyncOutboxStore,
+    InMemorySqlOutboxClient,
+    SqlAlwaysOnOutboxStore,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Collection

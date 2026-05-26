@@ -2,6 +2,23 @@
 
 RPO=0 is an adapter acceptance contract. A store may claim RPO=0 only when `put(event)` returns after the event is durably present at that adapter's documented failover durability boundary.
 
+The `durable-outbox` package is the abstract core. Concrete first-party
+providers ship as separate packages:
+
+| Provider | Package | Plugin names |
+| --- | --- | --- |
+| File sink | `durable-outbox-file-sink` | `file` |
+| Kafka sink | `durable-outbox-kafka-sink` | `kafka` |
+| Memory store | `durable-outbox-memory-store` | `memory` |
+| Blob store | `durable-outbox-blob-store` | `blob`, `dual-region-blob` |
+| Cosmos store | `durable-outbox-cosmos-store` | `cosmos` |
+| SQL store | `durable-outbox-sql-store` | `azure-sql-sync`, `sql-always-on` |
+
+Applications can import concrete classes from the provider package namespace or
+load them by plugin name with `load_sink()` and `load_store()`. Old concrete
+core imports such as `durable_outbox.sinks.kafka` and
+`durable_outbox.stores.blob_geo` are intentionally removed.
+
 ## Blob
 
 Blob RPO=0 requires application-level dual writes:
@@ -53,8 +70,8 @@ outbox record.
 
 Cosmos RPO=0 requires strong consistency, more than one region, and single-write configuration. Multi-write and session-consistency modes can still be useful, but they must not declare `rpo_zero_for_accepted_events=True` in certified mode.
 
-`AzureCosmosOutboxClient` provides the first Azure Cosmos SDK-backed slice
-behind the `azure` optional extra. It covers lazy SDK import, snake_case JSON
+`AzureCosmosOutboxClient` is exported by `durable-outbox-cosmos-store`. It
+covers lazy SDK import, snake_case JSON
 encode/decode with epoch-millisecond timestamps, point insert/read/replace/delete
 operations, `_etag` optimistic concurrency mapping, cleanup-freeze control
 items, `read_account()` validation for certified RPO=0 account shape, and
@@ -103,8 +120,8 @@ multi-region, single-write account validation assertion. Without
 
 Azure SQL RPO=0 requires committing the outbox row and then completing `sp_wait_for_database_copy_sync` against the active secondary before returning success. SQL Server Always On RPO=0 requires synchronous commit with the required synchronized secondaries configured.
 
-`PyodbcSqlOutboxClient` provides the first production SQL client slice behind
-the `sql` optional extra. It covers lazy pyodbc import, row encode/decode,
+`PyodbcSqlOutboxClient` is exported by `durable-outbox-sql-store`. It covers
+lazy pyodbc import, row encode/decode,
 parameterized insert/update/delete/get primitives, cleanup freeze state, and
 the SQL durability checks used by `AzureSqlSyncOutboxStore` and
 `SqlAlwaysOnOutboxStore`. It also provides bounded provider-side queries for
@@ -149,9 +166,10 @@ optimizations.
 
 ## Kafka
 
-The Kafka sink enforces certified producer defaults such as `acks=all` and
-idempotence. For local integration tests that should not publish to Kafka,
-install `durable-outbox-file-sink` and load sink plugin `file`.
+The Kafka sink is exported by `durable-outbox-kafka-sink` and enforces
+certified producer defaults such as `acks=all` and idempotence. For local
+integration tests that should not publish to Kafka, install
+`durable-outbox-file-sink` and load sink plugin `file`.
 `durable_outbox_file_sink.FileSink` writes the same event envelope to a JSONL
 file and returns Kafka-like partition/offset metadata. This gives deterministic
 dispatch coverage while the Aspire suite can still exercise a real Kafka

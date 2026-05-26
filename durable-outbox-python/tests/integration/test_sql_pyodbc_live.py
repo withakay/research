@@ -9,6 +9,9 @@ from typing import Any, Protocol, cast
 from uuid import uuid4
 
 import pytest
+
+from durable_outbox.core import OutboxEvent
+from durable_outbox.core.model import OutboxStatus, PublishResult
 from durable_outbox_sql_store import (
     SQL_ORDERED_INDEX_NAME,
     SQL_PENDING_INDEX_NAME,
@@ -18,9 +21,6 @@ from durable_outbox_sql_store import (
     PyodbcSqlOutboxClient,
     SqlStoredEvent,
 )
-
-from durable_outbox.core import OutboxEvent
-from durable_outbox.core.model import OutboxStatus, PublishResult
 
 pytestmark = pytest.mark.integration
 

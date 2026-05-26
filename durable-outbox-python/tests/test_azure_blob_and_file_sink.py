@@ -7,13 +7,16 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from durable_outbox_file_sink import FileSink
 
 from durable_outbox.core import ConfigurationError
 from durable_outbox.core.errors import RetryableStoreError
-from durable_outbox.stores.azure_blob import MAX_BLOB_DOWNLOAD_BYTES, AzureBlobClient
-from durable_outbox.stores.blob_geo import BlobObject
 from durable_outbox.testing.provider_contract import make_event
+from durable_outbox_blob_store import BlobObject
+from durable_outbox_blob_store.azure_blob import (
+    MAX_BLOB_DOWNLOAD_BYTES,
+    AzureBlobClient,
+)
+from durable_outbox_file_sink import FileSink
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping
@@ -220,10 +223,10 @@ def test_azure_blob_client_reports_missing_optional_dependency(
         return real_import_module(name)
 
     monkeypatch.setattr(
-        "durable_outbox.stores.azure_blob.import_module", fail_azure_import
+        "durable_outbox_blob_store.azure_blob.import_module", fail_azure_import
     )
 
-    with pytest.raises(ConfigurationError, match="durable-outbox\\[azure\\]"):
+    with pytest.raises(ConfigurationError, match="durable-outbox-blob-store"):
         AzureBlobClient.from_connection_string(
             "UseDevelopmentStorage=true",
             container_name="outbox",
@@ -242,11 +245,11 @@ async def test_azure_blob_client_reports_missing_core_optional_dependency(
         return real_import_module(name)
 
     monkeypatch.setattr(
-        "durable_outbox.stores.azure_blob.import_module", fail_azure_core_import
+        "durable_outbox_blob_store.azure_blob.import_module", fail_azure_core_import
     )
 
     client = AzureBlobClient(Container())
-    with pytest.raises(ConfigurationError, match="durable-outbox\\[azure\\]"):
+    with pytest.raises(ConfigurationError, match="durable-outbox-blob-store"):
         await client.put_blob(
             "outbox/v1/events/one.json",
             b"payload",

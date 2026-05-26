@@ -5,7 +5,11 @@ requires-python = ">=3.14"
 [manifest]
 members = [
     "durable-outbox",
+    "durable-outbox-blob-store",
+    "durable-outbox-cosmos-store",
     "durable-outbox-file-sink",
+    "durable-outbox-kafka-sink",
+    "durable-outbox-memory-store",
     "durable-outbox-sql-store",
 ]
 
@@ -294,16 +298,6 @@ name = "durable-outbox"
 version = "0.1.0"
 source = { editable = "." }
 
-[package.optional-dependencies]
-azure = [
-    { name = "aiohttp" },
-    { name = "azure-cosmos" },
-    { name = "azure-storage-blob" },
-]
-kafka = [
-    { name = "confluent-kafka" },
-]
-
 [package.dev-dependencies]
 dev = [
     { name = "aiohttp" },
@@ -317,13 +311,6 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "aiohttp", marker = "extra == 'azure'", specifier = ">=3.13.5" },
-    { name = "azure-cosmos", marker = "extra == 'azure'", specifier = ">=4.15.0" },
-    { name = "azure-storage-blob", marker = "extra == 'azure'", specifier = ">=12.29.0" },
-    { name = "confluent-kafka", marker = "extra == 'kafka'", specifier = ">=2.14.0" },
-]
-provides-extras = ["kafka", "azure"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -338,9 +325,69 @@ dev = [
 ]
 
 [[package]]
+name = "durable-outbox-blob-store"
+version = "0.1.0"
+source = { editable = "packages/durable-outbox-blob-store" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "azure-storage-blob" },
+    { name = "durable-outbox" },
+    { name = "durable-outbox-memory-store" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.13.5" },
+    { name = "azure-storage-blob", specifier = ">=12.29.0" },
+    { name = "durable-outbox", editable = "." },
+    { name = "durable-outbox-memory-store", editable = "packages/durable-outbox-memory-store" },
+]
+
+[[package]]
+name = "durable-outbox-cosmos-store"
+version = "0.1.0"
+source = { editable = "packages/durable-outbox-cosmos-store" }
+dependencies = [
+    { name = "azure-cosmos" },
+    { name = "durable-outbox" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "azure-cosmos", specifier = ">=4.15.0" },
+    { name = "durable-outbox", editable = "." },
+]
+
+[[package]]
 name = "durable-outbox-file-sink"
 version = "0.1.0"
 source = { editable = "packages/durable-outbox-file-sink" }
+dependencies = [
+    { name = "durable-outbox" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "durable-outbox", editable = "." }]
+
+[[package]]
+name = "durable-outbox-kafka-sink"
+version = "0.1.0"
+source = { editable = "packages/durable-outbox-kafka-sink" }
+dependencies = [
+    { name = "confluent-kafka" },
+    { name = "durable-outbox" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "confluent-kafka", specifier = ">=2.14.0" },
+    { name = "durable-outbox", editable = "." },
+]
+
+[[package]]
+name = "durable-outbox-memory-store"
+version = "0.1.0"
+source = { editable = "packages/durable-outbox-memory-store" }
 dependencies = [
     { name = "durable-outbox" },
 ]

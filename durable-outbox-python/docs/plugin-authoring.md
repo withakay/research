@@ -6,8 +6,12 @@ Applications install those packages from a pip-compatible registry or from a
 local path, then load the named store or sink with `load_store()` or
 `load_sink()`.
 
-The bundled `durable-outbox-file-sink` and `durable-outbox-sql-store` packages
-are reference implementations for this shape.
+The first-party packages `durable-outbox-file-sink`,
+`durable-outbox-kafka-sink`, `durable-outbox-memory-store`,
+`durable-outbox-blob-store`, `durable-outbox-cosmos-store`, and
+`durable-outbox-sql-store` are reference implementations for this shape.
+The core `durable-outbox` package intentionally contains no concrete stores or
+sinks.
 
 ## Plugin Contracts
 
@@ -86,6 +90,10 @@ from durable_outbox import load_sink
 sink = load_sink("example-file", {"path": "published.jsonl"})
 ```
 
+First-party sink packages follow the same pattern. For example,
+`durable-outbox-kafka-sink` registers plugin name `kafka` and exports concrete
+types from `durable_outbox_kafka_sink`.
+
 ## Store Package
 
 Minimal package layout:
@@ -149,6 +157,13 @@ from durable_outbox import load_store
 store = load_store("example-sql", {"connection_string": "Driver={ODBC Driver 18};..."})
 ```
 
+First-party store packages follow the same pattern:
+
+- `durable-outbox-memory-store` registers `memory`
+- `durable-outbox-blob-store` registers `blob` and `dual-region-blob`
+- `durable-outbox-cosmos-store` registers `cosmos`
+- `durable-outbox-sql-store` registers `azure-sql-sync` and `sql-always-on`
+
 ## Installing Plugins
 
 Install registry-published plugins like any other Python dependency:
@@ -156,6 +171,10 @@ Install registry-published plugins like any other Python dependency:
 ```bash
 pip install durable-outbox-example-sink
 uv add durable-outbox-example-sink
+uv add durable-outbox-kafka-sink
+uv add durable-outbox-memory-store
+uv add durable-outbox-blob-store
+uv add durable-outbox-cosmos-store
 ```
 
 Install local plugins while developing them:

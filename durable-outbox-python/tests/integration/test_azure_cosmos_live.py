@@ -9,12 +9,12 @@ import pytest
 
 from durable_outbox.core import DuplicateEventConflictError, OutboxEvent
 from durable_outbox.core.model import PublishResult
-from durable_outbox.stores.cosmos import (
+from durable_outbox_cosmos_store import (
     CosmosConfiguration,
     CosmosStoredEvent,
     CosmosStrongOutboxStore,
 )
-from durable_outbox.stores.cosmos_azure import AzureCosmosOutboxClient
+from durable_outbox_cosmos_store.azure import AzureCosmosOutboxClient
 
 pytestmark = pytest.mark.integration
 

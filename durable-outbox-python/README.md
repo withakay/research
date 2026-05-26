@@ -8,9 +8,11 @@ The core package is storage- and sink-agnostic. Applications persist accepted ev
 
 ```bash
 uv add durable-outbox
-uv add "durable-outbox[kafka]"
-uv add "durable-outbox[azure]"
 uv add durable-outbox-file-sink
+uv add durable-outbox-kafka-sink
+uv add durable-outbox-memory-store
+uv add durable-outbox-blob-store
+uv add durable-outbox-cosmos-store
 uv add durable-outbox-sql-store
 ```
 
@@ -49,16 +51,23 @@ RPO=0 is an adapter acceptance contract, not a storage product label.
 
 ## Provider Plugins
 
-Provider implementations that are not part of the core package are loaded from
-Python entry points. Install the plugin package, then load the configured store
-or sink by name:
+The core package contains contracts, models, dispatching, telemetry,
+configuration, and plugin loading. Concrete sinks and stores are first-party
+provider packages loaded from Python entry points. Install the provider package,
+then load the configured store or sink by name:
 
 ```python
 from durable_outbox import load_sink, load_store
 
 sink = load_sink("file", {"path": "published.jsonl"})
+store = load_store("memory")
 store = load_store("azure-sql-sync", {"connection_string": "Driver={ODBC Driver 18};..."})
 ```
+
+Old concrete imports such as `durable_outbox.sinks.kafka` and
+`durable_outbox.stores.blob_geo` are intentionally removed. Replace them with
+provider package imports such as `durable_outbox_kafka_sink.KafkaSink`,
+`durable_outbox_blob_store.BlobOutboxStore`, or plugin loading.
 
 Installed sink names are available with `available_sinks()`. Installed store
 names are available with `available_stores()`. See

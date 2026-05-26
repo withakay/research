@@ -5,20 +5,61 @@ import tomllib
 from datetime import timedelta
 from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    import pytest
+import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = PROJECT_ROOT.parent
-OPTIONAL_DEPENDENCY_FLOORS = {
-    "azure": {
-        "aiohttp>=3.13.5",
-        "azure-storage-blob>=12.29.0",
-        "azure-cosmos>=4.15.0",
+OPTIONAL_DEPENDENCY_FLOORS = {}
+EXPECTED_PROVIDER_PACKAGES = {
+    "durable-outbox-blob-store": {
+        "module": "durable_outbox_blob_store",
+        "entry_points": {
+            "durable_outbox.stores": {
+                "blob": "durable_outbox_blob_store:build_blob_store",
+                "dual-region-blob": "durable_outbox_blob_store:build_dual_region_blob_store",
+            }
+        },
     },
-    "kafka": {"confluent-kafka>=2.14.0"},
+    "durable-outbox-cosmos-store": {
+        "module": "durable_outbox_cosmos_store",
+        "entry_points": {
+            "durable_outbox.stores": {
+                "cosmos": "durable_outbox_cosmos_store:build_cosmos_store"
+            }
+        },
+    },
+    "durable-outbox-file-sink": {
+        "module": "durable_outbox_file_sink",
+        "entry_points": {
+            "durable_outbox.sinks": {"file": "durable_outbox_file_sink:build_file_sink"}
+        },
+    },
+    "durable-outbox-kafka-sink": {
+        "module": "durable_outbox_kafka_sink",
+        "entry_points": {
+            "durable_outbox.sinks": {
+                "kafka": "durable_outbox_kafka_sink:build_kafka_sink"
+            }
+        },
+    },
+    "durable-outbox-memory-store": {
+        "module": "durable_outbox_memory_store",
+        "entry_points": {
+            "durable_outbox.stores": {
+                "memory": "durable_outbox_memory_store:build_memory_store"
+            }
+        },
+    },
+    "durable-outbox-sql-store": {
+        "module": "durable_outbox_sql_store",
+        "entry_points": {
+            "durable_outbox.stores": {
+                "azure-sql-sync": "durable_outbox_sql_store:build_azure_sql_sync_store",
+                "sql-always-on": "durable_outbox_sql_store:build_sql_always_on_store",
+            }
+        },
+    },
 }
 EXPECTED_WORKSPACE_MEMBERS = {
     "packages/*",
@@ -44,9 +85,14 @@ def test_readme_documents_configured_extras_and_verification_commands() -> None:
     pyproject = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
     readme = (PROJECT_ROOT / "README.md").read_text()
 
-    for extra in pyproject["project"]["optional-dependencies"]:
-        assert f"durable-outbox[{extra}]" in readme
+    assert not pyproject["project"].get("optional-dependencies")
+    assert "durable-outbox[kafka]" not in readme
+    assert "durable-outbox[azure]" not in readme
     assert "uv add durable-outbox-file-sink" in readme
+    assert "uv add durable-outbox-kafka-sink" in readme
+    assert "uv add durable-outbox-memory-store" in readme
+    assert "uv add durable-outbox-blob-store" in readme
+    assert "uv add durable-outbox-cosmos-store" in readme
     assert "uv add durable-outbox-sql-store" in readme
     assert "uv run pytest" in readme
     assert "aspire run --apphost DurableOutbox.Integration.AppHost" in readme
@@ -65,12 +111,28 @@ def test_license_file_matches_project_metadata() -> None:
 
 
 def test_optional_dependency_floors_match_reviewed_provider_versions() -> None:
-    pyproject = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
+    assert OPTIONAL_DEPENDENCY_FLOORS == {}
+    provider_dependencies = {
+        package_name: set(
+            tomllib.loads(
+                (
+                    PROJECT_ROOT / "packages" / package_name / "pyproject.toml"
+                ).read_text()
+            )["project"]["dependencies"]
+        )
+        for package_name in EXPECTED_PROVIDER_PACKAGES
+    }
 
+    assert (
+        "confluent-kafka>=2.14.0" in provider_dependencies["durable-outbox-kafka-sink"]
+    )
     assert {
-        extra: set(dependencies)
-        for extra, dependencies in pyproject["project"]["optional-dependencies"].items()
-    } == OPTIONAL_DEPENDENCY_FLOORS
+        "aiohttp>=3.13.5",
+        "azure-storage-blob>=12.29.0",
+    } <= provider_dependencies["durable-outbox-blob-store"]
+    assert (
+        "azure-cosmos>=4.15.0" in provider_dependencies["durable-outbox-cosmos-store"]
+    )
 
 
 def test_core_package_uses_uv_build_workspace_metadata() -> None:
@@ -88,47 +150,37 @@ def test_core_package_uses_uv_build_workspace_metadata() -> None:
 
 
 def test_provider_plugin_packages_use_uv_build_and_entry_points() -> None:
-    file_sink = tomllib.loads(
-        (
-            PROJECT_ROOT / "packages" / "durable-outbox-file-sink" / "pyproject.toml"
-        ).read_text()
-    )
-    sql_store = tomllib.loads(
-        (
-            PROJECT_ROOT / "packages" / "durable-outbox-sql-store" / "pyproject.toml"
-        ).read_text()
-    )
+    for package_name, expected in EXPECTED_PROVIDER_PACKAGES.items():
+        package_dir = PROJECT_ROOT / "packages" / package_name
+        plugin = tomllib.loads((package_dir / "pyproject.toml").read_text())
+        module_name = str(expected["module"])
 
-    assert file_sink["project"]["name"] == "durable-outbox-file-sink"
-    assert sql_store["project"]["name"] == "durable-outbox-sql-store"
-    for plugin in (file_sink, sql_store):
+        assert plugin["project"]["name"] == package_name
+        assert plugin["project"]["dependencies"][0] == "durable-outbox"
         assert plugin["build-system"] == {
             "requires": ["uv_build>=0.11.8,<0.12.0"],
             "build-backend": "uv_build",
         }
         assert plugin["project"]["license"] == "MIT"
+        assert plugin["project"]["entry-points"] == expected["entry_points"]
+        assert plugin["tool"]["uv"]["build-backend"]["module-name"] == module_name
+        assert (package_dir / module_name / "py.typed").is_file()
 
-    assert file_sink["project"]["entry-points"]["durable_outbox.sinks"] == {
-        "file": "durable_outbox_file_sink:build_file_sink"
-    }
-    assert sql_store["project"]["entry-points"]["durable_outbox.stores"] == {
-        "azure-sql-sync": "durable_outbox_sql_store:build_azure_sql_sync_store",
-        "sql-always-on": "durable_outbox_sql_store:build_sql_always_on_store",
-    }
-    assert (
-        PROJECT_ROOT
-        / "packages"
-        / "durable-outbox-file-sink"
-        / "durable_outbox_file_sink"
-        / "py.typed"
-    ).is_file()
-    assert (
-        PROJECT_ROOT
-        / "packages"
-        / "durable-outbox-sql-store"
-        / "durable_outbox_sql_store"
-        / "py.typed"
-    ).is_file()
+
+def test_core_package_has_no_concrete_provider_modules_or_extras() -> None:
+    pyproject = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
+
+    assert "optional-dependencies" not in pyproject["project"]
+    for module_name in (
+        "durable_outbox.sinks.kafka",
+        "durable_outbox.stores.azure_blob",
+        "durable_outbox.stores.blob_geo",
+        "durable_outbox.stores.cosmos",
+        "durable_outbox.stores.cosmos_azure",
+        "durable_outbox.stores.memory",
+    ):
+        with pytest.raises(ModuleNotFoundError):
+            import_module(module_name)
 
 
 def test_project_metadata_describes_package_surface() -> None:
@@ -235,7 +287,7 @@ def test_outbox_settings_loads_environment_and_builds_cleanup_policy(
 
 
 def test_dual_region_blob_store_uses_documented_region_methods() -> None:
-    from durable_outbox.stores.blob_geo import (
+    from durable_outbox_blob_store import (
         BlobOutboxStore,
         DualRegionBlobOutboxStore,
     )

@@ -1,5 +1,5 @@
 from durable_outbox.core.capabilities import OutboxCapabilities
-from durable_outbox.stores.memory import MemoryOutboxStore, StoredEvent
+from durable_outbox_memory_store import MemoryOutboxStore, StoredEvent
 
 
 class FakeOutboxStore(MemoryOutboxStore):

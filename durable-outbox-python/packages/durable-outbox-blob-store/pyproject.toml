@@ -1,0 +1,36 @@
+[build-system]
+requires = ["uv_build>=0.11.8,<0.12.0"]
+build-backend = "uv_build"
+
+[project]
+name = "durable-outbox-blob-store"
+version = "0.1.0"
+description = "Azure Blob and dual-region Blob store plugin for durable-outbox."
+readme = "README.md"
+requires-python = ">=3.14"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Durable Outbox Maintainers" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: AsyncIO",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
+dependencies = [
+    "durable-outbox",
+    "durable-outbox-memory-store",
+    "aiohttp>=3.13.5",
+    "azure-storage-blob>=12.29.0",
+]
+
+[project.entry-points."durable_outbox.stores"]
+blob = "durable_outbox_blob_store:build_blob_store"
+dual-region-blob = "durable_outbox_blob_store:build_dual_region_blob_store"
+
+[tool.uv.build-backend]
+module-root = ""
+module-name = "durable_outbox_blob_store"
+source-include = ["LICENSE", "README.md", "pyproject.toml"]

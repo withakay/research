@@ -11,13 +11,13 @@ import pytest
 from durable_outbox.core import ConfigurationError
 from durable_outbox.core.errors import ClaimConflictError, DuplicateEventConflictError
 from durable_outbox.core.model import OutboxEvent, OutboxStatus, PublishingMode
-from durable_outbox.stores.cosmos import CosmosConfiguration, CosmosStoredEvent
-from durable_outbox.stores.cosmos_azure import (
+from durable_outbox.testing.provider_contract import make_event
+from durable_outbox_cosmos_store import CosmosConfiguration, CosmosStoredEvent
+from durable_outbox_cosmos_store.azure import (
     AzureCosmosOutboxClient,
     decode_cosmos_item,
     encode_cosmos_item,
 )
-from durable_outbox.testing.provider_contract import make_event
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -212,7 +212,7 @@ class FakeAzureCoreModule:
 
 
 def test_cosmos_azure_module_does_not_import_azure_at_import_time() -> None:
-    module = import_module("durable_outbox.stores.cosmos_azure")
+    module = import_module("durable_outbox_cosmos_store.azure")
 
     assert module.AzureCosmosOutboxClient is AzureCosmosOutboxClient
 
@@ -228,10 +228,10 @@ def test_azure_cosmos_client_reports_missing_optional_dependency(
         return real_import_module(name)
 
     monkeypatch.setattr(
-        "durable_outbox.stores.cosmos_azure.import_module", fail_azure_import
+        "durable_outbox_cosmos_store.azure.import_module", fail_azure_import
     )
 
-    with pytest.raises(ConfigurationError, match="durable-outbox\\[azure\\]"):
+    with pytest.raises(ConfigurationError, match="durable-outbox-cosmos-store"):
         AzureCosmosOutboxClient.from_connection_string(
             "AccountEndpoint=https://example;",
             database_name="db",
@@ -285,7 +285,7 @@ def test_from_connection_string_wires_database_and_container(
             return FakeAzureCoreModule
         return import_module(name)
 
-    monkeypatch.setattr("durable_outbox.stores.cosmos_azure.import_module", fake_import)
+    monkeypatch.setattr("durable_outbox_cosmos_store.azure.import_module", fake_import)
 
     client = AzureCosmosOutboxClient.from_connection_string(
         "AccountEndpoint=https://example;",

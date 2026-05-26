@@ -7,13 +7,13 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
-from durable_outbox_file_sink import FileSink
 
 from durable_outbox.core import OutboxDispatcher, OutboxEvent
 from durable_outbox.core.failover import FailoverReplayer
-from durable_outbox.sinks.kafka import KafkaProducerConfig, KafkaSink
-from durable_outbox.stores.azure_blob import AzureBlobClient
-from durable_outbox.stores.blob_geo import BlobOutboxStore
+from durable_outbox_blob_store import BlobOutboxStore
+from durable_outbox_blob_store.azure_blob import AzureBlobClient
+from durable_outbox_file_sink import FileSink
+from durable_outbox_kafka_sink import KafkaProducerConfig, KafkaSink
 
 if TYPE_CHECKING:
     from pathlib import Path

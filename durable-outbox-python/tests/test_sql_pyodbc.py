@@ -6,16 +6,6 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from durable_outbox_sql_store import (
-    SQL_TABLE_NAME,
-    AzureSqlSyncOutboxStore,
-    InMemorySqlOutboxClient,
-    PyodbcSqlOutboxClient,
-    SqlReplayClaimedRecord,
-    SqlStoredEvent,
-    decode_sql_record,
-    encode_sql_record,
-)
 
 from durable_outbox.core import ConfigurationError
 from durable_outbox.core.errors import (
@@ -31,6 +21,16 @@ from durable_outbox.core.model import (
 )
 from durable_outbox.testing import FixedClock
 from durable_outbox.testing.provider_contract import make_event
+from durable_outbox_sql_store import (
+    SQL_TABLE_NAME,
+    AzureSqlSyncOutboxStore,
+    InMemorySqlOutboxClient,
+    PyodbcSqlOutboxClient,
+    SqlReplayClaimedRecord,
+    SqlStoredEvent,
+    decode_sql_record,
+    encode_sql_record,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
