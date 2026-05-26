@@ -69,7 +69,7 @@ ______________________________________________________________________
 - **Done When**: Memory store behavior is unchanged through package import/plugin loading, and old core memory imports fail.
 - **Requirements**: durable-outbox-abstract-core:abstract-core-package, durable-outbox-provider-packages:first-party-provider-package-matrix, durable-outbox-provider-packages:provider-package-plugin-registration
 - **Updated At**: 2026-05-26
-- **Status**: [ ] pending
+- **Status**: [>] in-progress
 
 ### Task 2.3: Extract Blob Store Package
 
