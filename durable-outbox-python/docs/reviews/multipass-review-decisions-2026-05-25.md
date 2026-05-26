@@ -2715,3 +2715,54 @@ verification evidence.
 - Live Azure Cosmos integration tests remain required to prove registry query
   behavior, restart duplicate handling, ETag conflicts, and partition
   completeness against the real SDK/service.
+
+## Batch 79: Azure Cosmos Event Index
+
+### Findings Partially Accepted
+
+- **P-P0-5 / A-P0-1:** the partition registry made candidate queries
+  restart-aware, but `get(event_id)` and `delete(event_id)` still depended on a
+  process-local event-id-to-partition map. Because Cosmos document IDs are only
+  unique inside a logical partition, a restarted client could miss duplicates in
+  other partitions.
+
+### Fixes Implemented
+
+- Added a create-only control-partition event index keyed by a stable SHA-256
+  digest of `event_id`.
+- Insert now creates a reserved event index before writing the target event,
+  writes the target event in its data partition, then conditionally marks the
+  index committed.
+- Restarted clients resolve `get(event_id)` through the event index and then
+  perform a point read in the recorded data partition.
+- Compatible duplicate inserts after restart now return the original stored
+  record without creating a second event item.
+- Incompatible duplicate inserts with the same `event_id` are rejected through
+  the existing duplicate envelope diagnostics.
+- Delete resolves the data partition through the index when the local cache is
+  empty, deletes the target event first, and removes the control index second.
+- Stale index entries whose target event is missing are cleaned up on `get()`.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_cosmos_azure.py::test_azure_cosmos_get_resolves_partition_from_event_index_after_restart tests/test_cosmos_azure.py::test_azure_cosmos_duplicate_insert_uses_event_index tests/test_cosmos_azure.py::test_azure_cosmos_get_removes_stale_event_index -q`
+  -> failed because the event index did not exist.
+- Focused green run:
+  `uv run ruff format durable_outbox/stores/cosmos_azure.py tests/test_cosmos_azure.py && uv run ruff check durable_outbox/stores/cosmos_azure.py tests/test_cosmos_azure.py && uv run ruff format --check durable_outbox/stores/cosmos_azure.py tests/test_cosmos_azure.py && uv run ty check && uv run pytest tests/test_cosmos_azure.py -q`
+  -> 19 passed.
+- Full package gates:
+  `uv run pytest -q` -> 291 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 57 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
+
+### Deferred
+
+- Live Azure Cosmos integration tests remain required for exact conflict,
+  not-found, and precondition exception mapping; conditional index commit
+  behavior; strong-consistency read-after-write; and the RU/latency impact of a
+  hot control partition.
+- Operational repair for reserved-index/event-missing crash windows remains
+  future work before declaring the Cosmos provider fully certified.

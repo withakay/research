@@ -8,9 +8,9 @@ Work in `/Users/jack/Code/withakay/research`. Stay inside `durable-outbox-python
 
 Current state:
 
-- Latest completed batch: Azure Cosmos partition registry.
+- Latest completed batch: Azure Cosmos event index.
 - Latest full gates:
-  - `uv run pytest -q` -> `287 passed, 2 skipped`
+  - `uv run pytest -q` -> `291 passed, 2 skipped`
   - `uv run ruff check .` -> passed
   - `uv run ruff format --check .` -> passed
   - `uv run ty check` -> passed
@@ -28,9 +28,11 @@ Recent implementation notes:
   cleanup-freeze control items, `read_account()` validation, and bounded
   partition-scoped candidate queries for claim, failover replay, and cleanup.
   It persists observed partitions into a control-partition registry and loads
-  that registry before candidate queries. It is intentionally not in the
-  provider-contract matrix yet because restart-safe event-id uniqueness and live
-  Azure Cosmos integration coverage are still open.
+  that registry before candidate queries. It also writes a create-only
+  control-partition event index for restart-safe event-id lookup and duplicate
+  detection. It is intentionally not in the provider-contract matrix yet because
+  live Azure Cosmos integration coverage and operational repair for
+  reserved-index crash windows are still open.
 - `PyodbcSqlOutboxClient` now exists as a lazy optional SQL provider slice for
   persistence primitives, SQL durability checks, cleanup freeze state, strict
   row encode/decode, and bounded candidate queries for normal claim, failover
@@ -62,8 +64,9 @@ Suggested next move:
    - `A-P0-1`: add live-account integration tests for SQL/Cosmos provider clients when credentials/services are available.
    - `P-P0-2`: live SQL Server integration and any provider-native replay
      claim/rollback design after the pyodbc normal-claim atomic path.
-   - `P-P0-5`: restart-safe Cosmos event-id uniqueness and live Cosmos
-     integration coverage, building on the current partition registry/query seam.
+   - `P-P0-5`: live Cosmos integration coverage and operational repair for
+     reserved-index/event-write crash windows, building on the current partition
+     registry and event-index seams.
    - `P-P1-1`: provider-native async replay iterators/cursors for SQL, Cosmos,
      or Blob. The replayer can consume the optional stream shape, but built-in
      stores still need backend-specific implementations.

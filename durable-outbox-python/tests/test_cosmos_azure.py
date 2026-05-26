@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
@@ -8,7 +9,7 @@ from typing import TYPE_CHECKING, Any, TypedDict
 import pytest
 
 from durable_outbox.core import ConfigurationError
-from durable_outbox.core.errors import ClaimConflictError
+from durable_outbox.core.errors import ClaimConflictError, DuplicateEventConflictError
 from durable_outbox.core.model import OutboxEvent, OutboxStatus, PublishingMode
 from durable_outbox.stores.cosmos import CosmosConfiguration, CosmosStoredEvent
 from durable_outbox.stores.cosmos_azure import (
@@ -43,11 +44,16 @@ class FakeContainer:
         self.fail_replace = False
 
     async def read_item(self, *, item: str, partition_key: str) -> dict[str, object]:
-        return dict(self.items[(partition_key, item)])
+        try:
+            return dict(self.items[(partition_key, item)])
+        except KeyError as exc:
+            raise ResourceNotFoundError(item) from exc
 
     async def create_item(self, body: dict[str, object]) -> dict[str, object]:
         partition_key = str(body["pk"])
         item_id = str(body["id"])
+        if (partition_key, item_id) in self.items:
+            raise ResourceExistsError(item_id)
         stored = dict(body)
         stored["_etag"] = f'"{self.next_etag}"'
         self.next_etag += 1
@@ -121,6 +127,10 @@ class ResourceNotFoundError(Exception):
 
 
 class ResourceModifiedError(Exception):
+    pass
+
+
+class ResourceExistsError(Exception):
     pass
 
 
@@ -266,12 +276,26 @@ async def test_azure_cosmos_insert_get_replace_and_delete_use_partition_key() ->
     replaced = await client.replace(inserted, expected_version=inserted.version)
     await client.delete(event.event_id)
 
-    assert inserted.etag == '"1"'
+    assert inserted.etag == '"2"'
     assert fetched == inserted
-    assert replaced.etag == '"2"'
-    assert container.created[0]["pk"] == "topic#0"
+    assert replaced.etag == '"4"'
+    assert container.created[0]["id"] == _event_index_id(event.event_id)
+    assert container.created[0]["pk"] == "__control__"
+    assert container.created[0]["kind"] == "event_index"
+    assert container.created[0]["event_id"] == event.event_id
+    assert container.created[0]["target_id"] == event.event_id
+    assert container.created[0]["partition_key"] == "topic#0"
+    assert container.created[0]["state"] == "reserved"
+    assert isinstance(container.created[0]["fingerprint"], str)
+    assert container.created[1]["pk"] == "topic#0"
+    assert container.replaced[0][0] == _event_index_id(event.event_id)
+    assert container.replaced[0][1]["state"] == "committed"
     assert container.replaced[0][2]["etag"] == '"1"'
-    assert container.deleted == [(event.event_id, "topic#0")]
+    assert container.replaced[1][2]["etag"] == '"2"'
+    assert container.deleted == [
+        (event.event_id, "topic#0"),
+        (_event_index_id(event.event_id), "__control__"),
+    ]
 
 
 @pytest.mark.asyncio
@@ -294,6 +318,86 @@ async def test_azure_cosmos_insert_persists_partition_registry_item() -> None:
             "partition_key": "durable.outbox.outputs#0",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_azure_cosmos_get_resolves_partition_from_event_index_after_restart() -> (
+    None
+):
+    container = FakeContainer()
+    first_client = AzureCosmosOutboxClient(container)
+    event = make_event("cosmos-indexed-get")
+    inserted = await first_client.insert(
+        CosmosStoredEvent(event=event, partition_key="durable.outbox.outputs#0")
+    )
+    restarted_client = AzureCosmosOutboxClient(container)
+
+    fetched = await restarted_client.get(event.event_id)
+
+    assert fetched == inserted
+    assert restarted_client.partition_keys_by_event_id[event.event_id] == (
+        "durable.outbox.outputs#0"
+    )
+
+
+@pytest.mark.asyncio
+async def test_azure_cosmos_compatible_duplicate_insert_uses_event_index() -> None:
+    container = FakeContainer()
+    first_client = AzureCosmosOutboxClient(container)
+    second_client = AzureCosmosOutboxClient(container)
+    event = make_event("cosmos-index-duplicate")
+    inserted = await first_client.insert(
+        CosmosStoredEvent(event=event, partition_key="durable.outbox.outputs#0")
+    )
+
+    duplicate = await second_client.insert(
+        CosmosStoredEvent(event=event, partition_key="durable.outbox.outputs#1")
+    )
+
+    assert duplicate == inserted
+    event_creates = [
+        item
+        for item in container.created
+        if item.get("kind") != "event_index" and item["id"] == event.event_id
+    ]
+    assert len(event_creates) == 1
+
+
+@pytest.mark.asyncio
+async def test_azure_cosmos_incompatible_duplicate_insert_uses_event_index() -> None:
+    container = FakeContainer()
+    first_client = AzureCosmosOutboxClient(container)
+    second_client = AzureCosmosOutboxClient(container)
+    event = make_event("cosmos-index-incompatible")
+    await first_client.insert(
+        CosmosStoredEvent(event=event, partition_key="durable.outbox.outputs#0")
+    )
+    changed = replace(event, payload=b'{"changed":true}')
+
+    with pytest.raises(DuplicateEventConflictError, match="payload"):
+        await second_client.insert(
+            CosmosStoredEvent(event=changed, partition_key="durable.outbox.outputs#1")
+        )
+
+
+@pytest.mark.asyncio
+async def test_azure_cosmos_get_removes_stale_event_index() -> None:
+    container = FakeContainer()
+    event_id = "cosmos-stale-index"
+    container.items[("__control__", _event_index_id(event_id))] = {
+        "id": _event_index_id(event_id),
+        "pk": "__control__",
+        "kind": "event_index",
+        "event_id": event_id,
+        "target_id": event_id,
+        "partition_key": "durable.outbox.outputs#0",
+        "fingerprint": "fingerprint",
+        "state": "committed",
+    }
+    client = AzureCosmosOutboxClient(container)
+
+    assert await client.get(event_id) is None
+    assert container.deleted == [(_event_index_id(event_id), "__control__")]
 
 
 @pytest.mark.asyncio
@@ -611,3 +715,7 @@ def _record(
         status=status,
         claimed_at=claimed_at,
     )
+
+
+def _event_index_id(event_id: str) -> str:
+    return f"event#{hashlib.sha256(event_id.encode('utf-8')).hexdigest()}"

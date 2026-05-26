@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import json
 from collections.abc import AsyncIterable, Collection, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
 from typing import Any, Protocol, cast
 
 from durable_outbox.core.claim import claim_order_key, is_claimable_record
+from durable_outbox.core.duplicates import raise_if_incompatible_duplicate
 from durable_outbox.core.errors import (
     ClaimConflictError,
     ConfigurationError,
+    DuplicateEventConflictError,
     RetryableStoreError,
 )
 from durable_outbox.core.model import OutboxEvent, OutboxStatus, PublishingMode
@@ -25,6 +29,10 @@ _AZURE_EXTRA_MESSAGE = (
 )
 _CONTROL_PARTITION_KEY = "__control__"
 _CLEANUP_FREEZE_ID = "cleanup-freeze"
+_EVENT_INDEX_KIND = "event_index"
+_EVENT_INDEX_ID_PREFIX = "event#"
+_EVENT_INDEX_RESERVED = "reserved"
+_EVENT_INDEX_COMMITTED = "committed"
 _PARTITION_REGISTRY_KIND = "partition_registry"
 _PARTITION_REGISTRY_ID_PREFIX = "partition#"
 _CLAIM_CANDIDATES_QUERY = """
@@ -168,7 +176,9 @@ class AzureCosmosOutboxClient:
     async def get(self, event_id: str) -> CosmosStoredEvent | None:
         partition_key = self.partition_keys_by_event_id.get(event_id)
         if partition_key is None:
-            return None
+            partition_key = await self._lookup_partition_key_for_event_id(event_id)
+            if partition_key is None:
+                return None
         try:
             item = await self.container.read_item(
                 item=event_id,
@@ -178,6 +188,8 @@ class AzureCosmosOutboxClient:
             if _is_azure_error(
                 exc, {"CosmosResourceNotFoundError", "ResourceNotFoundError"}
             ):
+                await self._delete_event_index(event_id)
+                self.partition_keys_by_event_id.pop(event_id, None)
                 return None
             raise
         record = decode_cosmos_item(item)
@@ -185,8 +197,31 @@ class AzureCosmosOutboxClient:
         return record
 
     async def insert(self, record: CosmosStoredEvent) -> CosmosStoredEvent:
-        item = await self.container.create_item(encode_cosmos_item(record))
+        index_item: Mapping[str, object]
+        try:
+            index_item = await self._create_event_index(record)
+        except Exception as exc:
+            if _is_azure_error(
+                exc, {"CosmosResourceExistsError", "ResourceExistsError"}
+            ):
+                existing = await self._record_from_event_index(record.event.event_id)
+                if existing is None:
+                    raise RetryableStoreError(
+                        "Cosmos event index exists without target event"
+                    ) from exc
+                try:
+                    raise_if_incompatible_duplicate(existing.event, record.event)
+                except DuplicateEventConflictError as duplicate_exc:
+                    raise duplicate_exc from exc
+                return existing
+            raise
+        try:
+            item = await self.container.create_item(encode_cosmos_item(record))
+        except Exception:
+            await self._delete_event_index(record.event.event_id)
+            raise
         stored = decode_cosmos_item(item)
+        await self._commit_event_index(stored, index_item=index_item)
         await self._remember_partition_key(stored)
         return stored
 
@@ -338,7 +373,9 @@ class AzureCosmosOutboxClient:
     async def delete(self, event_id: str) -> None:
         partition_key = self.partition_keys_by_event_id.pop(event_id, None)
         if partition_key is None:
-            return
+            partition_key = await self._lookup_partition_key_for_event_id(event_id)
+            if partition_key is None:
+                return
         try:
             await self.container.delete_item(item=event_id, partition_key=partition_key)
         except Exception as exc:
@@ -351,6 +388,7 @@ class AzureCosmosOutboxClient:
             partition_key != key for key in self.partition_keys_by_event_id.values()
         ):
             self.known_partition_keys.discard(partition_key)
+        await self._delete_event_index(event_id)
 
     async def add_known_partition_key(self, partition_key: str) -> None:
         await self._remember_partition_key_value(partition_key, persist=True)
@@ -361,6 +399,111 @@ class AzureCosmosOutboxClient:
     async def _remember_partition_key(self, record: CosmosStoredEvent) -> None:
         self.partition_keys_by_event_id[record.event.event_id] = record.partition_key
         await self._remember_partition_key_value(record.partition_key, persist=True)
+
+    async def _create_event_index(
+        self,
+        record: CosmosStoredEvent,
+    ) -> Mapping[str, object]:
+        try:
+            return await self.container.create_item(
+                {
+                    "id": _event_index_id(record.event.event_id),
+                    "pk": _CONTROL_PARTITION_KEY,
+                    "kind": _EVENT_INDEX_KIND,
+                    "event_id": record.event.event_id,
+                    "target_id": record.event.event_id,
+                    "partition_key": record.partition_key,
+                    "fingerprint": _event_index_fingerprint(record.event),
+                    "state": _EVENT_INDEX_RESERVED,
+                }
+            )
+        except Exception as exc:
+            if _is_azure_error(
+                exc, {"CosmosResourceExistsError", "ResourceExistsError"}
+            ):
+                raise
+            raise RetryableStoreError("Cosmos event index create failed") from exc
+
+    async def _commit_event_index(
+        self,
+        record: CosmosStoredEvent,
+        *,
+        index_item: Mapping[str, object],
+    ) -> None:
+        try:
+            await self.container.replace_item(
+                item=_event_index_id(record.event.event_id),
+                body={
+                    "id": _event_index_id(record.event.event_id),
+                    "pk": _CONTROL_PARTITION_KEY,
+                    "kind": _EVENT_INDEX_KIND,
+                    "event_id": record.event.event_id,
+                    "target_id": record.event.event_id,
+                    "partition_key": record.partition_key,
+                    "fingerprint": _event_index_fingerprint(record.event),
+                    "state": _EVENT_INDEX_COMMITTED,
+                },
+                etag=_optional_str(index_item, "_etag"),
+                match_condition=_if_not_modified(),
+            )
+        except Exception as exc:
+            if _is_azure_error(
+                exc,
+                {"CosmosAccessConditionFailedError", "ResourceModifiedError"},
+            ):
+                raise ClaimConflictError(
+                    "event index etag precondition failed"
+                ) from exc
+            raise RetryableStoreError("Cosmos event index commit failed") from exc
+
+    async def _lookup_partition_key_for_event_id(self, event_id: str) -> str | None:
+        try:
+            item = await self.container.read_item(
+                item=_event_index_id(event_id),
+                partition_key=_CONTROL_PARTITION_KEY,
+            )
+        except Exception as exc:
+            if _is_azure_error(
+                exc, {"CosmosResourceNotFoundError", "ResourceNotFoundError"}
+            ):
+                return None
+            raise
+        partition_key = _partition_key_from_event_index_item(item, event_id=event_id)
+        self.partition_keys_by_event_id[event_id] = partition_key
+        await self._remember_partition_key_value(partition_key, persist=False)
+        return partition_key
+
+    async def _delete_event_index(self, event_id: str) -> None:
+        try:
+            await self.container.delete_item(
+                item=_event_index_id(event_id),
+                partition_key=_CONTROL_PARTITION_KEY,
+            )
+        except Exception as exc:
+            if _is_azure_error(
+                exc, {"CosmosResourceNotFoundError", "ResourceNotFoundError"}
+            ):
+                return
+            raise
+
+    async def _record_from_event_index(self, event_id: str) -> CosmosStoredEvent | None:
+        partition_key = await self._lookup_partition_key_for_event_id(event_id)
+        if partition_key is None:
+            return None
+        try:
+            item = await self.container.read_item(
+                item=event_id,
+                partition_key=partition_key,
+            )
+        except Exception as exc:
+            if _is_azure_error(
+                exc, {"CosmosResourceNotFoundError", "ResourceNotFoundError"}
+            ):
+                return None
+            raise
+        record = decode_cosmos_item(item)
+        await self._remember_partition_key(record)
+        return record
 
     async def _remember_partition_key_value(
         self,
@@ -672,6 +815,52 @@ def _partition_key_from_registry_item(item: Mapping[str, object]) -> str | None:
     if isinstance(partition_key, str):
         return partition_key
     raise RetryableStoreError("Cosmos partition registry item is missing partition_key")
+
+
+def _partition_key_from_event_index_item(
+    item: Mapping[str, object],
+    *,
+    event_id: str,
+) -> str:
+    if item.get("kind") != _EVENT_INDEX_KIND or item.get("event_id") != event_id:
+        raise RetryableStoreError("Cosmos event index item does not match event_id")
+    state = item.get("state")
+    if state not in {_EVENT_INDEX_RESERVED, _EVENT_INDEX_COMMITTED}:
+        raise RetryableStoreError("Cosmos event index item has invalid state")
+    partition_key = item.get("partition_key")
+    if isinstance(partition_key, str):
+        return partition_key
+    raise RetryableStoreError("Cosmos event index item is missing partition_key")
+
+
+def _event_index_id(event_id: str) -> str:
+    digest = hashlib.sha256(event_id.encode("utf-8")).hexdigest()
+    return f"{_EVENT_INDEX_ID_PREFIX}{digest}"
+
+
+def _event_index_fingerprint(event: OutboxEvent) -> str:
+    headers = {
+        name: base64.b64encode(value).decode("ascii")
+        for name, value in sorted(event.headers.items())
+    }
+    value = {
+        "event_id": event.event_id,
+        "topic": event.topic,
+        "payload": base64.b64encode(event.payload).decode("ascii"),
+        "key": (
+            base64.b64encode(event.key).decode("ascii")
+            if event.key is not None
+            else None
+        ),
+        "headers": headers,
+        "ordering_key": event.ordering_key,
+        "ordering_sequence": event.ordering_sequence,
+        "publishing_mode": event.publishing_mode.value,
+        "schema_id": event.schema_id,
+        "schema_version": event.schema_version,
+    }
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _encode_bytes(value: bytes) -> str:

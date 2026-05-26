@@ -68,11 +68,18 @@ The client persists observed data partitions into a control-partition registry
 and loads that registry before candidate queries. Operators can also seed
 partitions explicitly with `add_known_partition_key()` for pre-created buckets or
 ordered-key partitions that have not yet been observed by the current process.
+It also creates a control-partition event index before writing each event item,
+then marks that index committed after the event write succeeds. This gives
+restart-safe `event_id -> partition_key` lookup, lets compatible duplicate
+inserts resolve to the original record, rejects incompatible duplicates before a
+second partition-local event can be written, and deletes the target event before
+the index during cleanup/admin delete paths.
 
-This is still not a full provider-contract client. Cosmos `id` uniqueness is
-only partition-local unless the container is created with an appropriate
-unique-key/index strategy. Live Cosmos integration tests for SDK query behavior,
-registry completeness, restart duplicate handling, and ETag conflicts remain
+This is still not a full provider-contract client. Cross-partition index and
+event writes cannot be made transactional through the single-container API, so
+reserved-index/event-write crash windows need operational repair coverage. Live
+Cosmos integration tests for SDK query behavior, registry completeness, restart
+duplicate handling, conditional index commits, and ETag conflicts remain
 required before treating this adapter as certified provider complete.
 
 ## SQL
