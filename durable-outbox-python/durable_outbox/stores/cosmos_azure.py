@@ -390,6 +390,26 @@ class AzureCosmosOutboxClient:
             self.known_partition_keys.discard(partition_key)
         await self._delete_event_index(event_id)
 
+    async def repair_event_index(self, event_id: str) -> bool:
+        """Remove a dangling event index whose target event no longer exists."""
+        partition_key = await self._lookup_partition_key_for_event_id(event_id)
+        if partition_key is None:
+            return False
+        try:
+            await self.container.read_item(
+                item=event_id,
+                partition_key=partition_key,
+            )
+        except Exception as exc:
+            if _is_azure_error(
+                exc, {"CosmosResourceNotFoundError", "ResourceNotFoundError"}
+            ):
+                await self._delete_event_index(event_id)
+                self.partition_keys_by_event_id.pop(event_id, None)
+                return True
+            raise
+        return False
+
     async def add_known_partition_key(self, partition_key: str) -> None:
         await self._remember_partition_key_value(partition_key, persist=True)
 

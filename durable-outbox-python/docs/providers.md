@@ -74,13 +74,16 @@ restart-safe `event_id -> partition_key` lookup, lets compatible duplicate
 inserts resolve to the original record, rejects incompatible duplicates before a
 second partition-local event can be written, and deletes the target event before
 the index during cleanup/admin delete paths.
+If an insert is interrupted after reserving the index but before writing the
+event item, operators can call `AzureCosmosOutboxClient.repair_event_index()` to
+remove the dangling index before retrying the write.
 
 This is still not a full provider-contract client. Cross-partition index and
-event writes cannot be made transactional through the single-container API, so
-reserved-index/event-write crash windows need operational repair coverage. Live
-Cosmos integration tests for SDK query behavior, registry completeness, restart
-duplicate handling, conditional index commits, and ETag conflicts remain
-required before treating this adapter as certified provider complete.
+event writes cannot be made transactional through the single-container API.
+Live Cosmos integration tests for SDK query behavior, registry completeness,
+restart duplicate handling, conditional index commits, event-index repair, and
+ETag conflicts remain required before treating this adapter as certified
+provider complete.
 
 ## SQL
 

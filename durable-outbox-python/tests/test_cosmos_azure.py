@@ -401,6 +401,48 @@ async def test_azure_cosmos_get_removes_stale_event_index() -> None:
 
 
 @pytest.mark.asyncio
+async def test_azure_cosmos_repairs_reserved_event_index_without_target() -> None:
+    container = FakeContainer()
+    event = make_event("cosmos-repair-reserved-index")
+    container.items[("__control__", _event_index_id(event.event_id))] = {
+        "id": _event_index_id(event.event_id),
+        "pk": "__control__",
+        "kind": "event_index",
+        "event_id": event.event_id,
+        "target_id": event.event_id,
+        "partition_key": "durable.outbox.outputs#0",
+        "fingerprint": "fingerprint",
+        "state": "reserved",
+    }
+    client = AzureCosmosOutboxClient(container)
+
+    repaired = await client.repair_event_index(event.event_id)
+    inserted = await client.insert(
+        CosmosStoredEvent(event=event, partition_key="durable.outbox.outputs#0")
+    )
+
+    assert repaired is True
+    assert container.deleted == [(_event_index_id(event.event_id), "__control__")]
+    assert inserted.event.event_id == event.event_id
+
+
+@pytest.mark.asyncio
+async def test_azure_cosmos_repair_keeps_event_index_when_target_exists() -> None:
+    container = FakeContainer()
+    client = AzureCosmosOutboxClient(container)
+    event = make_event("cosmos-repair-keeps-index")
+    await client.insert(
+        CosmosStoredEvent(event=event, partition_key="durable.outbox.outputs#0")
+    )
+    container.deleted.clear()
+
+    repaired = await client.repair_event_index(event.event_id)
+
+    assert repaired is False
+    assert container.deleted == []
+
+
+@pytest.mark.asyncio
 async def test_azure_cosmos_replace_conflict_maps_to_claim_conflict() -> None:
     container = FakeContainer()
     client = AzureCosmosOutboxClient(container)

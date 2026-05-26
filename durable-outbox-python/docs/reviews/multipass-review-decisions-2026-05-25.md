@@ -2766,3 +2766,43 @@ verification evidence.
   hot control partition.
 - Operational repair for reserved-index/event-missing crash windows remains
   future work before declaring the Cosmos provider fully certified.
+
+## Batch 80: Azure Cosmos Event Index Repair
+
+### Findings Partially Accepted
+
+- **P-P0-5 / A-P0-1:** the event index closed restart-safe lookup and duplicate
+  detection, but an interrupted insert could still leave a reserved index whose
+  target event was never written. That would block retry until an operator
+  repaired the control item manually.
+
+### Fixes Implemented
+
+- Added `AzureCosmosOutboxClient.repair_event_index(event_id)`.
+- The repair method resolves the partition through the control index, checks
+  whether the target event exists, and deletes the control index only when the
+  target event is missing.
+- Valid indexes with existing target events are left untouched.
+- A repaired reserved-index crash window can be retried through normal
+  `insert()` afterward.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_cosmos_azure.py::test_azure_cosmos_repairs_reserved_event_index_without_target tests/test_cosmos_azure.py::test_azure_cosmos_repair_keeps_event_index_when_target_exists -q`
+  -> failed because no repair method existed.
+- Focused green run:
+  `uv run pytest tests/test_cosmos_azure.py -q && uv run ruff check durable_outbox/stores/cosmos_azure.py tests/test_cosmos_azure.py && uv run ruff format --check durable_outbox/stores/cosmos_azure.py tests/test_cosmos_azure.py && uv run ty check`
+  -> 21 passed.
+- Full package gates:
+  `uv run pytest -q` -> 293 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 57 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
+
+### Deferred
+
+- Live Azure Cosmos integration tests remain required for real exception
+  mapping, conditional delete behavior, and operational repair behavior under
+  strong consistency and regional failover.
