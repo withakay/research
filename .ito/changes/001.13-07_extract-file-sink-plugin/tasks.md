@@ -8,6 +8,6 @@
 ## 2. Verification
 - [x] 2.1 Run file sink package tests through workspace pytest.
 - [x] 2.2 Run plugin loader tests proving `load_sink("file", ...)` works.
-- [ ] 2.3 Run `uv run pytest`.
+- [x] 2.3 Run `uv run pytest`.
 - [ ] 2.4 Run `uv run ruff check .` and `uv run ty check`.
 - [ ] 2.5 Run `uv build --all-packages`.
