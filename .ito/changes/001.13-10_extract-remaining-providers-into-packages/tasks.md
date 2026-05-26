@@ -58,7 +58,7 @@ ______________________________________________________________________
 - **Done When**: Kafka tests import from the provider package or plugin loader, and old core Kafka imports fail.
 - **Requirements**: durable-outbox-abstract-core:abstract-core-package, durable-outbox-provider-packages:first-party-provider-package-matrix, durable-outbox-provider-packages:provider-package-plugin-registration
 - **Updated At**: 2026-05-26
-- **Status**: [>] in-progress
+- **Status**: [x] complete
 
 ### Task 2.2: Extract Memory Store Package
 
