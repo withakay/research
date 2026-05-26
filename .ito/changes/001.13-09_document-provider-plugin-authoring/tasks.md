@@ -44,7 +44,7 @@ ______________________________________________________________________
   examples for both sink and store plugin packages.
 - **Requirements**: durable-outbox-plugin-authoring:plugin-authoring-guide, durable-outbox-plugin-authoring:plugin-installation-modes, durable-outbox-plugin-authoring:plugin-verification
 - **Updated At**: 2026-05-26
-- **Status**: [ ] pending
+- **Status**: [>] in-progress
 
 ### Task 1.3: Link Guide From Consumer Docs
 
