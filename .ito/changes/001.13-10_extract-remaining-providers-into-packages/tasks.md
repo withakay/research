@@ -80,7 +80,7 @@ ______________________________________________________________________
 - **Done When**: Blob behavior is unchanged through package imports/plugin loading, provider-specific Azure dependencies are package-local, and old core Blob imports fail.
 - **Requirements**: durable-outbox-abstract-core:abstract-core-package, durable-outbox-provider-packages:first-party-provider-package-matrix, durable-outbox-provider-packages:provider-package-plugin-registration
 - **Updated At**: 2026-05-26
-- **Status**: [>] in-progress
+- **Status**: [x] complete
 
 ### Task 2.4: Extract Cosmos Store Package
 
