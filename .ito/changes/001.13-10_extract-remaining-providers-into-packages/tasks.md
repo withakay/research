@@ -108,7 +108,7 @@ ______________________________________________________________________
 - **Done When**: Core package contains no concrete sink/store implementation modules or provider-specific dependency declarations.
 - **Requirements**: durable-outbox-abstract-core:abstract-core-package, durable-outbox-abstract-core:no-core-provider-compatibility-modules, durable-outbox-plugin-api:breaking-provider-imports
 - **Updated At**: 2026-05-26
-- **Status**: [ ] pending
+- **Status**: [>] in-progress
 
 ### Task 3.2: Update Documentation and Migration Guide
 
