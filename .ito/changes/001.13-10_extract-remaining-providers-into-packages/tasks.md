@@ -30,7 +30,7 @@ ______________________________________________________________________
 - **Done When**: Tests fail for the current core-ships-providers layout for the intended assertions.
 - **Requirements**: durable-outbox-abstract-core:abstract-core-package, durable-outbox-abstract-core:no-core-provider-compatibility-modules, durable-outbox-plugin-api:provider-plugin-discovery
 - **Updated At**: 2026-05-26
-- **Status**: [>] in-progress
+- **Status**: [x] complete
 
 ### Task 1.2: Add Provider Package Metadata Tests
 
