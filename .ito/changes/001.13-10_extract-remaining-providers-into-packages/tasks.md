@@ -136,5 +136,5 @@ ______________________________________________________________________
 - **Done When**: Full tests, Ruff, format check, ty, and all-package build pass.
 - **Requirements**: durable-outbox-abstract-core:abstract-core-package, durable-outbox-provider-packages:first-party-provider-package-matrix, durable-outbox-provider-packages:provider-package-plugin-registration, durable-outbox-plugin-api:provider-plugin-discovery, durable-outbox-plugin-api:breaking-provider-imports, durable-outbox-packaging:consumer-documentation
 - **Updated At**: 2026-05-26
-- **Status**: [ ] pending
+- **Status**: [>] in-progress
 <!-- ITO:END -->
