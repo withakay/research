@@ -275,6 +275,7 @@ class BlobOutboxStore:
         self.cleanup_freeze_reason: str | None = None
         self.records: dict[str, StoredEvent] = {}
         self._record_etags: dict[str, str] = {}
+        self._event_fingerprints: dict[str, tuple[OutboxEvent, str]] = {}
         self._ordering_leases_by_event_id: dict[str, OrderingLockLease] = {}
         self.capabilities = OutboxCapabilities(
             store_name=store_name,
@@ -520,6 +521,7 @@ class BlobOutboxStore:
                 continue
             self.records.pop(event_id, None)
             self._record_etags.pop(event_id, None)
+            self._event_fingerprints.pop(event_id, None)
         return deleted
 
     async def repair_failed_to_pending(self, *, event_id: str) -> AdminActionStatus:
@@ -615,13 +617,12 @@ class BlobOutboxStore:
     async def _load_record(self, event_id: str) -> StoredEvent | None:
         blob = await self.client.get_blob(event_blob_name(event_id))
         if blob is None:
+            self.records.pop(event_id, None)
+            self._record_etags.pop(event_id, None)
+            self._event_fingerprints.pop(event_id, None)
             return None
         record = _decode_record(blob.content)
-        expected_fingerprint = blob.metadata.get("event_fingerprint")
-        if expected_fingerprint != _event_fingerprint(
-            record.event, key=self.fingerprint_key
-        ):
-            raise RetryableStoreError("blob record fingerprint mismatch")
+        self._verify_and_cache_record_fingerprint(record, blob)
         self.records[event_id] = record
         self._record_etags[event_id] = blob.etag
         return record
@@ -631,11 +632,7 @@ class BlobOutboxStore:
         seen_ids: set[str] = set()
         for blob in blobs:
             record = _decode_record(blob.content)
-            expected_fingerprint = blob.metadata.get("event_fingerprint")
-            if expected_fingerprint != _event_fingerprint(
-                record.event, key=self.fingerprint_key
-            ):
-                raise RetryableStoreError("blob record fingerprint mismatch")
+            self._verify_and_cache_record_fingerprint(record, blob)
             event_id = record.event.event_id
             seen_ids.add(event_id)
             self.records[event_id] = record
@@ -643,35 +640,43 @@ class BlobOutboxStore:
         for event_id in set(self.records) - seen_ids:
             self.records.pop(event_id, None)
             self._record_etags.pop(event_id, None)
+            self._event_fingerprints.pop(event_id, None)
 
     async def _write_new_record(self, record: StoredEvent) -> None:
+        event_fingerprint = self._event_fingerprint_for_record(record)
         blob = await self.client.put_blob(
             event_blob_name(record.event.event_id),
             _encode_record(record),
             _record_metadata(
                 record,
                 environment=self.environment,
-                fingerprint_key=self.fingerprint_key,
+                event_fingerprint=event_fingerprint,
             ),
             if_none_match=True,
         )
         self.records[record.event.event_id] = record
         self._record_etags[record.event.event_id] = blob.etag
+        self._event_fingerprints[record.event.event_id] = (
+            record.event,
+            event_fingerprint,
+        )
 
     async def _save_record(self, record: StoredEvent) -> None:
         event_id = record.event.event_id
+        event_fingerprint = self._event_fingerprint_for_record(record)
         blob = await self.client.put_blob(
             event_blob_name(event_id),
             _encode_record(record),
             _record_metadata(
                 record,
                 environment=self.environment,
-                fingerprint_key=self.fingerprint_key,
+                event_fingerprint=event_fingerprint,
             ),
             if_match=self._record_etags.get(event_id),
         )
         self.records[event_id] = record
         self._record_etags[event_id] = blob.etag
+        self._event_fingerprints[event_id] = (record.event, event_fingerprint)
 
     async def _claimed_record(self, claimed: ClaimedEvent) -> StoredEvent:
         record = self.records.get(claimed.event.event_id)
@@ -688,6 +693,31 @@ class BlobOutboxStore:
         self, record: StoredEvent, event: OutboxEvent
     ) -> None:
         raise_if_incompatible_duplicate(record.event, event)
+
+    def _event_fingerprint_for_record(self, record: StoredEvent) -> str:
+        event_id = record.event.event_id
+        cached = self._event_fingerprints.get(event_id)
+        if cached is not None:
+            cached_event, cached_fingerprint = cached
+            if cached_event == record.event:
+                return cached_fingerprint
+        fingerprint = _event_fingerprint(record.event, key=self.fingerprint_key)
+        self._event_fingerprints[event_id] = (record.event, fingerprint)
+        return fingerprint
+
+    def _verify_and_cache_record_fingerprint(
+        self,
+        record: StoredEvent,
+        blob: BlobObject,
+    ) -> None:
+        expected_fingerprint = blob.metadata.get("event_fingerprint")
+        actual_fingerprint = _event_fingerprint(record.event, key=self.fingerprint_key)
+        if expected_fingerprint != actual_fingerprint:
+            raise RetryableStoreError("blob record fingerprint mismatch")
+        self._event_fingerprints[record.event.event_id] = (
+            record.event,
+            actual_fingerprint,
+        )
 
     def _ordered_records(self) -> Iterable[StoredEvent]:
         return sorted(self.records.values(), key=claim_order_key)
@@ -1091,15 +1121,12 @@ def _record_metadata(
     record: StoredEvent,
     *,
     environment: str,
-    fingerprint_key: bytes | None = None,
+    event_fingerprint: str,
 ) -> Mapping[str, str]:
     values = dict(blob_metadata(record.event, environment=environment))
     values["accepted"] = str(record.accepted).lower()
     values["status"] = record.status.value
-    values["event_fingerprint"] = _event_fingerprint(
-        record.event,
-        key=fingerprint_key,
-    )
+    values["event_fingerprint"] = event_fingerprint
     return values
 
 

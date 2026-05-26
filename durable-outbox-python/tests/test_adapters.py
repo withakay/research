@@ -14,7 +14,7 @@ from durable_outbox.core.errors import (
     DuplicateEventConflictError,
     RetryableStoreError,
 )
-from durable_outbox.core.model import OutboxStatus, PublishResult
+from durable_outbox.core.model import OutboxEvent, OutboxStatus, PublishResult
 from durable_outbox.core.store import DurableOutboxStore
 from durable_outbox.stores import blob_geo
 from durable_outbox.stores.blob_geo import (
@@ -368,6 +368,33 @@ async def test_blob_claim_batch_avoids_full_record_clone_on_success(
 
 
 @pytest.mark.asyncio
+async def test_blob_claim_batch_reuses_refreshed_event_fingerprint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = BlobOutboxStore.for_testing()
+    event = make_event("blob-claim-cached-fingerprint")
+    await store.put(event)
+    original = blob_geo._event_fingerprint
+    calls = 0
+
+    def counting_fingerprint(
+        event: OutboxEvent,
+        *,
+        key: bytes | None = None,
+    ) -> str:
+        nonlocal calls
+        calls += 1
+        return original(event, key=key)
+
+    monkeypatch.setattr(blob_geo, "_event_fingerprint", counting_fingerprint)
+
+    claimed = await store.claim_batch(limit=1)
+
+    assert [claim.event.event_id for claim in claimed] == [event.event_id]
+    assert calls == 1
+
+
+@pytest.mark.asyncio
 async def test_blob_store_rejects_payloads_above_fingerprint_budget() -> None:
     store = BlobOutboxStore.for_testing()
     event = replace(
@@ -399,6 +426,29 @@ async def test_blob_load_rejects_tampered_fingerprint() -> None:
 
 
 @pytest.mark.asyncio
+async def test_blob_verification_recomputes_fingerprint_for_tampered_content() -> None:
+    client = InMemoryBlobClient()
+    store = BlobOutboxStore(client=client)
+    event = make_event("tamper-content")
+    await store.put(event)
+    blob = await client.get_blob(event_blob_name(event.event_id))
+    assert blob is not None
+    decoded = json.loads(blob.content)
+    decoded["event"]["payload"] = "dGFtcGVyZWQ="
+    await client.put_blob(
+        blob.name,
+        json.dumps(decoded).encode(),
+        blob.metadata,
+        if_match=blob.etag,
+    )
+
+    with pytest.raises(RetryableStoreError, match="fingerprint"):
+        await store._load_record(event.event_id)
+    with pytest.raises(RetryableStoreError, match="fingerprint"):
+        await store._refresh_records()
+
+
+@pytest.mark.asyncio
 async def test_blob_store_can_use_keyed_event_fingerprints() -> None:
     client = InMemoryBlobClient()
     store = BlobOutboxStore(client=client, fingerprint_key=b"secret")
@@ -419,6 +469,75 @@ async def test_blob_store_can_use_keyed_event_fingerprints() -> None:
     wrong_key_store = BlobOutboxStore(client=client, fingerprint_key=b"wrong")
     with pytest.raises(RetryableStoreError, match="fingerprint"):
         await wrong_key_store._load_record(event.event_id)
+
+
+@pytest.mark.asyncio
+async def test_blob_fingerprint_cache_is_store_local_by_key() -> None:
+    event = make_event("same-object-different-keys")
+    first_client = InMemoryBlobClient()
+    second_client = InMemoryBlobClient()
+    first_store = BlobOutboxStore(client=first_client, fingerprint_key=b"a")
+    second_store = BlobOutboxStore(client=second_client, fingerprint_key=b"b")
+
+    await first_store.put(event)
+    await second_store.put(event)
+
+    first_blob = await first_client.get_blob(event_blob_name(event.event_id))
+    second_blob = await second_client.get_blob(event_blob_name(event.event_id))
+    assert first_blob is not None
+    assert second_blob is not None
+    assert (
+        first_blob.metadata["event_fingerprint"]
+        != second_blob.metadata["event_fingerprint"]
+    )
+    assert await first_store._load_record(event.event_id) is not None
+    assert await second_store._load_record(event.event_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_blob_refresh_drops_stale_fingerprint_cache_for_missing_blob() -> None:
+    client = InMemoryBlobClient()
+    store = BlobOutboxStore(client=client)
+    original = make_event("reuse-after-refresh")
+    replacement = replace(original, payload=b"replacement")
+    await store.put(original)
+    blob = await client.get_blob(event_blob_name(original.event_id))
+    assert blob is not None
+    assert await client.delete_blob(blob.name, if_match=blob.etag)
+
+    await store._refresh_records()
+    await store.put(replacement)
+
+    fresh_store = BlobOutboxStore(client=client)
+    loaded = await fresh_store._load_record(replacement.event_id)
+    assert loaded is not None
+    assert loaded.event.payload == replacement.payload
+
+
+@pytest.mark.asyncio
+async def test_blob_cleanup_drops_stale_fingerprint_cache_for_reused_event_id() -> None:
+    client = InMemoryBlobClient()
+    store = BlobOutboxStore(client=client)
+    original = make_event("reuse-after-cleanup")
+    replacement = replace(original, payload=b"replacement")
+    await store.put(original)
+    claimed = (await store.claim_batch(limit=1))[0]
+    await store.mark_sent(
+        claimed,
+        PublishResult(partition=0, offset=1, published_at=datetime.now(UTC)),
+    )
+
+    deleted = await store.cleanup_sent(
+        now=original.expires_at + timedelta(seconds=1),
+        safety_margin=timedelta(seconds=0),
+    )
+    await store.put(replacement)
+
+    fresh_store = BlobOutboxStore(client=client)
+    loaded = await fresh_store._load_record(replacement.event_id)
+    assert deleted == 1
+    assert loaded is not None
+    assert loaded.event.payload == replacement.payload
 
 
 @pytest.mark.asyncio

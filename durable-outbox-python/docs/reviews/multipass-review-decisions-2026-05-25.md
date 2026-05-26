@@ -1938,3 +1938,57 @@ verification evidence.
   `uv run ruff format --check .` -> 53 files already formatted;
   `uv run ty check` -> all checks passed;
   `uv build` -> source distribution and wheel built successfully.
+
+## Batch 63: Blob Event Fingerprint Cache
+
+### Findings Accepted
+
+- **P-P1-3:** Blob duplicate compatibility already used direct field
+  comparison, but status-only Blob saves still recomputed the event fingerprint
+  each time `_record_metadata()` was built for claim, retry, sent, failed, and
+  admin transitions.
+
+### Fixes Implemented
+
+- Added a store-local `_event_fingerprints` cache keyed by `event_id` and
+  guarded by the cached `OutboxEvent`, so the cache is reused only when the
+  immutable event payload and metadata are unchanged.
+- Kept `fingerprint_key` store-local: the cache lives on each
+  `BlobOutboxStore`, and misses compute with that store's key, preserving
+  legacy SHA-256 versus keyed HMAC-SHA256 behavior.
+- Kept read verification strict: `_load_record()` and `_refresh_records()`
+  always recompute the fingerprint from decoded blob content and compare it to
+  blob metadata before caching the value.
+- Reused cached fingerprints only for writes of unchanged events, and changed
+  `_record_metadata()` to accept the already computed fingerprint instead of
+  hashing the event itself.
+- Invalidated cached fingerprints when `_load_record()` finds a missing blob,
+  `_refresh_records()` drops missing blobs, and `cleanup_sent()` deletes sent
+  blobs.
+- Kept duplicate semantics on `raise_if_incompatible_duplicate()` rather than
+  using fingerprint equality as the compatibility contract.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_adapters.py::test_blob_claim_batch_reuses_refreshed_event_fingerprint -q`
+  -> failed because claim/save called `_event_fingerprint()` twice after
+  refresh.
+- Focused invariant tests:
+  `uv run pytest tests/test_adapters.py::test_blob_verification_recomputes_fingerprint_for_tampered_content tests/test_adapters.py::test_blob_fingerprint_cache_is_store_local_by_key tests/test_adapters.py::test_blob_refresh_drops_stale_fingerprint_cache_for_missing_blob tests/test_adapters.py::test_blob_cleanup_drops_stale_fingerprint_cache_for_reused_event_id tests/test_adapters.py::test_blob_claim_batch_reuses_refreshed_event_fingerprint tests/test_adapters.py::test_blob_store_can_use_keyed_event_fingerprints -q`
+  -> 6 passed.
+- Focused adapter/provider run:
+  `uv run pytest tests/test_adapters.py::test_blob_claim_batch_reuses_refreshed_event_fingerprint tests/test_adapters.py::test_blob_claim_batch_avoids_full_record_clone_on_success tests/test_adapters.py::test_blob_verification_recomputes_fingerprint_for_tampered_content tests/test_adapters.py::test_blob_fingerprint_cache_is_store_local_by_key tests/test_adapters.py::test_blob_refresh_drops_stale_fingerprint_cache_for_missing_blob tests/test_adapters.py::test_blob_cleanup_drops_stale_fingerprint_cache_for_reused_event_id tests/test_adapters.py::test_builtin_adapters_pass_reusable_provider_contract -q`
+  -> 11 passed.
+- Focused lint/type/format:
+  `uv run ruff check durable_outbox/stores/blob_geo.py tests/test_adapters.py`
+  -> all checks passed;
+  `uv run ruff format --check durable_outbox/stores/blob_geo.py tests/test_adapters.py`
+  -> 2 files already formatted;
+  `uv run ty check` -> all checks passed.
+- Full package gates:
+  `uv run pytest -q` -> 231 passed, 2 skipped;
+  `uv run ruff check .` -> all checks passed;
+  `uv run ruff format --check .` -> 53 files already formatted;
+  `uv run ty check` -> all checks passed;
+  `uv build` -> source distribution and wheel built successfully.
