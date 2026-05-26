@@ -3217,9 +3217,50 @@ verification evidence.
 
 - Live SQL Server and Azure Cosmos certification still require external
   provider credentials and remain opt-in.
-- Aspire still needs either richer resource-log capture in the demo script or
-  Kafka readiness/connection-string remediation before it can be counted as a
-  passing local Azurite/Kafka certification gate in this environment.
 - Blob replay streaming still materializes a refreshed provider snapshot before
   yielding candidates; this is now documented as an optimization gap rather
   than a core `FailoverReplayer` streaming defect.
+
+## Batch 88: Aspire Replay Certification
+
+### Findings Accepted
+
+- **P-P1-1:** the new Azurite replay integration test was valid, but it used the
+  shared default container. Retained events from earlier Aspire runs could
+  appear in replay candidates and make the replay count nondeterministic.
+- **Integration diagnostics:** the Showboat/Aspire wrapper only printed resource
+  state. When the Python integration resource failed, it did not print the
+  pytest failure that explained why.
+- **Kafka local mode:** the Aspire Kafka test passed `certified_mode=False` but
+  still inherited the certified default `security.protocol=SASL_SSL`. The local
+  Aspire broker expects PLAINTEXT, so `confluent-kafka` failed before producing.
+
+### Fixes Implemented
+
+- Changed Aspire Blob integration tests to create a unique Azurite container per
+  test run, isolating replay assertions from retained state in previous runs.
+- Set `security.protocol=PLAINTEXT` in the Aspire Kafka integration test while
+  keeping certified Kafka defaults for production/certified configurations.
+- Updated `run_aspire_azurite_kafka_demo.sh` to print the failing resource's
+  last 200 log lines before exiting non-zero.
+
+### Verification
+
+- Local integration skip-mode check:
+  `uv run pytest tests/integration/test_aspire_azurite_kafka.py -q`
+  -> 3 skipped.
+- Focused lint/format:
+  `uv run ruff check tests/integration/test_aspire_azurite_kafka.py && uv run ruff format --check tests/integration/test_aspire_azurite_kafka.py`
+  -> all checks passed; 1 file already formatted.
+- Aspire local certification:
+  `ASPIRE_CONTAINER_RUNTIME=podman ./demos/scripts/run_aspire_azurite_kafka_demo.sh`
+  -> `integration_exit_code=0`, `resource_health.blobs=Healthy`,
+  `resource_health.kafka=Healthy`.
+
+### Deferred
+
+- Live SQL Server and Azure Cosmos certification still require external
+  provider credentials and remain opt-in.
+- Blob replay streaming still materializes a refreshed provider snapshot before
+  yielding candidates; the passing Aspire test certifies behavior, not the
+  deeper provider-streaming optimization.

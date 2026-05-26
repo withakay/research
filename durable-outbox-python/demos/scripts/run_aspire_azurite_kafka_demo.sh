@@ -67,6 +67,30 @@ def resources() -> list[dict[str, object]]:
     return found
 
 
+def print_resource_logs(resource: str) -> None:
+    result = subprocess.run(
+        [
+            "aspire",
+            "logs",
+            resource,
+            "--non-interactive",
+            "--nologo",
+            "--tail",
+            "200",
+        ],
+        cwd=aspire_dir,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    print(f"resource_log.{resource}.exit_code={result.returncode}")
+    output = result.stdout.strip() or result.stderr.strip()
+    if output:
+        print(f"resource_log.{resource}.begin")
+        print(output)
+        print(f"resource_log.{resource}.end")
+
+
 while time.monotonic() < deadline:
     current = resources()
     if not current:
@@ -90,6 +114,8 @@ while time.monotonic() < deadline:
             resource = by_display.get(name)
             if resource is not None:
                 print(f"resource_health.{name}={resource.get('healthStatus')}")
+        if exit_code != 0:
+            print_resource_logs(test_resource)
         sys.exit(0 if exit_code == 0 else 1)
     time.sleep(2)
 

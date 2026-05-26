@@ -8,7 +8,7 @@ Work in `/Users/jack/Code/withakay/research`. Stay inside `durable-outbox-python
 
 Current state:
 
-- Latest completed batch: Provider completion audit and bounded claims.
+- Latest completed batch: Aspire replay certification.
 - Latest full gates:
   - `uv run pytest -q` -> `305 passed, 8 skipped`
   - `uv run ruff check .` -> passed
@@ -67,6 +67,9 @@ Recent implementation notes:
   partition instead of consuming every SDK query page.
 - An Aspire/Azurite integration test now covers `FailoverReplayer` replaying
   both `PENDING` and previously `SENT` Blob events to `FileSink`.
+- `ASPIRE_CONTAINER_RUNTIME=podman ./demos/scripts/run_aspire_azurite_kafka_demo.sh`
+  now passes with `integration_exit_code=0`,
+  `resource_health.blobs=Healthy`, and `resource_health.kafka=Healthy`.
 
 Remaining direct review IDs:
 
@@ -87,10 +90,7 @@ Suggested next move:
 
 Aspire note:
 
-- `ASPIRE_CONTAINER_RUNTIME=podman ./demos/scripts/run_aspire_azurite_kafka_demo.sh`
-  currently starts the AppHost and reports healthy Blob/Kafka resources, but the
-  Python integration resource exits 1. The latest wrapper log points at an
-  Aspire CLI log named `cli_20260526T185048_740fd18b.log`, which shows rdkafka
-  broker-down messages and does not include pytest stdout/stderr. Next useful
-  fix is to improve demo resource-log capture or remediate Kafka
-  readiness/connection-string handling.
+- The demo wrapper now prints the failing resource's last 200 log lines before
+  exiting non-zero. The prior failure was fixed by isolating each Blob
+  integration test in a unique Azurite container and setting the local Kafka
+  test to `security.protocol=PLAINTEXT`.

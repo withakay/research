@@ -34,6 +34,10 @@ def _container_name() -> str:
     return os.environ.get("DURABLE_OUTBOX_AZURITE_CONTAINER", "durable-outbox")
 
 
+def _unique_container_name() -> str:
+    return f"{_container_name()}-{uuid4().hex[:12]}"
+
+
 def _kafka_bootstrap_servers() -> str:
     return (
         os.environ.get("DURABLE_OUTBOX_KAFKA_BOOTSTRAP_SERVERS")
@@ -67,7 +71,7 @@ async def test_azurite_blob_store_dispatches_to_local_file(tmp_path: Path) -> No
 
     client = AzureBlobClient.from_connection_string(
         connection_string,
-        container_name=_container_name(),
+        container_name=_unique_container_name(),
     )
     await client.ensure_container()
     store = BlobOutboxStore(client=client, environment="integration")
@@ -101,13 +105,16 @@ async def test_azurite_blob_store_dispatches_to_real_kafka() -> None:
 
     client = AzureBlobClient.from_connection_string(
         connection_string,
-        container_name=_container_name(),
+        container_name=_unique_container_name(),
     )
     await client.ensure_container()
     store = BlobOutboxStore(client=client, environment="integration")
     sink = KafkaSink.from_config(
         KafkaProducerConfig(
-            {"bootstrap.servers": bootstrap_servers},
+            {
+                "bootstrap.servers": bootstrap_servers,
+                "security.protocol": "PLAINTEXT",
+            },
             certified_mode=False,
         ),
         delivery_timeout_seconds=30,
@@ -134,7 +141,7 @@ async def test_azurite_blob_store_replays_pending_and_sent_to_local_file(
 
     client = AzureBlobClient.from_connection_string(
         connection_string,
-        container_name=_container_name(),
+        container_name=_unique_container_name(),
     )
     await client.ensure_container()
     store = BlobOutboxStore(client=client, environment="integration")
