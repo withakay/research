@@ -465,28 +465,16 @@ class BlobOutboxStore:
         exclude_event_ids: Collection[str] = (),
     ) -> list[ClaimedEvent]:
         require_positive_limit(limit)
-        await self._refresh_records()
         candidates: list[ClaimedEvent] = []
         originals: dict[str, StoredEvent] = {}
         locked_ordering_scopes: set[str] = set()
         try:
-            for record in sorted(
-                self.records.values(), key=lambda item: item.event.created_at
+            async for record in self._failover_replay_candidate_records(
+                failover_started_at=failover_started_at,
+                exclude_event_ids=exclude_event_ids,
             ):
                 if len(candidates) >= limit:
                     break
-                if record.event.event_id in exclude_event_ids:
-                    continue
-                if not record.accepted:
-                    continue
-                if record.status not in {
-                    OutboxStatus.PENDING,
-                    OutboxStatus.IN_FLIGHT,
-                    OutboxStatus.SENT,
-                }:
-                    continue
-                if record.event.expires_at < failover_started_at:
-                    continue
                 scoped_key = ordering_scope(record.event)
                 if scoped_key is not None and scoped_key in locked_ordering_scopes:
                     continue
@@ -527,24 +515,14 @@ class BlobOutboxStore:
         limit: int,
     ) -> AsyncIterator[ClaimedEvent]:
         require_positive_limit(limit)
-        await self._refresh_records()
         yielded = 0
         locked_ordering_scopes: set[str] = set()
-        for record in sorted(
-            self.records.values(), key=lambda item: item.event.created_at
+        async for record in self._failover_replay_candidate_records(
+            failover_started_at=failover_started_at,
+            exclude_event_ids=(),
         ):
             if yielded >= limit:
                 break
-            if not record.accepted:
-                continue
-            if record.status not in {
-                OutboxStatus.PENDING,
-                OutboxStatus.IN_FLIGHT,
-                OutboxStatus.SENT,
-            }:
-                continue
-            if record.event.expires_at < failover_started_at:
-                continue
             scoped_key = ordering_scope(record.event)
             if scoped_key is not None and scoped_key in locked_ordering_scopes:
                 continue
@@ -880,6 +858,64 @@ class BlobOutboxStore:
             record = await self._load_record(event_id)
             if record is not None:
                 yield record
+
+    async def _failover_replay_candidate_records(
+        self,
+        *,
+        failover_started_at: datetime,
+        exclude_event_ids: Collection[str],
+    ) -> AsyncIterator[StoredEvent]:
+        state_blobs = await self.client.list_blobs(
+            prefix="outbox/v1/state/",
+            with_content=False,
+        )
+        legacy_blobs = await self.client.list_blobs(
+            prefix="outbox/v1/events/",
+            with_content=False,
+        )
+        seen_ids: set[str] = set()
+        candidate_blobs: list[BlobObject] = []
+        for blob in state_blobs:
+            event_id = blob.metadata.get("event_id")
+            if event_id is None:
+                continue
+            seen_ids.add(event_id)
+            self._record_etags[event_id] = blob.etag
+            self._record_formats[event_id] = "split"
+            if _metadata_may_be_replay_candidate(
+                blob.metadata,
+                failover_started_at=failover_started_at,
+                exclude_event_ids=exclude_event_ids,
+            ):
+                candidate_blobs.append(blob)
+        for blob in legacy_blobs:
+            event_id = blob.metadata.get("event_id")
+            if event_id is None or event_id in seen_ids:
+                continue
+            seen_ids.add(event_id)
+            self._record_etags[event_id] = blob.etag
+            self._record_formats[event_id] = "legacy"
+            if _metadata_may_be_replay_candidate(
+                blob.metadata,
+                failover_started_at=failover_started_at,
+                exclude_event_ids=exclude_event_ids,
+            ):
+                candidate_blobs.append(blob)
+        self._drop_unlisted_records(seen_ids)
+        for blob in sorted(candidate_blobs, key=_blob_replay_order_key):
+            event_id = blob.metadata.get("event_id")
+            if event_id is None:
+                continue
+            record = await self._load_record(event_id)
+            if record is None:
+                continue
+            if not _record_may_be_replay_candidate(
+                record,
+                failover_started_at=failover_started_at,
+                exclude_event_ids=exclude_event_ids,
+            ):
+                continue
+            yield record
 
     def _drop_unlisted_records(self, seen_ids: set[str]) -> None:
         for event_id in set(self.records) - seen_ids:
@@ -1518,6 +1554,44 @@ def _metadata_may_be_claimable(
     return False
 
 
+def _metadata_may_be_replay_candidate(
+    metadata: Mapping[str, str],
+    *,
+    failover_started_at: datetime,
+    exclude_event_ids: Collection[str],
+) -> bool:
+    event_id = metadata.get("event_id")
+    if event_id is None or event_id in exclude_event_ids:
+        return False
+    if metadata.get("accepted") != "true":
+        return False
+    if metadata.get("status") not in {
+        OutboxStatus.PENDING.value,
+        OutboxStatus.IN_FLIGHT.value,
+        OutboxStatus.SENT.value,
+    }:
+        return False
+    expires_at = _metadata_epoch_ms(metadata, "expires_at_epoch_ms")
+    if expires_at is None:
+        return True
+    return datetime.fromtimestamp(expires_at / 1000, tz=UTC) >= failover_started_at
+
+
+def _record_may_be_replay_candidate(
+    record: StoredEvent,
+    *,
+    failover_started_at: datetime,
+    exclude_event_ids: Collection[str],
+) -> bool:
+    return (
+        record.event.event_id not in exclude_event_ids
+        and record.accepted
+        and record.status
+        in {OutboxStatus.PENDING, OutboxStatus.IN_FLIGHT, OutboxStatus.SENT}
+        and record.event.expires_at >= failover_started_at
+    )
+
+
 def _blob_claim_order_key(blob: BlobObject) -> tuple[str, str, int, int, str]:
     metadata = blob.metadata
     return (
@@ -1527,6 +1601,10 @@ def _blob_claim_order_key(blob: BlobObject) -> tuple[str, str, int, int, str]:
         _metadata_int(metadata, "created_at_epoch_ms") or 0,
         blob.name,
     )
+
+
+def _blob_replay_order_key(blob: BlobObject) -> tuple[int, str]:
+    return (_metadata_int(blob.metadata, "created_at_epoch_ms") or 0, blob.name)
 
 
 def _metadata_epoch_ms(metadata: Mapping[str, str], name: str) -> int | None:

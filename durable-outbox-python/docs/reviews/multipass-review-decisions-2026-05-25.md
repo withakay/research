@@ -3264,3 +3264,53 @@ verification evidence.
 - Blob replay streaming still materializes a refreshed provider snapshot before
   yielding candidates; the passing Aspire test certifies behavior, not the
   deeper provider-streaming optimization.
+
+## Batch 89: Blob Replay Metadata Scan
+
+### Findings Accepted
+
+- **P-P1-1:** `FailoverReplayer` consumed Blob replay through the streaming
+  store API, but `BlobOutboxStore.iter_failover_replay_candidates()` still
+  called `_refresh_records()` first. On Azure Blob this listed all state and
+  legacy blobs with content and loaded payloads before yielding any replay
+  candidate.
+
+### Fixes Implemented
+
+- Added a Blob replay candidate iterator that lists state and legacy prefixes
+  with `with_content=False`, filters by replay metadata, sorts metadata by
+  creation time, and loads only records that may be claimed.
+- Switched both `failover_replay_candidates()` and
+  `iter_failover_replay_candidates()` to use the metadata candidate iterator.
+- Preserved full-record validation after load so stale metadata cannot bypass
+  acceptance, status, TTL, or exclusion checks.
+
+### Verification
+
+- Focused red run:
+  `uv run pytest tests/test_adapters.py::test_blob_replay_stream_skips_retained_records_during_scan -q`
+  -> failed because replay listed both prefixes with content.
+- Focused green run:
+  `uv run pytest tests/test_adapters.py::test_blob_replay_stream_skips_retained_records_during_scan tests/test_failover_ordering_cleanup.py::test_blob_failover_replay_exposes_streaming_store -q`
+  -> 2 passed.
+- Focused lint/type gates:
+  `uv run ruff check durable_outbox/stores/blob_geo.py tests/test_adapters.py`
+  -> all checks passed;
+  `uv run ty check`
+  -> all checks passed.
+- Full package gates:
+  `uv run pytest -q`
+  -> 306 passed, 8 skipped;
+  `uv run ruff check .`
+  -> all checks passed;
+  `uv run ruff format --check .`
+  -> 59 files already formatted;
+  `uv run ty check`
+  -> all checks passed;
+  `uv build`
+  -> source distribution and wheel built successfully.
+
+### Deferred
+
+- Live SQL Server and Azure Cosmos certification still require external
+  provider credentials and remain opt-in.

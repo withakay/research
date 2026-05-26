@@ -1501,6 +1501,39 @@ async def test_blob_claim_batch_skips_retained_sent_blobs_during_scan() -> None:
 
 
 @pytest.mark.asyncio
+async def test_blob_replay_stream_skips_retained_records_during_scan() -> None:
+    now = datetime.now(UTC)
+    client = ClaimScanCountingBlobClient()
+    setup_store = BlobOutboxStore(client=client, clock=FixedClock(now))
+    for index in range(10):
+        event = make_event(f"retained-replay-sent-{index}")
+        await setup_store.put(event)
+        claimed = (await setup_store.claim_batch(limit=1))[0]
+        await setup_store.mark_sent(
+            claimed,
+            PublishResult(partition=0, offset=index, published_at=now),
+        )
+    pending = [make_event(f"pending-replay-{index}") for index in range(3)]
+    for event in pending:
+        await setup_store.put(event)
+    client.get_blob_calls = 0
+    client.list_with_content_values.clear()
+    replay_store = BlobOutboxStore(client=client, clock=FixedClock(now))
+
+    claimed = [
+        item
+        async for item in replay_store.iter_failover_replay_candidates(
+            failover_started_at=now,
+            limit=2,
+        )
+    ]
+
+    assert len(claimed) == 2
+    assert client.list_with_content_values == [False, False]
+    assert client.get_blob_calls <= 6
+
+
+@pytest.mark.asyncio
 async def test_blob_state_transitions_do_not_reupload_payload_bytes() -> None:
     now = datetime.now(UTC)
     client = PutRecordingBlobClient()

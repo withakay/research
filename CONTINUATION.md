@@ -8,9 +8,9 @@ Work in `/Users/jack/Code/withakay/research`. Stay inside `durable-outbox-python
 
 Current state:
 
-- Latest completed batch: Aspire replay certification.
+- Latest completed batch: Blob replay metadata scan.
 - Latest full gates:
-  - `uv run pytest -q` -> `305 passed, 8 skipped`
+  - `uv run pytest -q` -> `306 passed, 8 skipped`
   - `uv run ruff check .` -> passed
   - `uv run ruff format --check .` -> passed
   - `uv run ty check` -> passed
@@ -70,6 +70,8 @@ Recent implementation notes:
 - `ASPIRE_CONTAINER_RUNTIME=podman ./demos/scripts/run_aspire_azurite_kafka_demo.sh`
   now passes with `integration_exit_code=0`,
   `resource_health.blobs=Healthy`, and `resource_health.kafka=Healthy`.
+- Blob replay now uses metadata-only listing before loading claimable records,
+  so `P-P1-1`'s remaining Blob materialization gap is closed locally.
 
 Remaining direct review IDs:
 
@@ -82,8 +84,8 @@ Suggested next move:
 2. Pick the next bounded item. Likely candidates are:
    - `A-P0-1`: run live-account SQL/Cosmos integration tests when credentials/services are available.
    - `P-P1-1`: built-in stores now expose replay streaming; remaining work is
-     live-service certification plus optional deeper Blob provider streaming and
-     SQL batch-token cursor optimization.
+     live-service certification plus optional SQL batch-token cursor
+     optimization.
 3. Treat remaining provider certification as evidence-gathering unless new
    review identifies a concrete code gap.
 4. For every accepted finding: write or preserve red tests, implement, run focused gates, run full gates, update the decisions doc, then commit conventionally.
